@@ -1,6 +1,7 @@
 # Multi-stage build: NestJS + NGINX in one image, stateless
 
-FROM node:20-alpine AS builder
+#FROM node:20-alpine AS builder
+FROM arm64v8/node:lts-alpine AS builder
 
 WORKDIR /app
 
