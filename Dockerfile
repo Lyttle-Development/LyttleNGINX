@@ -1,6 +1,6 @@
 # Multi-stage build: NestJS + NGINX in one image, stateless
 
-FROM --platform=linux/arm64 node:20-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ RUN npm ci
 COPY . .
 
 # --- Final image: NGINX + built NestJS app ---
-FROM --platform=linux/arm64 nginx:alpine
+FROM nginx:alpine
 
 # Install tini, bash, and node for running NestJS
 RUN apk add --no-cache nodejs bash tini
