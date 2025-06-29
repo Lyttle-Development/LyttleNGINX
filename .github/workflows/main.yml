@@ -20,8 +20,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build API Docker image
-        # run: docker build -t ghcr.io/lyttle-development/lyttlenginx:main -f Dockerfile .
-        run: docker build --platform=linux/arm64 -t ghcr.io/lyttle-development/lyttlenginx:main -f Dockerfile .
+        run: docker build -t ghcr.io/lyttle-development/lyttlenginx:main -f Dockerfile .
 
       - name: Push API Docker image to GitHub Container Registry
         run: docker push ghcr.io/lyttle-development/lyttlenginx:main
