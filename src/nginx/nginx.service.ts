@@ -9,8 +9,13 @@ export class NginxService {
 
     for (const entry of entries) {
       const domains = entry.domains
+        // Split domains by semicolon
         .split(';')
+        // Remove whitespace and leading asterisk
         .map((d) => d.trim())
+        // Remove newlines
+        .map((d) => d.replace(/^\*/, '').trim())
+        // Filter out empty domains
         .filter(Boolean);
       if (domains.length === 0) continue;
       const primaryDomain = domains[0];
@@ -22,10 +27,10 @@ export class NginxService {
 
       const sslLines = hasCert
         ? `
-        listen 443 ssl;
-        listen [::]:443 ssl;
-        ssl_certificate ${certPath};
-        ssl_certificate_key ${keyPath};
+  listen 443 ssl;
+  listen [::]:443 ssl;
+  ssl_certificate ${certPath};
+  ssl_certificate_key ${keyPath};
       `
         : '';
 
@@ -40,18 +45,18 @@ server {
     entry.type === ProxyType.REDIRECT
       ? `return 301 ${entry.proxy_pass_host};`
       : `
-      location / {
-        proxy_pass ${entry.proxy_pass_host};
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400;
-        proxy_ssl_verify off;
-      }
+  location / {
+    proxy_pass ${entry.proxy_pass_host};
+    proxy_ssl_verify off;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 86400;
+  }
       `
   }
   ${entry.nginx_custom_code || ''}

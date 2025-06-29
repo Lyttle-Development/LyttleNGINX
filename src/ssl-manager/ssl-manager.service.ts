@@ -7,6 +7,7 @@ import {
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 import { PrismaService } from '../prisma/prisma.service';
+import * as process from 'node:process';
 
 const exec = promisify(execCb);
 const adminEmail = process.env.ADMIN_EMAIL || null;
@@ -57,6 +58,7 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
   }
 
   async ensureCertificate(domains: string[]): Promise<void> {
+    if (process.env.NODE_ENV === 'development') return;
     const primaryDomain = domains[0];
     // TODO: Add logic to check expiry date (optional, certbot renew is safe to call repeatedly)
     this.logger.log(
