@@ -17,10 +17,9 @@ export class NginxService {
 server {
   listen 80;
   listen [::]:80;
-  listen 443 ssl http2;
-  listen [::]:443 ssl http2;
   
   server_name ${domains.join(' ')};
+  http2 off;
 
   ${
     entry.type === ProxyType.REDIRECT
