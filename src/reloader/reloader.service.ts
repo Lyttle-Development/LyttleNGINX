@@ -32,6 +32,7 @@ export class ReloaderService {
       await this.clearDirectory(NGINX_ETC_DIR, false);
 
       // Step 2: Copy full /nginx (project) to /etc/nginx
+      await mkdir('/var/log/nginx', { recursive: true });
       await this.copyDirectoryRecursive(NGINX_SOURCE_DIR, NGINX_ETC_DIR);
 
       // Step 3: Ensure any directories required by proxy/redirect configs exist
@@ -144,7 +145,7 @@ export class ReloaderService {
 
       // You can add more parsing here for other fields if needed
     }
- 
+
     for (const dir of dirs) {
       try {
         await mkdir(dir, { recursive: true });
