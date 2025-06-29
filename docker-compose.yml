@@ -4,8 +4,6 @@ services:
     image: ghcr.io/lyttle-development/lyttlenginx:main
     environment:
       DATABASE_URL: postgresql://lyttle_nginx_eu_prod:blk8dIKuJNnDdW@se-004-nlam.lyttle.dev:25060/lyttle_nginx_eu_prod?pool_timeout=360&connect_timeout=360&schema=public
-      NEST_PORT: 3000
-      NGINX_CONFIG_PATH: /etc/nginx/conf.d/default.conf
     ports:
       - 80:80
       - 443:443

@@ -28,6 +28,9 @@ COPY nginx/nginx.conf /etc/nginx/nginx.conf
 # Make sure Nginx log dir and files exist with correct permissions
 RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && chmod 666 /var/log/nginx/*.log
 
+# Ensure SSL dir exists and is writable
+RUN mkdir -p /etc/nginx/ssl && chmod 755 /etc/nginx/ssl
+
 # Expose API and Nginx ports
 EXPOSE 80 443 3000
 

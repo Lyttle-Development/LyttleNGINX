@@ -12,13 +12,15 @@ export class NginxService {
         .map((d) => d.trim())
         .filter(Boolean);
       if (domains.length === 0) continue;
-
+      
       const server_block = `
 server {
   listen 80;
   listen [::]:80;
-  listen 443;
-  listen [::]:443;
+  listen 443 ssl;
+  listen [::]:443 ssl;
+  ssl_certificate /etc/nginx/ssl/server.crt;
+  ssl_certificate_key /etc/nginx/ssl/server.key;
   
   server_name ${domains.join(' ')};
 
@@ -36,7 +38,7 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
-        proxy_ssl_verify off; 
+        proxy_ssl_verify off;
       }
       `
   }
