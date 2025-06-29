@@ -17,9 +17,7 @@ RUN apk add --no-cache nodejs npm bash tini
 WORKDIR /app
 
 # Copy built NestJS app
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/prisma ./prisma
+COPY --from=builder . .
 
 # Copy entrypoint scripts
 COPY docker-entrypoint.sh /docker-entrypoint.sh
