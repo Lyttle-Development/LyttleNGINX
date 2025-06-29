@@ -123,5 +123,5 @@ dist
 *.crt
 *.key
 *.pem
-ssl/
 nginx/ssl/
+/etc/nginx/ssl/
