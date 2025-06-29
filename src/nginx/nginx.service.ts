@@ -16,6 +16,10 @@ export class NginxService {
       const server_block = `
 server {
   listen 80;
+  listen [::]:80;
+  listen 443;
+  listen [::]:443;
+  
   server_name ${domains.join(' ')};
 
   ${

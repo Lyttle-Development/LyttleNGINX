@@ -29,7 +29,7 @@ COPY nginx/nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && chmod 666 /var/log/nginx/*.log
 
 # Expose API and Nginx ports
-EXPOSE 80 3000
+EXPOSE 80 443 3000
 
 # Use tini for proper signal handling
 ENTRYPOINT ["/usr/bin/tini", "--", "/docker-entrypoint.sh"]
