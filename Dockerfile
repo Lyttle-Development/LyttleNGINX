@@ -12,7 +12,7 @@ COPY . .
 FROM nginx:alpine
 
 # Install tini, bash, and node for running NestJS
-RUN apk add --no-cache nodejs bash tini
+RUN apk add --no-cache nodejs npm bash tini
 
 WORKDIR /app
 
