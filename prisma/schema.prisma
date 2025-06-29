@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  schemas  = ["public"]
 }
 
 model ProxyEntry {
@@ -13,9 +15,13 @@ model ProxyEntry {
   domains           String // semicolon-separated list
   nginx_custom_code String?
   type              ProxyType @default(PROXY)
+
+  @@schema("public")
 }
 
 enum ProxyType {
   REDIRECT
   PROXY
+
+  @@schema("public")
 }
