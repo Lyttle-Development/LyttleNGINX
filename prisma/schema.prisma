@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ProxyEntry {
+  id                Int       @id @default(autoincrement())
+  proxy_pass_host   String
+  domains           String // semicolon-separated list
+  nginx_custom_code String?
+  type              ProxyType @default(PROXY)
+}
+
+enum ProxyType {
+  REDIRECT
+  PROXY
+}
