@@ -8,7 +8,7 @@ nginx
 sleep 1
 
 # Build the app at container start (so .env is loaded)
-npm run build
+npm run docker:setup
 
 # Start the NestJS application in the foreground
 node dist/main.js
