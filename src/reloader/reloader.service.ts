@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NginxService } from '../nginx/nginx.service';
+import { SslManagerService } from '../ssl-manager/ssl-manager.service';
 import { exec } from 'child_process';
 import {
   copyFile,
@@ -13,6 +14,7 @@ import {
   writeFile,
 } from 'fs/promises';
 import { join } from 'path';
+import * as fs from 'fs';
 
 const NGINX_ETC_DIR = '/etc/nginx';
 const NGINX_SOURCE_DIR = join(process.cwd(), 'nginx');
@@ -24,11 +26,13 @@ export class ReloaderService {
   constructor(
     private prisma: PrismaService,
     private nginx: NginxService,
+    private sslManager: SslManagerService,
   ) {}
 
   async reloadConfig(): Promise<{ ok: boolean; error?: string }> {
     try {
       this.logger.log('Starting nginx reload process...');
+
       // Step 1: Remove all content from /etc/nginx
       this.logger.log(`Clearing directory: ${NGINX_ETC_DIR}`);
       await this.clearDirectory(NGINX_ETC_DIR, false);
@@ -46,12 +50,30 @@ export class ReloaderService {
       );
       await this.ensureProxyAndRedirectDirs();
 
-      // Step 4: Generate per-proxy/entry config files in the right place
+      // Step 4: Fetch proxy entries and ensure certificates
       this.logger.log('Fetching proxy entries from database...');
       const entries = await this.prisma.proxyEntry.findMany();
       this.logger.log(`Found ${entries.length} proxy entries.`);
 
-      // Assume conf.d is used for dynamic proxy entries
+      // Step 4.5: Ensure certificates for each entry
+      for (const entry of entries) {
+        const domains = entry.domains
+          .split(';')
+          .map((d) => d.trim())
+          .filter(Boolean);
+        if (domains.length === 0) continue;
+        const primaryDomain = domains[0];
+        const certPath = `/etc/letsencrypt/live/${primaryDomain}/fullchain.pem`;
+        const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
+        if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+          this.logger.log(
+            `Certificate missing for ${primaryDomain}, calling ensureCertificate`,
+          );
+          await this.sslManager.ensureCertificate(domains);
+        }
+      }
+
+      // Step 5: Generate per-proxy/entry config files in the right place
       const confdDir = join(NGINX_ETC_DIR, 'conf.d');
       this.logger.log(`Ensuring conf.d directory exists at: ${confdDir}`);
       await mkdir(confdDir, { recursive: true });
@@ -67,11 +89,11 @@ export class ReloaderService {
         await rename(entryFilename, finalFilename);
       }
 
-      // Step 5: Validate the total config before reloading
+      // Step 6: Validate the total config before reloading
       this.logger.log('Validating nginx config syntax (nginx -t)...');
       await this.execShell('nginx -t');
 
-      // Step 6: Reload NGINX
+      // Step 7: Reload NGINX
       this.logger.log('Reloading nginx (nginx -s reload)...');
       await this.execShell('nginx -s reload');
 

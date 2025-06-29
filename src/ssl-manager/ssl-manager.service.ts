@@ -9,6 +9,7 @@ import { promisify } from 'util';
 import { PrismaService } from '../prisma/prisma.service';
 
 const exec = promisify(execCb);
+const adminEmail = process.env.ADMIN_EMAIL || null;
 
 @Injectable()
 export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
@@ -64,7 +65,7 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
     const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
     try {
       await exec(
-        `certbot certonly --nginx --non-interactive --agree-tos -m your-email@example.com ${domainArgs}`,
+        `certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
       );
       this.logger.log(`Obtained/renewed cert for ${primaryDomain}`);
     } catch (err) {

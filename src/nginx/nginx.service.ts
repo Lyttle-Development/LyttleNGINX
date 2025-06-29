@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ProxyEntry, ProxyType } from '@prisma/client';
+import * as fs from 'fs';
 
 @Injectable()
 export class NginxService {
@@ -14,15 +15,25 @@ export class NginxService {
       if (domains.length === 0) continue;
       const primaryDomain = domains[0];
 
+      // Check if cert files exist
+      const certPath = `/etc/letsencrypt/live/${primaryDomain}/fullchain.pem`;
+      const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
+      const hasCert = fs.existsSync(certPath) && fs.existsSync(keyPath);
+
+      const sslLines = hasCert
+        ? `
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        ssl_certificate ${certPath};
+        ssl_certificate_key ${keyPath};
+      `
+        : '';
+
       const server_block = `
 server {
   listen 80;
   listen [::]:80;
-  listen 443 ssl;
-  listen [::]:443 ssl;
-  ssl_certificate /etc/letsencrypt/live/${primaryDomain}/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/${primaryDomain}/privkey.pem;
-  
+  ${sslLines}
   server_name ${domains.join(' ')};
 
   ${
