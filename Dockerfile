@@ -17,6 +17,8 @@ RUN chmod +x /docker-entrypoint.sh
 # Minimal default NGINX config to start
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
+RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && chmod 666 /var/log/nginx/*.log
+
 # Expose API and NGINX ports
 EXPOSE 80 3000
 
