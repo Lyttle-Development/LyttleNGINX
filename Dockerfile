@@ -14,9 +14,6 @@ RUN npm ci
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Make the log directory for NGINX
-RUN mkdir -p /var/log/nginx
-
 # Minimal default NGINX config to start
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
