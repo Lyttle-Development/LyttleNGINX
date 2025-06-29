@@ -23,4 +23,4 @@ jobs:
         run: docker build -t ghcr.io/lyttle-development/LyttleNGINX:main -f Dockerfile .
 
       - name: Push API Docker image to GitHub Container Registry
-        run: docker push ghcr.io/lyttle-development/LyttleNGINX:main
+        run: docker push ghcr.io/lyttle-development/lyttlenginx:main
