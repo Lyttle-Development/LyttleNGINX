@@ -4,6 +4,7 @@ FROM debian:bookworm-slim
 # Install system packages: curl, nginx, node, npm, bash, tini
 RUN apt-get update && \
     apt-get install -y curl nginx bash tini && \
+    apt-get install -y certbot python3-certbot-nginx && \
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \

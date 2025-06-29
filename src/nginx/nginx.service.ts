@@ -12,15 +12,16 @@ export class NginxService {
         .map((d) => d.trim())
         .filter(Boolean);
       if (domains.length === 0) continue;
-      
+      const primaryDomain = domains[0];
+
       const server_block = `
 server {
   listen 80;
   listen [::]:80;
   listen 443 ssl;
   listen [::]:443 ssl;
-  ssl_certificate /etc/nginx/ssl/server.crt;
-  ssl_certificate_key /etc/nginx/ssl/server.key;
+  ssl_certificate /etc/letsencrypt/live/${primaryDomain}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/${primaryDomain}/privkey.pem;
   
   server_name ${domains.join(' ')};
 
