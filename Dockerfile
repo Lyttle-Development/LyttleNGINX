@@ -15,7 +15,7 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Minimal default NGINX config to start
-COPY nginx/nginx-minimal.conf /etc/nginx/nginx.conf
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
 # Expose API and NGINX ports
 EXPOSE 80 3000
