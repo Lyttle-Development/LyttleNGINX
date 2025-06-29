@@ -17,10 +17,16 @@ export class NginxService {
 server {
   listen 80;
   listen [::]:80;
-  listen 443;
-  listen [::]:443;
+  listen 443 ssl;
+  listen [::]:443 ssl;
   
   server_name ${domains.join(' ')};
+
+  # SSL Configuration
+  ssl_certificate /etc/nginx/ssl/server.crt;
+  ssl_certificate_key /etc/nginx/ssl/server.key;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_ciphers HIGH:!aNULL:!MD5;
 
   ${
     entry.type === ProxyType.REDIRECT

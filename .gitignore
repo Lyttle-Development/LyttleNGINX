@@ -118,3 +118,10 @@ dist
 # TernJS port file
 .tern-port
 /prisma/migrations/
+
+# SSL Certificates - should not be committed to git
+*.crt
+*.key
+*.pem
+ssl/
+nginx/ssl/

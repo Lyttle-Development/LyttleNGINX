@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NginxService } from '../nginx/nginx.service';
+import { SslService } from '../ssl/ssl.service';
 import { exec } from 'child_process';
 import {
   copyFile,
@@ -24,6 +25,7 @@ export class ReloaderService {
   constructor(
     private prisma: PrismaService,
     private nginx: NginxService,
+    private ssl: SslService,
   ) {}
 
   async reloadConfig(): Promise<{ ok: boolean; error?: string }> {
@@ -45,6 +47,10 @@ export class ReloaderService {
         'Ensuring directories required by proxies/redirects exist...',
       );
       await this.ensureProxyAndRedirectDirs();
+
+      // Step 3.5: Ensure SSL certificates exist
+      this.logger.log('Ensuring SSL certificates exist...');
+      await this.ssl.ensureSslCertificates();
 
       // Step 4: Generate per-proxy/entry config files in the right place
       this.logger.log('Fetching proxy entries from database...');
