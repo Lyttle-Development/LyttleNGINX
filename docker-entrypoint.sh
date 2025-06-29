@@ -2,13 +2,13 @@
 set -e
 
 # Start NGINX in the background
-nginx
+sudo nginx
 
 # Wait for NGINX to fully start
 sleep 1
 
 # Build the app at container start (so .env is loaded)
-npm run docker:setup
+sudo npm run docker:setup
 
 # Start the NestJS application in the foreground
-node dist/main.js
+sudo node dist/main.js
