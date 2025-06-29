@@ -8,7 +8,6 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
 
 # --- Final image: NGINX + built NestJS app ---
 FROM nginx:alpine
