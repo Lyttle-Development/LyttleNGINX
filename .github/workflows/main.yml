@@ -1,0 +1,26 @@
+name: MAIN Workflow
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build API Docker image
+        run: docker build -t ghcr.io/lyttle-development/LyttleNGINX:main -f Dockerfile .
+
+      - name: Push API Docker image to GitHub Container Registry
+        run: docker push ghcr.io/lyttle-development/LyttleNGINX:main
