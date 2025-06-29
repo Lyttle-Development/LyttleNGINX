@@ -12,7 +12,7 @@ COPY . .
 
 # --- Final image: NGINX + built NestJS app ---
 #FROM nginx:alpine
-FROM arm64v8/nginx:1-alpine-perl
+FROM arm64v8/nginx:alpine-perl
 
 # Install tini, bash, and node for running NestJS
 RUN apk add --no-cache nodejs bash tini
