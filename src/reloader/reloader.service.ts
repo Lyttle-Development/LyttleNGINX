@@ -50,13 +50,26 @@ export class ReloaderService {
       );
       await this.ensureProxyAndRedirectDirs();
 
-      // Step 4: Fetch proxy entries and ensure certificates
+      // Step 4: Fetch proxy entries
       this.logger.log('Fetching proxy entries from database...');
       const entries = await this.prisma.proxyEntry.findMany();
       this.logger.log(`Found ${entries.length} proxy entries.`);
 
-      // Step 4.5: Ensure certificates for each entry
+      // ----------- PHASE 1: Generate configs (HTTP only, as no SSL certs exist yet) -----------
+      this.logger.log('Phase 1: Generating HTTP-only nginx configs...');
+      await this.generateNginxConfs(entries);
+
+      // Validate and reload
+      this.logger.log('Validating nginx config syntax (nginx -t)...');
+      await this.execShell('nginx -t');
+
+      this.logger.log('Reloading nginx (nginx -s reload)...');
+      await this.execShell('nginx -s reload');
+
+      // ----------- PHASE 2: Obtain SSL Certificates -----------
+      this.logger.log('Phase 2: Ensuring SSL certificates...');
       for (const entry of entries) {
+        if (!entry.ssl) continue;
         const domains = entry.domains
           .split(';')
           .map((d) => d.trim())
@@ -73,27 +86,14 @@ export class ReloaderService {
         }
       }
 
-      // Step 5: Generate per-proxy/entry config files in the right place
-      const confdDir = join(NGINX_ETC_DIR, 'conf.d');
-      this.logger.log(`Ensuring conf.d directory exists at: ${confdDir}`);
-      await mkdir(confdDir, { recursive: true });
+      // ----------- PHASE 3: Re-generate configs (now with SSL where possible) -----------
+      this.logger.log('Phase 3: Generating SSL-enabled nginx configs...');
+      await this.generateNginxConfs(entries);
 
-      for (const entry of entries) {
-        this.logger.log(`Generating nginx config for entry id=${entry.id}`);
-        const entryConfig = this.nginx.generateNginxConfig([entry]);
-        const entryFilename = join(confdDir, `${entry.id}.conf.tmp`);
-        this.logger.log(`Writing temp config file: ${entryFilename}`);
-        await writeFile(entryFilename, entryConfig, { encoding: 'utf-8' });
-        const finalFilename = join(confdDir, `${entry.id}.conf`);
-        this.logger.log(`Renaming temp config file to final: ${finalFilename}`);
-        await rename(entryFilename, finalFilename);
-      }
-
-      // Step 6: Validate the total config before reloading
+      // Validate and reload
       this.logger.log('Validating nginx config syntax (nginx -t)...');
       await this.execShell('nginx -t');
 
-      // Step 7: Reload NGINX
       this.logger.log('Reloading nginx (nginx -s reload)...');
       await this.execShell('nginx -s reload');
 
@@ -104,6 +104,24 @@ export class ReloaderService {
     } catch (error: any) {
       this.logger.error('Failed to reload Nginx config', error);
       return { ok: false, error: error.message || String(error) };
+    }
+  }
+
+  // Helper: Generate nginx confs for all entries (auto SSL detection)
+  private async generateNginxConfs(entries: any[]): Promise<void> {
+    const confdDir = join(NGINX_ETC_DIR, 'conf.d');
+    this.logger.log(`Ensuring conf.d directory exists at: ${confdDir}`);
+    await mkdir(confdDir, { recursive: true });
+
+    for (const entry of entries) {
+      this.logger.log(`Generating nginx config for entry id=${entry.id}`);
+      const entryConfig = this.nginx.generateNginxConfig([entry]);
+      const entryFilename = join(confdDir, `${entry.id}.conf.tmp`);
+      this.logger.log(`Writing temp config file: ${entryFilename}`);
+      await writeFile(entryFilename, entryConfig, { encoding: 'utf-8' });
+      const finalFilename = join(confdDir, `${entry.id}.conf`);
+      this.logger.log(`Renaming temp config file to final: ${finalFilename}`);
+      await rename(entryFilename, finalFilename);
     }
   }
 

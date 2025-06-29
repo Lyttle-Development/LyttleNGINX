@@ -15,6 +15,7 @@ model ProxyEntry {
   domains           String // semicolon-separated list
   nginx_custom_code String?
   type              ProxyType @default(PROXY)
+  ssl               Boolean   @default(false)
 
   @@schema("public")
 }
