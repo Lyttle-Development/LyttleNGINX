@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Start NGINX in the foreground (so reloads work and container stays alive)
-nginx -g "daemon off;"
+# Start NGINX in the background
+nginx
 
 # Wait for NGINX to fully start
 sleep 1
