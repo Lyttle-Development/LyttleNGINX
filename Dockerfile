@@ -1,13 +1,3 @@
-# Multi-stage build: NestJS + NGINX in one image, stateless
-FROM node:20-alpine AS builder
-
-WORKDIR /app
-
-COPY package.json package-lock.json ./
-RUN npm ci
-
-COPY . .
-
 # --- Final image: NGINX + built NestJS app ---
 FROM nginx:alpine
 
@@ -17,7 +7,8 @@ RUN apk add --no-cache nodejs npm bash tini
 WORKDIR /app
 
 # Copy built NestJS app
-COPY --from=builder . .
+COPY . .
+RUN npm ci
 
 # Copy entrypoint scripts
 COPY docker-entrypoint.sh /docker-entrypoint.sh
