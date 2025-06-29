@@ -1,26 +1,35 @@
-# --- Final image: NGINX + built NestJS app ---
-FROM nginx:alpine
+# --- Final image: NGINX + built NestJS app (custom install) ---
+FROM debian:bookworm-slim
 
-# Install tini, bash, and node for running NestJS
-RUN apk add --no-cache nodejs npm bash tini
+# Install system packages: curl, nginx, node, npm, bash, tini
+RUN apt-get update && \
+    apt-get install -y curl nginx bash tini && \
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+    apt-get install -y nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy built NestJS app
+# Copy built NestJS app and package.json files
+COPY package*.json ./
 COPY . .
-RUN npm ci
+
+# Install Node dependencies and build NestJS app
+RUN npm ci && npm run build
 
 # Copy entrypoint scripts
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Minimal default NGINX config to start
+# Copy nginx config (don't overwrite /etc/nginx entirely!)
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
+# Make sure Nginx log dir and files exist with correct permissions
 RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && chmod 666 /var/log/nginx/*.log
 
-# Expose API and NGINX ports
+# Expose API and Nginx ports
 EXPOSE 80 3000
 
 # Use tini for proper signal handling
-ENTRYPOINT ["/sbin/tini", "--", "/docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/docker-entrypoint.sh"]
