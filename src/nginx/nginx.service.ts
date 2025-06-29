@@ -19,7 +19,6 @@ server {
   listen [::]:80;
   
   server_name ${domains.join(' ')};
-  http2 off;
 
   ${
     entry.type === ProxyType.REDIRECT
