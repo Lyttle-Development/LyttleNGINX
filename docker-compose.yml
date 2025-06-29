@@ -1,7 +1,10 @@
 version: '3.8'
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/lyttle-development/lyttlenginx:main
     environment:
       DATABASE_URL: ${DATABASE_URL}
       NEST_PORT: 3000
