@@ -7,7 +7,7 @@ RUN apt-get update && \
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -25,15 +25,19 @@ RUN chmod +x /docker-entrypoint.sh
 # Copy nginx config
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
-# Ensure proper permissions
+# Ensure proper permissions for Nginx logs and SSL
 RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && \
     chmod 666 /var/log/nginx/*.log && \
     mkdir -p /etc/nginx/ssl && chmod 755 /etc/nginx/ssl
 
-# Create a non-root user for running Nginx
+# Create nginx user/group and set ownership
 RUN addgroup --system --gid 101 nginx && \
     adduser --system --no-create-home --uid 101 --gid 101 nginx && \
     chown -R nginx:nginx /etc/nginx /var/log/nginx
+
+# Ensure cache directories exist for proxy_cache_path
+RUN mkdir -p /var/lib/nginx/cache/public /var/lib/nginx/cache/private && \
+    chown -R nginx:nginx /var/lib/nginx
 
 # Expose API and Nginx ports
 EXPOSE 80 443 3000
