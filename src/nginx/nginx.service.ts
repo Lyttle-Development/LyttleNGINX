@@ -24,7 +24,7 @@ export class NginxService {
       const certPath = `/etc/letsencrypt/live/${primaryDomain}/fullchain.pem`;
       const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
       const hasCert = fs.existsSync(certPath) && fs.existsSync(keyPath);
-
+      
       const sslLines =
         hasCert && entry.ssl
           ? `
