@@ -35,9 +35,6 @@ RUN addgroup --system --gid 101 nginx && \
     adduser --system --no-create-home --uid 101 --gid 101 nginx && \
     chown -R nginx:nginx /etc/nginx /var/log/nginx
 
-# Ensure cache directories exist for proxy_cache_path
-RUN mkdir -p /var/lib/nginx/cache/public /var/lib/nginx/cache/private && \
-    chown -R nginx:nginx /var/lib/nginx
 
 # Expose API and Nginx ports
 EXPOSE 80 443 3000
