@@ -9,9 +9,6 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* \
 
-# Add the nginx user (system user, no login shell, no home)
-RUN adduser --system --no-create-home --uid 101 nginx
-
 WORKDIR /app
 
 # Copy built NestJS app and package.json files
@@ -33,7 +30,9 @@ RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/acc
     chmod 666 /var/log/nginx/*.log && \
     mkdir -p /etc/nginx/ssl && chmod 755 /etc/nginx/ssl
 
-RUN adduser --system --no-create-home --uid 101 nginx && \
+# Create a non-root user for running Nginx
+RUN addgroup --system --gid 101 nginx && \
+    adduser --system --no-create-home --uid 101 --gid 101 nginx && \
     chown -R nginx:nginx /etc/nginx /var/log/nginx
 
 # Expose API and Nginx ports
