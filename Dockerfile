@@ -35,7 +35,6 @@ RUN addgroup --system --gid 101 nginx && \
     adduser --system --no-create-home --uid 101 --gid 101 nginx && \
     chown -R nginx:nginx /etc/nginx /var/log/nginx
 
-
 # Expose API and Nginx ports
 EXPOSE 80 443 3000
 
