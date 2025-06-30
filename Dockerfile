@@ -7,7 +7,10 @@ RUN apt-get update && \
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* \
+
+# Add the nginx user (system user, no login shell, no home)
+RUN adduser --system --no-create-home --uid 101 nginx
 
 WORKDIR /app
 
