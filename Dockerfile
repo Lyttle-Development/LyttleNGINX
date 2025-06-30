@@ -1,7 +1,6 @@
-# --- Final image: NGINX + built NestJS app (custom install) ---
 FROM debian:bookworm-slim
 
-# Install system packages: curl, nginx, node, npm, bash, tini
+# Install system packages
 RUN apt-get update && \
     apt-get install -y curl nginx openssl bash tini && \
     apt-get install -y certbot python3-certbot-nginx && \
@@ -23,14 +22,16 @@ RUN npm ci && npm run build
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Copy nginx config (don't overwrite /etc/nginx entirely!)
+# Copy nginx config
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
-# Make sure Nginx log dir and files exist with correct permissions
-RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && chmod 666 /var/log/nginx/*.log
+# Ensure proper permissions
+RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && \
+    chmod 666 /var/log/nginx/*.log && \
+    mkdir -p /etc/nginx/ssl && chmod 755 /etc/nginx/ssl
 
-# Ensure SSL dir exists and is writable
-RUN mkdir -p /etc/nginx/ssl && chmod 755 /etc/nginx/ssl
+RUN adduser --system --no-create-home --uid 101 nginx && \
+    chown -R nginx:nginx /etc/nginx /var/log/nginx
 
 # Expose API and Nginx ports
 EXPOSE 80 443 3000
