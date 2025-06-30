@@ -25,14 +25,15 @@ export class NginxService {
       const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
       const hasCert = fs.existsSync(certPath) && fs.existsSync(keyPath);
 
-      const sslLines = hasCert
-        ? `
+      const sslLines =
+        hasCert && entry.ssl
+          ? `
   listen 443 ssl;
   listen [::]:443 ssl;
   ssl_certificate ${certPath};
   ssl_certificate_key ${keyPath};
       `
-        : '';
+          : '';
 
       const server_block = `
 server {
