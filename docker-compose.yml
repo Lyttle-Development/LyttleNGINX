@@ -5,4 +5,12 @@ services:
     environment:
       DATABASE_URL: postgresql://user:pass@host:port/db
       ADMIN_EMAIL: admin@example.com
+
+    # USE
     network_mode: host
+    # OR
+    ports:
+      - 80:80
+      - 443:443
+      - 3003:3000
+    # NOT BOTH
