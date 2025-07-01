@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NginxService } from '../nginx/nginx.service';
-import { SslManagerService } from '../ssl-manager/ssl-manager.service';
 import { exec } from 'child_process';
 import {
   copyFile,
@@ -15,6 +14,7 @@ import {
 } from 'fs/promises';
 import { join } from 'path';
 import * as fs from 'fs';
+import { CertificateService } from '../certificate/certificate.service';
 
 const NGINX_ETC_DIR = '/etc/nginx';
 const NGINX_SOURCE_DIR = join(process.cwd(), 'nginx');
@@ -26,7 +26,7 @@ export class ReloaderService {
   constructor(
     private prisma: PrismaService,
     private nginx: NginxService,
-    private sslManager: SslManagerService,
+    private certificate: CertificateService,
   ) {}
 
   async reloadConfig(): Promise<{ ok: boolean; error?: string }> {
@@ -82,7 +82,7 @@ export class ReloaderService {
           this.logger.log(
             `Certificate missing for ${primaryDomain}, calling ensureCertificate`,
           );
-          await this.sslManager.ensureCertificate(domains);
+          await this.certificate.ensureCertificate(domains);
         }
       }
 

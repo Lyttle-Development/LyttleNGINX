@@ -11,7 +11,6 @@ export class CertificateLookupService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Find the non-expiring certificate for this ProxyEntry domain set */
   async findValidCertificateForDomains(domainsString: string) {
     const domainsArr = parseDomains(domainsString);
     if (domainsArr.length === 0) return null;
@@ -29,28 +28,12 @@ export class CertificateLookupService {
 
     if (!cert) {
       this.logger.warn(
-        'No valid certificate found',
-        '',
-        JSON.stringify({
-          domains: domainsString,
-          hash: domainsHash,
-          at: new Date().toISOString(),
-        }),
-      );
-    } else {
-      this.logger.log(
-        'Valid certificate found',
-        JSON.stringify({
-          certId: cert.id,
-          domains: domainsString,
-          expiresAt: cert.expiresAt,
-        }),
+        `No valid certificate found for domains="${domainsString}" (hash=${domainsHash})`,
       );
     }
     return cert;
   }
 
-  /** For debugging: find certificates that don't match any current ProxyEntry */
   async findOrphanCertificates() {
     const entries = await this.prisma.proxyEntry.findMany();
     const usedDomainHashes = new Set(
