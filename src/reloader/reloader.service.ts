@@ -69,20 +69,31 @@ export class ReloaderService {
       // ----------- PHASE 2: Obtain SSL Certificates -----------
       this.logger.log('Phase 2: Ensuring SSL certificates...');
       for (const entry of entries) {
-        if (!entry.ssl) continue;
-        const domains = entry.domains
-          .split(';')
-          .map((d) => d.trim())
-          .filter(Boolean);
-        if (domains.length === 0) continue;
-        const primaryDomain = domains[0];
-        const certPath = `/etc/letsencrypt/live/${primaryDomain}/fullchain.pem`;
-        const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
-        if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-          this.logger.log(
-            `Certificate missing for ${primaryDomain}, calling ensureCertificate`,
+        try {
+          if (!entry.ssl) continue;
+          const domains = entry.domains
+            .split(';')
+            .map((d) => d.trim())
+            .filter(Boolean);
+          if (domains.length === 0) continue;
+          const primaryDomain = domains[0];
+          const certPath = `/etc/letsencrypt/live/${primaryDomain}/fullchain.pem`;
+          const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
+          if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+            this.logger.log(
+              `Certificate missing for ${primaryDomain}, calling ensureCertificate`,
+            );
+            await this.certificate.ensureCertificate(domains);
+          }
+        } catch (error: any) {
+          this.logger.error(
+            `Failed to ensure SSL certificate for entry id=${entry.id}`,
+            error instanceof Error ? error.stack : String(error),
+            JSON.stringify({
+              entryId: entry.id,
+              time: new Date().toISOString(),
+            }),
           );
-          await this.certificate.ensureCertificate(domains);
         }
       }
 
@@ -118,14 +129,25 @@ export class ReloaderService {
     await mkdir(confdDir, { recursive: true });
 
     for (const entry of entries) {
-      this.logger.log(`Generating nginx config for entry id=${entry.id}`);
-      const entryConfig = this.nginx.generateNginxConfig([entry]);
-      const entryFilename = join(confdDir, `${entry.id}.conf.tmp`);
-      this.logger.log(`Writing temp config file: ${entryFilename}`);
-      await writeFile(entryFilename, entryConfig, { encoding: 'utf-8' });
-      const finalFilename = join(confdDir, `${entry.id}.conf`);
-      this.logger.log(`Renaming temp config file to final: ${finalFilename}`);
-      await rename(entryFilename, finalFilename);
+      try {
+        this.logger.log(`Generating nginx config for entry id=${entry.id}`);
+        const entryConfig = this.nginx.generateNginxConfig([entry]);
+        const entryFilename = join(confdDir, `${entry.id}.conf.tmp`);
+        this.logger.log(`Writing temp config file: ${entryFilename}`);
+        await writeFile(entryFilename, entryConfig, { encoding: 'utf-8' });
+        const finalFilename = join(confdDir, `${entry.id}.conf`);
+        this.logger.log(`Renaming temp config file to final: ${finalFilename}`);
+        await rename(entryFilename, finalFilename);
+      } catch (error: any) {
+        this.logger.error(
+          `Failed to generate nginx config for entry id=${entry.id}`,
+          error instanceof Error ? error.stack : String(error),
+          JSON.stringify({
+            entryId: entry.id,
+            time: new Date().toISOString(),
+          }),
+        );
+      }
     }
   }
 
@@ -137,14 +159,26 @@ export class ReloaderService {
       this.logger.log(`Found ${files.length} items in ${dir} to remove.`);
       await Promise.all(
         files.map(async (file) => {
-          const fullPath = join(dir, file);
-          const fileStat = await stat(fullPath);
-          if (fileStat.isDirectory()) {
-            this.logger.log(`Removing directory: ${fullPath}`);
-            await rm(fullPath, { recursive: true, force: true });
-          } else {
-            this.logger.log(`Removing file: ${fullPath}`);
-            await unlink(fullPath);
+          try {
+            const fullPath = join(dir, file);
+            const fileStat = await stat(fullPath);
+            if (fileStat.isDirectory()) {
+              this.logger.log(`Removing directory: ${fullPath}`);
+              await rm(fullPath, { recursive: true, force: true });
+            } else {
+              this.logger.log(`Removing file: ${fullPath}`);
+              await unlink(fullPath);
+            }
+          } catch (err) {
+            this.logger.error(
+              `Failed to remove ${file} in ${dir}`,
+              err instanceof Error ? err.stack : String(err),
+              JSON.stringify({
+                file,
+                dir,
+                time: new Date().toISOString(),
+              }),
+            );
           }
         }),
       );
@@ -172,14 +206,27 @@ export class ReloaderService {
     const entries = await readdir(src, { withFileTypes: true });
     this.logger.log(`Found ${entries.length} entries in ${src}`);
     for (const entry of entries) {
-      const srcPath = join(src, entry.name);
-      const destPath = join(dest, entry.name);
-      if (entry.isDirectory()) {
-        this.logger.log(`Recursively copying directory: ${srcPath}`);
-        await this.copyDirectoryRecursive(srcPath, destPath);
-      } else {
-        this.logger.log(`Copying file: ${srcPath} -> ${destPath}`);
-        await copyFile(srcPath, destPath);
+      try {
+        const srcPath = join(src, entry.name);
+        const destPath = join(dest, entry.name);
+        if (entry.isDirectory()) {
+          this.logger.log(`Recursively copying directory: ${srcPath}`);
+          await this.copyDirectoryRecursive(srcPath, destPath);
+        } else {
+          this.logger.log(`Copying file: ${srcPath} -> ${destPath}`);
+          await copyFile(srcPath, destPath);
+        }
+      } catch (err) {
+        this.logger.error(
+          `Failed to copy ${entry.name} from ${src} to ${dest}`,
+          err instanceof Error ? err.stack : String(err),
+          JSON.stringify({
+            entryName: entry.name,
+            src,
+            dest,
+            time: new Date().toISOString(),
+          }),
+        );
       }
     }
   }
@@ -193,33 +240,45 @@ export class ReloaderService {
     const dirs = new Set<string>();
 
     for (const entry of entries) {
-      if (entry.nginx_custom_code) {
-        const rootMatches = entry.nginx_custom_code.match(/root\s+([^;]+);/g);
-        const aliasMatches = entry.nginx_custom_code.match(/alias\s+([^;]+);/g);
-        if (rootMatches) {
-          rootMatches.forEach((m) => {
-            const path = m
-              .replace(/root\s+/, '')
-              .replace(/;/, '')
-              .trim();
-            this.logger.log(
-              `Found root directive, will ensure directory: ${path}`,
-            );
-            dirs.add(path);
-          });
+      try {
+        if (entry.nginx_custom_code) {
+          const rootMatches = entry.nginx_custom_code.match(/root\s+([^;]+);/g);
+          const aliasMatches =
+            entry.nginx_custom_code.match(/alias\s+([^;]+);/g);
+          if (rootMatches) {
+            rootMatches.forEach((m) => {
+              const path = m
+                .replace(/root\s+/, '')
+                .replace(/;/, '')
+                .trim();
+              this.logger.log(
+                `Found root directive, will ensure directory: ${path}`,
+              );
+              dirs.add(path);
+            });
+          }
+          if (aliasMatches) {
+            aliasMatches.forEach((m) => {
+              const path = m
+                .replace(/alias\s+/, '')
+                .replace(/;/, '')
+                .trim();
+              this.logger.log(
+                `Found alias directive, will ensure directory: ${path}`,
+              );
+              dirs.add(path);
+            });
+          }
         }
-        if (aliasMatches) {
-          aliasMatches.forEach((m) => {
-            const path = m
-              .replace(/alias\s+/, '')
-              .replace(/;/, '')
-              .trim();
-            this.logger.log(
-              `Found alias directive, will ensure directory: ${path}`,
-            );
-            dirs.add(path);
-          });
-        }
+      } catch (error: any) {
+        this.logger.error(
+          `Failed to parse nginx_custom_code for entry id=${entry.id}`,
+          error instanceof Error ? error.stack : String(error),
+          JSON.stringify({
+            entryId: entry.id,
+            time: new Date().toISOString(),
+          }),
+        );
       }
     }
 
