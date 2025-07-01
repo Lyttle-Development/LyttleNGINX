@@ -4,12 +4,12 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { NginxModule } from '../nginx/nginx.module';
 import { NginxService } from '../nginx/nginx.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { SslManagerService } from '../ssl-manager/ssl-manager.service';
-import { SslManagerModule } from '../ssl-manager/ssl-manager.module';
+import { CertificateService } from '../certificate/certificate.service';
+import { CertificateModule } from '../certificate/certificate.module';
 
 @Module({
-  imports: [PrismaModule, NginxModule, SslManagerModule],
-  providers: [ReloaderService, NginxService, PrismaService, SslManagerService],
+  imports: [PrismaModule, NginxModule, CertificateModule],
+  providers: [ReloaderService, NginxService, PrismaService, CertificateService],
   exports: [ReloaderService],
 })
 export class ReloaderModule {}
