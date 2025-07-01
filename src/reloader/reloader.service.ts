@@ -102,7 +102,11 @@ export class ReloaderService {
       );
       return { ok: true };
     } catch (error: any) {
-      this.logger.error('Failed to reload Nginx config', error);
+      this.logger.error(
+        'Failed to reload Nginx config',
+        error instanceof Error ? error.stack : String(error),
+        JSON.stringify({ error, time: new Date().toISOString() }),
+      );
       return { ok: false, error: error.message || String(error) };
     }
   }

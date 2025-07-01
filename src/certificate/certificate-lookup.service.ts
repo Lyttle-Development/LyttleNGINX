@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { parseDomains, hashDomains } from '../utils/domain-utils';
+import { hashDomains, parseDomains } from '../utils/domain-utils';
 import { addDays } from 'date-fns';
 
 const RENEW_BEFORE_DAYS = parseInt(process.env.RENEW_BEFORE_DAYS || '30', 10);
@@ -8,6 +8,7 @@ const RENEW_BEFORE_DAYS = parseInt(process.env.RENEW_BEFORE_DAYS || '30', 10);
 @Injectable()
 export class CertificateLookupService {
   private readonly logger = new Logger(CertificateLookupService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /** Find the non-expiring certificate for this ProxyEntry domain set */
@@ -28,7 +29,22 @@ export class CertificateLookupService {
 
     if (!cert) {
       this.logger.warn(
-        `No valid certificate found for domains="${domainsString}" (hash=${domainsHash})`
+        'No valid certificate found',
+        '',
+        JSON.stringify({
+          domains: domainsString,
+          hash: domainsHash,
+          at: new Date().toISOString(),
+        }),
+      );
+    } else {
+      this.logger.log(
+        'Valid certificate found',
+        JSON.stringify({
+          certId: cert.id,
+          domains: domainsString,
+          expiresAt: cert.expiresAt,
+        }),
       );
     }
     return cert;
@@ -38,7 +54,7 @@ export class CertificateLookupService {
   async findOrphanCertificates() {
     const entries = await this.prisma.proxyEntry.findMany();
     const usedDomainHashes = new Set(
-      entries.map(e => hashDomains(parseDomains(e.domains)))
+      entries.map((e) => hashDomains(parseDomains(e.domains))),
     );
     const orphans = await this.prisma.certificate.findMany({
       where: { domainsHash: { notIn: Array.from(usedDomainHashes) } },

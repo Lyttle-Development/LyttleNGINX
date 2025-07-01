@@ -84,79 +84,90 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
   async ensureCertificate(domains: string[]): Promise<void> {
     if (process.env.NODE_ENV === 'development') return;
     const primaryDomain = domains[0];
-    const hash = hashDomains(domains);
-    const domainsStr = joinDomains(domains);
-    const now = new Date();
-    const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
-
-    // 1. Try DB
-    const certEntry = await this.prisma.certificate.findFirst({
-      where: {
-        domainsHash: hash,
-        expiresAt: { gt: renewBefore },
-        isOrphaned: false,
-      },
-      orderBy: { expiresAt: 'desc' },
-    });
-
-    if (certEntry) {
-      this.logger.log(
-        `[DB] Found valid cert for ${domainsStr}. Writing to FS.`,
-      );
-      await this.writeCertToFs(
-        primaryDomain,
-        certEntry.certPem,
-        certEntry.keyPem,
-      );
-      await this.prisma.certificate.update({
-        where: { id: certEntry.id },
-        data: { lastUsedAt: now },
-      });
-      return;
-    }
-
-    // 2. Not in DB (or expiring): run certbot, then save in DB
-    this.logger.log(
-      `[Certbot] Ensuring Let's Encrypt cert for: ${domainsStr}...`,
-    );
-    const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
     try {
-      await exec(
-        `certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
-      );
-      this.logger.log(`[Certbot] Obtained/renewed cert for ${primaryDomain}`);
+      const hash = hashDomains(domains);
+      const domainsStr = joinDomains(domains);
+      const now = new Date();
+      const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
 
-      // Read the cert/key files produced by certbot
-      const certPem = fs.readFileSync(
-        path.join(this.certDir(primaryDomain), 'fullchain.pem'),
-        'utf8',
-      );
-      const keyPem = fs.readFileSync(
-        path.join(this.certDir(primaryDomain), 'privkey.pem'),
-        'utf8',
-      );
-
-      // Extract expiry from cert
-      const { stdout } = await exec(
-        `openssl x509 -enddate -noout -in ${path.join(this.certDir(primaryDomain), 'fullchain.pem')}`,
-      );
-      const match = stdout.match(/notAfter=(.*)/);
-      const expiresAt = match ? new Date(match[1]) : addDays(new Date(), 90);
-
-      await this.prisma.certificate.create({
-        data: {
-          domains: domainsStr,
+      // 1. Try DB
+      const certEntry = await this.prisma.certificate.findFirst({
+        where: {
           domainsHash: hash,
-          certPem,
-          keyPem,
-          expiresAt,
-          issuedAt: new Date(),
-          lastUsedAt: now,
+          expiresAt: { gt: renewBefore },
           isOrphaned: false,
         },
+        orderBy: { expiresAt: 'desc' },
       });
+
+      if (certEntry) {
+        this.logger.log(
+          `[DB] Found valid cert for ${domainsStr}. Writing to FS.`,
+        );
+        await this.writeCertToFs(
+          primaryDomain,
+          certEntry.certPem,
+          certEntry.keyPem,
+        );
+        await this.prisma.certificate.update({
+          where: { id: certEntry.id },
+          data: { lastUsedAt: now },
+        });
+        return;
+      }
+
+      // 2. Not in DB (or expiring): run certbot, then save in DB
+      this.logger.log(
+        `[Certbot] Ensuring Let's Encrypt cert for: ${domainsStr}...`,
+      );
+      const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
+      try {
+        await exec(
+          `certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+        );
+        this.logger.log(`[Certbot] Obtained/renewed cert for ${primaryDomain}`);
+
+        // Read the cert/key files produced by certbot
+        const certPem = fs.readFileSync(
+          path.join(this.certDir(primaryDomain), 'fullchain.pem'),
+          'utf8',
+        );
+        const keyPem = fs.readFileSync(
+          path.join(this.certDir(primaryDomain), 'privkey.pem'),
+          'utf8',
+        );
+
+        // Extract expiry from cert
+        const { stdout } = await exec(
+          `openssl x509 -enddate -noout -in ${path.join(this.certDir(primaryDomain), 'fullchain.pem')}`,
+        );
+        const match = stdout.match(/notAfter=(.*)/);
+        const expiresAt = match ? new Date(match[1]) : addDays(new Date(), 90);
+
+        await this.prisma.certificate.create({
+          data: {
+            domains: domainsStr,
+            domainsHash: hash,
+            certPem,
+            keyPem,
+            expiresAt,
+            issuedAt: new Date(),
+            lastUsedAt: now,
+            isOrphaned: false,
+          },
+        });
+      } catch (err) {
+        this.logger.error(`[Certbot] Failed for ${primaryDomain}:`, err);
+      }
     } catch (err) {
-      this.logger.error(`[Certbot] Failed for ${primaryDomain}:`, err);
+      this.logger.error(
+        `[Certbot] Failed for ${primaryDomain}`,
+        err instanceof Error ? err.stack : String(err),
+        JSON.stringify({ domains }),
+      );
+      throw new Error(
+        `Certificate provisioning failed for ${primaryDomain}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 }
