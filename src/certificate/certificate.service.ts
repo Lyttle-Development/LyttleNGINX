@@ -26,6 +26,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   constructor(private prisma: PrismaService) {}
 
   async onModuleInit() {
+    this.logger.log(
+      `[Init] Starting certificate renewal interval (${this.renewIntervalMs / (1000 * 60)} min)`,
+    );
     this.interval = setInterval(
       () => this.renewAllCertificates(),
       this.renewIntervalMs,
@@ -33,7 +36,10 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   }
 
   async onApplicationShutdown() {
-    if (this.interval) clearInterval(this.interval);
+    if (this.interval) {
+      this.logger.log('[Shutdown] Clearing renewal interval');
+      clearInterval(this.interval);
+    }
   }
 
   private certDir(primaryDomain: string) {
@@ -46,17 +52,31 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     keyPem: string,
   ) {
     const dir = this.certDir(primaryDomain);
+    this.logger.log(`[FS] Ensuring directory exists: ${dir}`);
     fs.mkdirSync(dir, { recursive: true });
+
+    this.logger.log(
+      `[FS] Writing certificate: ${path.join(dir, 'fullchain.pem')}`,
+    );
     fs.writeFileSync(path.join(dir, 'fullchain.pem'), certPem, {
       encoding: 'utf8',
     });
+
+    this.logger.log(
+      `[FS] Writing private key: ${path.join(dir, 'privkey.pem')}`,
+    );
     fs.writeFileSync(path.join(dir, 'privkey.pem'), keyPem, {
       encoding: 'utf8',
     });
   }
 
   async ensureCertificate(domainsInput: string[] | string): Promise<void> {
-    if (process.env.NODE_ENV === 'development') return;
+    if (process.env.NODE_ENV === 'development') {
+      this.logger.log(
+        '[Dev] Skipping certificate issuance in development mode.',
+      );
+      return;
+    }
     const domains = Array.isArray(domainsInput)
       ? domainsInput
       : parseDomains(domainsInput);
@@ -66,7 +86,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
 
+    this.logger.log(
+      `[Cert] Ensuring certificate for [${domainsStr}] (hash: ${hash})`,
+    );
+
     // 1. Try DB
+    this.logger.log(
+      `[DB] Looking up certificate in DB for hash: ${hash} (expires after ${renewBefore.toISOString()})`,
+    );
     const certEntry = await this.prisma.certificate.findFirst({
       where: {
         domainsHash: hash,
@@ -78,45 +105,57 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
     if (certEntry) {
       this.logger.log(
-        `[DB] Found valid cert for ${domainsStr}. Writing to FS.`,
+        `[DB] Found valid certificate (id: ${certEntry.id}, expires: ${certEntry.expiresAt.toISOString()}). Writing to FS.`,
       );
       this.writeCertToFs(primaryDomain, certEntry.certPem, certEntry.keyPem);
       await this.prisma.certificate.update({
         where: { id: certEntry.id },
         data: { lastUsedAt: now },
       });
+      this.logger.log(
+        `[DB] Updated lastUsedAt for certificate id: ${certEntry.id}`,
+      );
       return;
     }
 
     // 2. Not in DB (or expiring): run certbot, then save in DB
     this.logger.log(
-      `[Certbot] Ensuring Let's Encrypt cert for: ${domainsStr}...`,
+      `[Certbot] No valid certificate in DB. Running certbot for: [${domainsStr}]`,
     );
     const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
     try {
+      this.logger.log(
+        `[Certbot] Running command: certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+      );
       await exec(
         `certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
       );
-      this.logger.log(`[Certbot] Obtained/renewed cert for ${primaryDomain}`);
+      this.logger.log(
+        `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
+      );
 
       // Read the cert/key files produced by certbot
-      const certPem = fs.readFileSync(
-        path.join(this.certDir(primaryDomain), 'fullchain.pem'),
-        'utf8',
-      );
-      const keyPem = fs.readFileSync(
-        path.join(this.certDir(primaryDomain), 'privkey.pem'),
-        'utf8',
-      );
+      const certPath = path.join(this.certDir(primaryDomain), 'fullchain.pem');
+      const keyPath = path.join(this.certDir(primaryDomain), 'privkey.pem');
+      this.logger.log(`[FS] Reading certificate file: ${certPath}`);
+      const certPem = fs.readFileSync(certPath, 'utf8');
+      this.logger.log(`[FS] Reading key file: ${keyPath}`);
+      const keyPem = fs.readFileSync(keyPath, 'utf8');
 
       // Extract expiry from cert
+      this.logger.log(
+        `[OpenSSL] Extracting expiry from certificate file: ${certPath}`,
+      );
       const { stdout } = await exec(
-        `openssl x509 -enddate -noout -in ${path.join(this.certDir(primaryDomain), 'fullchain.pem')}`,
+        `openssl x509 -enddate -noout -in ${certPath}`,
       );
       const match = stdout.match(/notAfter=(.*)/);
       const expiresAt = match ? new Date(match[1]) : addDays(new Date(), 90);
+      this.logger.log(
+        `[OpenSSL] Certificate expiry: ${expiresAt.toISOString()}`,
+      );
 
-      await this.prisma.certificate.create({
+      const certRecord = await this.prisma.certificate.create({
         data: {
           domains: domainsStr,
           domainsHash: hash,
@@ -128,26 +167,52 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           isOrphaned: false,
         },
       });
+      this.logger.log(
+        `[DB] Saved new certificate to DB (id: ${certRecord.id}, expires: ${expiresAt.toISOString()})`,
+      );
     } catch (err) {
-      this.logger.error(`[Certbot] Failed for ${primaryDomain}:`, err);
+      this.logger.error(
+        `[Certbot] Failed to obtain certificate for ${primaryDomain}: ${err instanceof Error ? err.stack : String(err)}`,
+      );
       throw err;
     }
   }
 
   async renewAllCertificates() {
+    this.logger.log(
+      '[Renewal] Starting renewal for all certificate domain groups...',
+    );
     const entries = await this.prisma.proxyEntry.findMany();
     const domainGroups = Array.from(
       new Set(entries.map((e) => joinDomains(parseDomains(e.domains)))),
     ).map((group) => parseDomains(group));
+
+    this.logger.log(
+      `[Renewal] Found ${domainGroups.length} unique domain group(s) to renew.`,
+    );
+
     for (const domains of domainGroups) {
-      await this.ensureCertificate(domains);
+      try {
+        this.logger.log(
+          `[Renewal] Ensuring certificate for group: [${joinDomains(domains)}]`,
+        );
+        await this.ensureCertificate(domains);
+      } catch (err) {
+        this.logger.error(
+          `[Renewal] Error ensuring certificate for domains [${joinDomains(domains)}]: ${err instanceof Error ? err.stack : String(err)}`,
+        );
+      }
     }
     // After possible renewals, reload nginx
     try {
+      this.logger.log('[Renewal] Reloading nginx after cert renewal check...');
       await exec('nginx -s reload');
-      this.logger.log('Nginx reloaded after cert renewal check.');
+      this.logger.log('[Renewal] nginx reloaded after cert renewal.');
     } catch (err) {
-      this.logger.error('Failed to reload nginx after cert renewal', err);
+      this.logger.error(
+        '[Renewal] Failed to reload nginx after cert renewal',
+        err,
+      );
     }
   }
 }
