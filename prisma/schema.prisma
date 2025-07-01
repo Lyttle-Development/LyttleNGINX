@@ -28,18 +28,17 @@ enum ProxyType {
 }
 
 model Certificate {
-  id           String   @id @default(uuid())
-  domains      String   // ';'-joined list of domains (e.g. "a.com;b.com")
-  domainsHash  String   // SHA256 hash of sorted split domains
-  certPem      String   // Certificate PEM
-  keyPem       String   // Private Key PEM
-  expiresAt    DateTime
-  issuedAt     DateTime
-  lastUsedAt   DateTime
-  isOrphaned   Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-}
+  id          String   @id @default(uuid())
+  domains     String // ';'-joined list of domains (e.g. "a.com;b.com")
+  domainsHash String // SHA256 hash of sorted split domains
+  certPem     String // Certificate PEM
+  keyPem      String // Private Key PEM
+  expiresAt   DateTime
+  issuedAt    DateTime
+  lastUsedAt  DateTime
+  isOrphaned  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@schema("public")
 }

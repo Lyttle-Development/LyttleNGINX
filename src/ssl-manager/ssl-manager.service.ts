@@ -89,10 +89,15 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
     });
   }
 
+  private static domainsString(domains: string[]): string {
+    return domains.join(';');
+  }
+
   async ensureCertificate(domains: string[]): Promise<void> {
     if (process.env.NODE_ENV === 'development') return;
     const primaryDomain = domains[0];
     const hash = SslManagerService.domainsHash(domains);
+    const domainsStr = SslManagerService.domainsString(domains);
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
 
@@ -108,7 +113,7 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
 
     if (certEntry) {
       this.logger.log(
-        `[DB] Found valid cert for ${domains.join(', ')}. Writing to FS.`,
+        `[DB] Found valid cert for ${domainsStr}. Writing to FS.`,
       );
       await this.writeCertToFs(
         primaryDomain,
@@ -124,7 +129,7 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
 
     // 2. Not in DB (or expiring): run certbot, then save in DB
     this.logger.log(
-      `[Certbot] Ensuring Let's Encrypt cert for: ${domains.join(', ')}...`,
+      `[Certbot] Ensuring Let's Encrypt cert for: ${domainsStr}...`,
     );
     const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
     try {
@@ -152,7 +157,7 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
 
       await this.prisma.certificate.create({
         data: {
-          domains,
+          domains: domainsStr,
           domainsHash: hash,
           certPem,
           keyPem,
