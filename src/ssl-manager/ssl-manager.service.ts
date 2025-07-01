@@ -10,8 +10,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import * as process from 'node:process';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as crypto from 'crypto';
 import { addDays } from 'date-fns';
+import { hashDomains, joinDomains } from '../utils/domain-utils';
 
 const exec = promisify(execCb);
 const adminEmail = process.env.ADMIN_EMAIL || null;
@@ -62,14 +62,6 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  private static domainsHash(domains: string[]): string {
-    const sorted = [...domains].sort();
-    return crypto
-      .createHash('sha256')
-      .update(JSON.stringify(sorted))
-      .digest('hex');
-  }
-
   private certDir(primaryDomain: string) {
     return `/etc/letsencrypt/live/${primaryDomain}`;
   }
@@ -89,15 +81,11 @@ export class SslManagerService implements OnModuleInit, OnApplicationShutdown {
     });
   }
 
-  private static domainsString(domains: string[]): string {
-    return domains.join(';');
-  }
-
   async ensureCertificate(domains: string[]): Promise<void> {
     if (process.env.NODE_ENV === 'development') return;
     const primaryDomain = domains[0];
-    const hash = SslManagerService.domainsHash(domains);
-    const domainsStr = SslManagerService.domainsString(domains);
+    const hash = hashDomains(domains);
+    const domainsStr = joinDomains(domains);
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
 

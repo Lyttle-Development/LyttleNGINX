@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import * as crypto from 'crypto';
 import { addDays } from 'date-fns';
 import { Certificate } from '@prisma/client';
+import { hashDomains, joinDomains } from '../utils/domain-utils';
 
 const RENEW_BEFORE_DAYS = 30; // Can be loaded from config
 
@@ -12,16 +12,8 @@ export class CertificateService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  private static domainsHash(domains: string[]): string {
-    const sorted = [...domains].sort();
-    return crypto
-      .createHash('sha256')
-      .update(JSON.stringify(sorted))
-      .digest('hex');
-  }
-
   async getValidCertificate(domains: string[]): Promise<Certificate | null> {
-    const hash = CertificateService.domainsHash(domains);
+    const hash = hashDomains(domains);
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
 
@@ -51,10 +43,10 @@ export class CertificateService {
     expiresAt: Date,
     issuedAt: Date,
   ): Promise<Certificate> {
-    const hash = CertificateService.domainsHash(domains);
+    const hash = hashDomains(domains);
     return this.prisma.certificate.create({
       data: {
-        domains,
+        domains: joinDomains(domains),
         domainsHash: hash,
         certPem,
         keyPem,
@@ -68,9 +60,7 @@ export class CertificateService {
 
   async orphanOldCertificates(currentDomainsList: string[][]) {
     // Mark as orphaned any certs whose domainsHash isn't in use anymore
-    const validHashes = new Set(
-      currentDomainsList.map(CertificateService.domainsHash),
-    );
+    const validHashes = new Set(currentDomainsList.map(hashDomains));
     await this.prisma.certificate.updateMany({
       where: {
         domainsHash: { notIn: Array.from(validHashes) },
