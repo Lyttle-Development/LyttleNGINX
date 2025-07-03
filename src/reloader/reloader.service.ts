@@ -15,9 +15,20 @@ import {
 import { join } from 'path';
 import * as fs from 'fs';
 import { CertificateService } from '../certificate/certificate.service';
+import { lookup } from 'dns/promises'; // <-- Added
 
 const NGINX_ETC_DIR = '/etc/nginx';
 const NGINX_SOURCE_DIR = join(process.cwd(), 'nginx');
+
+// Helper function to check if host resolves
+async function isHostResolvable(host: string): Promise<boolean> {
+  try {
+    await lookup(host);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 @Injectable()
 export class ReloaderService {
@@ -130,6 +141,26 @@ export class ReloaderService {
 
     for (const entry of entries) {
       try {
+        // Extract upstream host from entry.proxy_pass_host (handle http[s]://host[:port])
+        let upstreamHost = entry.proxy_pass_host;
+        // Only for proxy type, not redirect
+        if (entry.type !== 'REDIRECT' && entry.proxy_pass_host) {
+          // Example: http://srv-captain--community-v3-api:3000/
+          const match = entry.proxy_pass_host.match(/^https?:\/\/([^/:]+)/);
+          if (match) upstreamHost = match[1];
+        }
+
+        // Check if upstream host resolves (skip for REDIRECT type)
+        if (entry.type !== 'REDIRECT') {
+          const resolvable = await isHostResolvable(upstreamHost);
+          if (!resolvable) {
+            this.logger.warn(
+              `Skipping entry id=${entry.id} due to unresolved upstream host: ${upstreamHost}`,
+            );
+            continue;
+          }
+        }
+
         this.logger.log(`Generating nginx config for entry id=${entry.id}`);
         const entryConfig = this.nginx.generateNginxConfig([entry]);
         const entryFilename = join(confdDir, `${entry.id}.conf.tmp`);
