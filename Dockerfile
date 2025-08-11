@@ -11,15 +11,12 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy package files first for better layer caching
+# Copy built NestJS app and package.json files
 COPY package*.json ./
-RUN npm ci
-
-# Copy the rest of the app
 COPY . .
 
-# Build NestJS app
-RUN npm run build
+# Install Node dependencies and build NestJS app
+RUN npm ci && npm run build
 
 # Copy entrypoint scripts
 COPY docker-entrypoint.sh /docker-entrypoint.sh
