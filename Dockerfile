@@ -40,7 +40,7 @@ EXPOSE 80 443 3000
 
 # Healthcheck
 HEALTHCHECK --interval=300s --timeout=100s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
+    CMD curl -f http://localhost:80 || exit 1
 
 # Use tini for proper signal handling
 ENTRYPOINT ["/usr/bin/tini", "--", "/docker-entrypoint.sh"]
