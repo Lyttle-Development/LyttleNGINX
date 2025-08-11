@@ -11,12 +11,15 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy built NestJS app and package.json files
+# Copy package files first for better layer caching
 COPY package*.json ./
+RUN npm ci
+
+# Copy the rest of the app
 COPY . .
 
-# Install Node dependencies and build NestJS app
-RUN npm ci && npm run build
+# Build NestJS app
+RUN npm run build
 
 # Copy entrypoint scripts
 COPY docker-entrypoint.sh /docker-entrypoint.sh
@@ -39,7 +42,7 @@ RUN addgroup --system --gid 101 nginx && \
 EXPOSE 80 443 3000
 
 # Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=300s --timeout=100s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:3000/health || exit 1
 
 # Use tini for proper signal handling
