@@ -7,6 +7,7 @@ import { AppService } from './app.service';
 import { CertificateModule } from './certificate/certificate.module';
 import { HealthModule } from './health/health.module';
 import { LogsModule } from './logs/logs.module';
+import { LogsService } from './logs/logs.service';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { LogsModule } from './logs/logs.module';
   controllers: [AppController],
 })
 export class AppModule {
-  constructor(logsService: import('./logs/logs.service').LogsService) {
+  constructor(logsService: LogsService) {
     // Use custom logger for NestJS, but preserve stdout for docker logs
     const logger = new Logger('App');
     logger.log = (...args) => {
