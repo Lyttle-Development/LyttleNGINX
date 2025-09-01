@@ -3,7 +3,6 @@ __pycache__
 .idea
 *.pyc
 venv
-logs
 .git
 cogs/.DS_Store
 .DS_Store
@@ -11,7 +10,6 @@ cogs/.DS_Store
 *.env
 
 # Logs
-logs
 *.log
 npm-debug.log*
 yarn-debug.log*
