@@ -25,6 +25,10 @@ RUN chmod +x /docker-entrypoint.sh
 # Copy nginx config
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
+# Copy custom 5xx error pages
+COPY nginx/errors /etc/nginx/errors
+RUN chmod -R 755 /etc/nginx/errors
+
 # Ensure proper permissions for Nginx logs and SSL
 RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && \
     chmod 666 /var/log/nginx/*.log && \
