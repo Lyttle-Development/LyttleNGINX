@@ -1,4 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NginxService } from '../nginx/nginx.service';
 import { exec } from 'child_process';
@@ -31,14 +36,54 @@ async function isHostResolvable(host: string): Promise<boolean> {
 }
 
 @Injectable()
-export class ReloaderService {
+export class ReloaderService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ReloaderService.name);
+  private intervalHandle: NodeJS.Timeout | null = null;
+
+  // reload interval: every 5 minutes
+  private readonly intervalMs = 5 * 60 * 1000;
 
   constructor(
     private prisma: PrismaService,
     private nginx: NginxService,
     private certificate: CertificateService,
   ) {}
+
+  async onModuleInit() {
+    this.logger.log(
+      `Starting automated reloader: interval=${this.intervalMs}ms`,
+    );
+    // Run an immediate attempt at startup (non-blocking)
+    this.runReloadSafe().catch((err) => {
+      this.logger.warn(`Initial reload attempt failed: ${err?.message ?? err}`);
+    });
+
+    // Setup periodic reloads
+    this.intervalHandle = setInterval(() => {
+      this.runReloadSafe().catch((err) => {
+        this.logger.warn(`Scheduled reload failed: ${err?.message ?? err}`);
+      });
+    }, this.intervalMs);
+    // Unref so interval won't keep the process alive unnecessarily
+    this.intervalHandle.unref?.();
+  }
+
+  async onModuleDestroy() {
+    if (this.intervalHandle) {
+      clearInterval(this.intervalHandle);
+      this.intervalHandle = null;
+      this.logger.log('Automated reloader stopped');
+    }
+  }
+
+  private async runReloadSafe(): Promise<void> {
+    const res = await this.reloadConfig();
+    if (res.ok) {
+      this.logger.log('Automated reload succeeded');
+    } else {
+      this.logger.warn(`Automated reload reported error: ${res.error ?? ''}`);
+    }
+  }
 
   async reloadConfig(): Promise<{ ok: boolean; error?: string }> {
     try {
