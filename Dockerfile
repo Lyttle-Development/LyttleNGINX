@@ -39,8 +39,8 @@ RUN addgroup --system --gid 101 nginx && \
 EXPOSE 80 443 3000
 
 # Healthcheck
-#HEALTHCHECK --interval=300s --timeout=100s --start-period=5s --retries=3 \
-#    CMD curl -f http://localhost:80 || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fS --max-time 5 http://127.0.0.1:3000/ready || exit 1
 
 # Use tini for proper signal handling
 ENTRYPOINT ["/usr/bin/tini", "--", "/docker-entrypoint.sh"]
