@@ -24,6 +24,9 @@ RUN chmod +x /docker-entrypoint.sh
 
 # Copy nginx config
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
+# Ensure virtual hosts and static assets (including error pages) are available to Nginx
+COPY nginx/conf.d /etc/nginx/conf.d
+COPY nginx/html /etc/nginx/html
 
 # Ensure proper permissions for Nginx logs and SSL
 RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && \
