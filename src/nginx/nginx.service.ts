@@ -10,18 +10,13 @@ export class NginxService {
     for (const entry of entries) {
       try {
         const domains = entry.domains
-          // Split domains by semicolon
           .split(';')
-          // Remove whitespace and leading asterisk
           .map((d) => d.trim())
-          // Remove newlines
           .map((d) => d.replace(/^\*/, '').trim())
-          // Filter out empty domains
           .filter(Boolean);
         if (domains.length === 0) continue;
         const primaryDomain = domains[0];
 
-        // Check if cert files exist
         const certPath = `/etc/letsencrypt/live/${primaryDomain}/fullchain.pem`;
         const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
         const hasCert = fs.existsSync(certPath) && fs.existsSync(keyPath);
@@ -50,13 +45,26 @@ server {
   location / {
     proxy_pass ${entry.proxy_pass_host};
     proxy_ssl_verify off;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+    proxy_pass_request_headers on;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header X-Forwarded-Port  $server_port;
+    proxy_set_header Forwarded         "for=$remote_addr;proto=$scheme;host=$host";
+
+    proxy_set_header CF-Connecting-IP  $http_cf_connecting_ip;
+    proxy_set_header CF-IPCountry      $http_cf_ipcountry;
+    proxy_set_header CF-Ray            $http_cf_ray;
+    proxy_set_header CF-Visitor        $http_cf_visitor;
+    proxy_set_header True-Client-IP    $http_true_client_ip;
+
     proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
+    proxy_set_header Upgrade           $http_upgrade;
+    proxy_set_header Connection        $connection_upgrade;
+
     proxy_read_timeout 86400;
   }
       `
