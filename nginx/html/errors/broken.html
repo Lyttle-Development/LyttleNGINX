@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>Broken — LyttleDevelopment</title>
+    <style>
+        :root {
+            --bg: #0b1020;
+            --card: #0f1724;
+            --accent: #7dd3fc;
+            --muted: #94a3b8;
+            --white: #e6eef8;
+        }
+
+        html, body {
+            height: 100%;
+            margin: 0;
+            font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+            background: radial-gradient(1200px 600px at 10% 10%, rgba(124, 58, 237, 0.12), transparent),
+            linear-gradient(180deg, var(--bg) 0%, #061025 100%);
+            color: var(--white);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .wrap {
+            min-height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px;
+            box-sizing: border-box;
+        }
+
+        .card {
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            box-shadow: 0 8px 30px rgba(2, 6, 23, 0.6);
+            padding: 36px;
+            border-radius: 12px;
+            max-width: 880px;
+            width: 100%;
+            display: flex;
+            gap: 24px;
+            align-items: center;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo {
+            width: 64px;
+            height: 64px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 6px 18px rgba(125, 211, 252, 0.08), inset 0 -6px 16px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 20px;
+            letter-spacing: -0.02em;
+        }
+
+        p {
+            margin: 4px 0 0 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .spinner {
+            margin-left: auto;
+            width: 64px;
+            height: 64px;
+            display: grid;
+            place-items: center;
+        }
+
+        .dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: pulse 1.2s infinite ease-in-out;
+            box-shadow: 0 6px 18px rgba(125, 211, 252, 0.12);
+        }
+
+        .dot:nth-child(2) { animation-delay: 0.12s; transform: scale(0.85); }
+
+        .dot:nth-child(3) { animation-delay: 0.24s; transform: scale(0.7); }
+
+        @keyframes pulse {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            50% { transform: translateY(-6px) scale(1.14); opacity: 0.85; }
+            100% { transform: translateY(0) scale(1); opacity: 1; }
+        }
+
+        .desc {
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        @media (max-width: 640px) {
+            .card { flex-direction: column; align-items: flex-start; }
+
+            .spinner { margin-left: 0; margin-top: 8px; }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap" role="status" aria-live="polite">
+    <div class="card" role="document">
+        <div>
+            <div class="brand" aria-hidden="true">
+                <svg class="logo" width="1000" height="1000" viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="1000" height="1000" fill="#252257"/>
+                    <path d="M377.919 86.5V914.064H102.5V86.5H377.919Z" fill="#F6F6F6" stroke="#252257"/>
+                    <path d="M916.869 67V915.447H608.519V872.922C555.702 913.646 489.452 933.564 411.121 933.564C354.296 933.564 302.796 920.318 257.167 893.43C211.55 866.548 175.478 828.304 148.957 779.281L148.865 779.11L148.777 778.938C122.921 728.843 110.316 671.248 110.316 606.717C110.316 540.734 122.896 481.393 148.605 429.173L148.632 429.117L148.66 429.062C175.196 375.991 213.226 334.236 262.611 304.281C312.265 274.163 370.328 259.487 436.031 259.487C501.706 259.487 557.408 274.811 601.725 306.534V67H916.869ZM513.027 498.769C482.345 498.769 462.052 507.624 448.715 522.628C434.976 538.084 426.592 562.054 426.592 597.658C426.592 633.926 434.823 657.393 447.762 671.724C460.351 685.666 480.433 694.283 511.894 694.283C542.932 694.283 564.603 685.937 579.556 671.56L579.856 671.271L580.166 670.996C594.312 658.483 602.858 639.026 602.858 608.98V589.732C602.858 558.011 594.183 536.125 579.276 521.218C565.187 507.13 544.109 498.769 513.027 498.769Z" fill="#F6F6F6" stroke="#252257"
+                          stroke-width="40"/>
+                </svg>
+                <div>
+                    <h1>This application has issues.</h1>
+                    <p>It seems like our infrastructure disabled this app.</p>
+                </div>
+            </div>
+
+            <div class="desc">
+                <p>If you are the owner of this application, please check your email for more information.</p>
+                <p>If you are a user, please contact the application owner for more details.</p>
+            </div>
+        </div>
+
+        <div class="spinner" aria-hidden="true">
+            <div style="display:flex;gap:8px">
+                <div class="dot"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
