@@ -4,11 +4,9 @@ services:
   lyttlenginx:
     image: ghcr.io/lyttle-development/lyttlenginx:main
 
-    # Deploy in global mode - one instance per node
     deploy:
       mode: global
 
-      # Resource limits to prevent one container from consuming all node resources
       resources:
         limits:
           cpus: '2'
@@ -17,74 +15,51 @@ services:
           cpus: '0.5'
           memory: 512M
 
-      # Update configuration for zero-downtime deployments
       update_config:
-        parallelism: 1  # Update one node at a time
-        delay: 30s      # Wait 30s between updates
+        parallelism: 1
+        delay: 30s
         failure_action: rollback
-        monitor: 60s    # Monitor for 60s after update
+        monitor: 60s
         max_failure_ratio: 0.3
-        order: start-first  # Safe with port publishing - enables zero-downtime updates
+        order: start-first
 
-      # Rollback configuration
       rollback_config:
         parallelism: 1
         delay: 10s
         failure_action: pause
         monitor: 30s
 
-      # Restart policy
       restart_policy:
         condition: on-failure
         delay: 10s
-        max_attempts: 3  # Prevent infinite restart loops
-        window: 120s  # 2 minutes
+        max_attempts: 3
+        window: 120s
 
-
-      # Placement constraints
-      # Uncomment if you want to restrict to specific nodes
-      # placement:
-      #   constraints:
-      #     - node.role == worker
-      #     - node.labels.nginx == true
-
-      # Labels for Traefik or other tools (optional)
       labels:
         - "app=lyttlenginx"
         - "version=1.0"
 
-    # Environment variables
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ADMIN_EMAIL=${ADMIN_EMAIL}
       - NODE_ENV=${NODE_ENV:-production}
       - RENEW_BEFORE_DAYS=${RENEW_BEFORE_DAYS:-30}
-
-      # JWT configuration
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRATION=${JWT_EXPIRATION:-7d}
-
-      # API Key for admin operations
       - API_KEY=${API_KEY}
-
-      # Email configuration (optional)
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASS=${SMTP_PASS:-}
       - SMTP_FROM=${SMTP_FROM:-}
-
-      # Rate limiting
       - RATE_LIMIT_TTL=${RATE_LIMIT_TTL:-60}
       - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-100}
 
-    # Port publishing - cleaner and safer than host networking
-    # Swarm routing mesh handles distribution and failover
     ports:
       - target: 80
         published: 80
         protocol: tcp
-        mode: host  # Bind directly to node's IP (not routing mesh)
+        mode: host
       - target: 443
         published: 443
         protocol: tcp
@@ -94,7 +69,6 @@ services:
         protocol: tcp
         mode: host
 
-    # Health check
     healthcheck:
       test: [ "/healthcheck.sh" ]
       interval: 30s
@@ -102,7 +76,6 @@ services:
       retries: 3
       start_period: 40s
 
-    # Logging configuration
     logging:
       driver: "json-file"
       options:
@@ -110,25 +83,4 @@ services:
         max-file: "3"
         labels: "app,version"
 
-# Architecture Notes:
-#
-# Port Publishing (mode: host):
-# - Ports 80/443/3003 published with mode: host for direct node binding
-# - Swarm ensures one container per node (global mode)
-# - External load balancer/DNS handles traffic distribution
-# - Better performance than routing mesh for high traffic
-#
-# No Volumes:
-# - Certificates in PostgreSQL database
-# - Each node fetches certs from DB to local filesystem
-# - Fully database-driven, no shared storage
-#
-# Zero-Downtime Updates:
-# - start-first strategy: new starts → health check passes → old stops
-# - No port conflicts with port publishing
-#
-# Failover:
-# - Node fails → swarm starts container on healthy node
-# - External LB detects and routes to healthy nodes
-# - Certs auto-fetched from DB on new node
 
