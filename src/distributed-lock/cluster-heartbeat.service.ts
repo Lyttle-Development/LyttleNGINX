@@ -22,7 +22,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   private readonly heartbeatIntervalMs = 30000; // 30 seconds
   private readonly staleThresholdMs = 120000; // 2 minutes
   private readonly deleteThresholdMs = 3600000; // 1 hour - delete very old stale nodes
-  private readonly leaderCheckIntervalMs = 15000; // 15 seconds - check for leader frequently
+  private readonly leaderCheckIntervalMs = 10000; // 10 seconds - check for leader MORE frequently
 
   constructor(
     private prisma: PrismaService,
@@ -71,14 +71,31 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
         this.leaderCheckIntervalMs,
       );
 
-      // Initial leader check after a brief delay
+      // AGGRESSIVE initial leader checks to ensure leader exists ASAP
+      // Multiple checks in first minute to handle race conditions
       setTimeout(() => {
         this.ensureLeaderExists().catch((err) =>
           this.logger.error(
-            `[LeaderCheck] Initial check failed: ${err.message}`,
+            `[LeaderCheck] Initial check (1) failed: ${err.message}`,
           ),
         );
-      }, 5000); // 5 seconds after startup
+      }, 2000); // 2 seconds after startup
+
+      setTimeout(() => {
+        this.ensureLeaderExists().catch((err) =>
+          this.logger.error(
+            `[LeaderCheck] Initial check (2) failed: ${err.message}`,
+          ),
+        );
+      }, 7000); // 7 seconds after startup
+
+      setTimeout(() => {
+        this.ensureLeaderExists().catch((err) =>
+          this.logger.error(
+            `[LeaderCheck] Initial check (3) failed: ${err.message}`,
+          ),
+        );
+      }, 15000); // 15 seconds after startup
     } catch (error) {
       this.logger.error(
         `[Init] Failed to initialize cluster heartbeat: ${error instanceof Error ? error.message : String(error)}`,
@@ -523,11 +540,26 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
       // Case 3: No leader exists - elect one!
       this.logger.warn('[LeaderCheck] NO LEADER EXISTS - initiating election');
 
-      // Try to become the leader
+      // CRITICAL FIX: Check if lock exists but no DB leader (deadlock state)
       const thisInstanceId = this.distributedLock.getInstanceId();
-      const acquired = await this.distributedLock.acquireLeaderLock();
+
+      // Double-check no DB leader exists (race condition safety)
+      const currentLeader = await this.prisma.clusterNode.findFirst({
+        where: { isLeader: true, status: 'active' },
+      });
+
+      if (currentLeader) {
+        this.logger.log(
+          `[LeaderCheck] Leader appeared during check: ${currentLeader.hostname}`,
+        );
+        return; // Leader was elected by another node, we're done
+      }
+
+      // Try to acquire - this is non-blocking and race-safe
+      const acquired = await this.distributedLock.tryAcquireLeaderLock();
 
       if (acquired) {
+        // WE WON THE ELECTION!
         this.logger.log(
           '[LeaderCheck] ✓ This node successfully became the LEADER',
         );
@@ -537,25 +569,77 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
           where: { instanceId: thisInstanceId },
           data: { isLeader: true },
         });
-      } else {
-        // Another node beat us to it - that's okay
-        this.logger.debug(
-          '[LeaderCheck] Another node became leader (lock already held)',
-        );
 
-        // Verify someone actually has it now
-        setTimeout(async () => {
+        // Verify we're the only leader
+        setTimeout(() => this.enforceOneLeader(), 2000);
+        return;
+      }
+
+      // Lock acquisition failed - someone else holds it
+      this.logger.debug(
+        '[LeaderCheck] Failed to acquire lock - another node holds it',
+      );
+
+      // DEADLOCK DETECTION: Lock exists but no DB leader after delay
+      setTimeout(async () => {
+        try {
           const leaderCheck = await this.prisma.clusterNode.findFirst({
             where: { isLeader: true, status: 'active' },
           });
 
           if (!leaderCheck) {
             this.logger.error(
-              '[LeaderCheck] CRITICAL: Still no leader after election attempt! Will retry...',
+              '[LeaderCheck] DEADLOCK DETECTED: Lock exists but no DB leader! Forcing recovery...',
+            );
+
+            // Check if the lock holder is a stale/dead node
+            const allNodes = await this.prisma.clusterNode.findMany({
+              where: { status: { in: ['active', 'stale'] } },
+              orderBy: { lastHeartbeat: 'desc' },
+            });
+
+            const staleThreshold = new Date(Date.now() - this.staleThresholdMs);
+            const healthyNodes = allNodes.filter(
+              (n) => n.lastHeartbeat >= staleThreshold,
+            );
+
+            if (healthyNodes.length > 0) {
+              // Force release ALL advisory locks (nuclear option for deadlock recovery)
+              try {
+                await this.prisma.$executeRaw`SELECT pg_advisory_unlock_all()`;
+                this.logger.warn(
+                  '[LeaderCheck] Released all advisory locks to break deadlock',
+                );
+
+                // Wait for locks to clear, then trigger re-election
+                setTimeout(() => {
+                  this.ensureLeaderExists().catch((err) =>
+                    this.logger.error(
+                      `[LeaderCheck] Re-election failed: ${err.message}`,
+                    ),
+                  );
+                }, 1000);
+              } catch (err) {
+                this.logger.error(
+                  `[LeaderCheck] Failed to release locks: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            } else {
+              this.logger.error(
+                '[LeaderCheck] No healthy nodes available for leadership!',
+              );
+            }
+          } else {
+            this.logger.debug(
+              `[LeaderCheck] Leader confirmed: ${leaderCheck.hostname}`,
             );
           }
-        }, 2000);
-      }
+        } catch (err) {
+          this.logger.error(
+            `[LeaderCheck] Deadlock detection failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }, 3000); // 3 second delay to allow leader to update DB
     } catch (error) {
       this.logger.error(
         `[LeaderCheck] Failed: ${error instanceof Error ? error.message : String(error)}`,

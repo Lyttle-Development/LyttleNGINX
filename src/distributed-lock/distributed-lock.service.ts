@@ -146,6 +146,16 @@ export class DistributedLockService {
   }
 
   /**
+   * Try to acquire leader lock immediately (non-blocking)
+   * Returns true if acquired, false if already held
+   * Does NOT wait or retry
+   */
+  async tryAcquireLeaderLock(): Promise<boolean> {
+    const lockName = 'cluster:leader';
+    return this.tryAcquireLock(lockName, 0);
+  }
+
+  /**
    * Acquire and hold leader lock for a duration
    * Used for periodic tasks that should only run on one node
    * CRITICAL: Uses PostgreSQL advisory lock for true distributed locking
