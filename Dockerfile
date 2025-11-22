@@ -57,9 +57,7 @@ COPY --from=builder /app/prisma ./prisma
 # Copy entrypoint scripts and make them executable
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY healthcheck.sh /healthcheck.sh
-COPY certbot-auth-hook.sh /certbot-auth-hook.sh
-COPY certbot-cleanup-hook.sh /certbot-cleanup-hook.sh
-RUN chmod +x /docker-entrypoint.sh /healthcheck.sh /certbot-auth-hook.sh /certbot-cleanup-hook.sh
+RUN chmod +x /docker-entrypoint.sh /healthcheck.sh
 
 # Copy nginx config to /app/nginx (for reloader service to access)
 COPY nginx /app/nginx
