@@ -7,6 +7,9 @@ services:
     deploy:
       mode: global
 
+      placement:
+        max_replicas_per_node: 1
+
       resources:
         limits:
           cpus: '2'
@@ -17,17 +20,17 @@ services:
 
       update_config:
         parallelism: 1
-        delay: 30s
+        delay: 5s
         failure_action: rollback
-        monitor: 60s
+        monitor: 30s
         max_failure_ratio: 0.3
-        order: start-first
+        order: stop-first
 
       rollback_config:
         parallelism: 1
-        delay: 10s
+        delay: 5s
         failure_action: pause
-        monitor: 30s
+        monitor: 20s
 
       restart_policy:
         condition: on-failure
@@ -71,10 +74,10 @@ services:
 
     healthcheck:
       test: [ "CMD-SHELL", "/healthcheck.sh" ]
-      interval: 15s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 45s
+      retries: 2
+      start_period: 30s
 
     logging:
       driver: "json-file"

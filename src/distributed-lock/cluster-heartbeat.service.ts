@@ -30,12 +30,16 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
     try {
       this.logger.log('[Init] Starting cluster heartbeat service');
 
-      // CRITICAL: Clean up any stale nodes/leaders immediately on startup
-      // This fixes issues from previous crashes or improper shutdowns
-      await this.cleanupStaleNodes();
-
-      // Register this node
+      // Register this node first (quick)
       await this.registerNode();
+
+      // CRITICAL: Clean up any stale nodes/leaders in background
+      // This fixes issues from previous crashes without blocking startup
+      this.cleanupStaleNodes()
+        .then(() => this.logger.log('[Init] Startup cleanup completed'))
+        .catch((err) =>
+          this.logger.error(`[Init] Startup cleanup failed: ${err.message}`),
+        );
 
       // Start heartbeat interval
       this.heartbeatInterval = setInterval(
