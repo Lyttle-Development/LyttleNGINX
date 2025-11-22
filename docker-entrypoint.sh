@@ -121,32 +121,79 @@ verify_prerequisites() {
         exit 1
     fi
 
-    # Test database connectivity
+    # Test database connectivity using psql or pg_isready if available
     log_info "Testing database connectivity..."
-    if ! npx prisma db execute --stdin <<< "SELECT 1" > /dev/null 2>&1; then
-        log_warn "Database connectivity test failed, will retry..."
-        sleep 5
-        if ! npx prisma db execute --stdin <<< "SELECT 1" > /dev/null 2>&1; then
-            log_error "Cannot connect to database after retry"
-            exit 1
-        fi
+
+    # Extract host, port, database from DATABASE_URL
+    # Format: postgresql://user:pass@host:port/database
+    DB_HOST=$(echo "$DATABASE_URL" | sed -n 's|.*@\([^:]*\).*|\1|p')
+    DB_PORT=$(echo "$DATABASE_URL" | sed -n 's|.*:\([0-9]*\)/.*|\1|p')
+
+    if [ -z "$DB_PORT" ]; then
+        DB_PORT=5432
     fi
-    log_success "Database is accessible"
+
+    log_info "Testing connection to $DB_HOST:$DB_PORT..."
+
+    # Simple TCP connectivity test using netcat
+    if command -v nc > /dev/null 2>&1; then
+        if nc -z -w5 "$DB_HOST" "$DB_PORT" 2>/dev/null; then
+            log_success "Database is accessible at $DB_HOST:$DB_PORT"
+        else
+            log_warn "Cannot connect to $DB_HOST:$DB_PORT, will retry..."
+            sleep 5
+            if ! nc -z -w5 "$DB_HOST" "$DB_PORT" 2>/dev/null; then
+                log_error "Cannot connect to database after retry"
+                log_error "Check DATABASE_URL and ensure database is running"
+                exit 1
+            fi
+            log_success "Database is accessible after retry"
+        fi
+    else
+        log_warn "netcat not available, skipping connectivity test"
+        log_info "Will attempt to connect during Prisma migration"
+    fi
 
   # Generate Prisma client first (must be done before migrations)
   log_info "Generating Prisma client..."
-  if ! npx prisma generate; then
+  if ! npx prisma generate 2>&1; then
     log_error "Failed to generate Prisma client"
+    log_error "This is usually a configuration issue. Check prisma/schema.prisma"
     exit 1
   fi
   log_success "Prisma client generated"
 
-  # Run Prisma migrations
+  # Run Prisma migrations with retry
   log_info "Running Prisma migrations..."
-  if ! npx prisma migrate deploy; then
-    log_error "Failed to run Prisma migrations"
+  MIGRATION_RETRIES=3
+  MIGRATION_SUCCESS=false
+
+  for i in $(seq 1 $MIGRATION_RETRIES); do
+    log_info "Migration attempt $i/$MIGRATION_RETRIES..."
+
+    if npx prisma migrate deploy 2>&1; then
+      MIGRATION_SUCCESS=true
+      break
+    else
+      if [ $i -lt $MIGRATION_RETRIES ]; then
+        log_warn "Migration failed, waiting 5s before retry..."
+        sleep 5
+      fi
+    fi
+  done
+
+  if [ "$MIGRATION_SUCCESS" = false ]; then
+    log_error "Failed to run Prisma migrations after $MIGRATION_RETRIES attempts"
+    log_error "Common causes:"
+    log_error "  1. Database is not accessible (check DATABASE_URL)"
+    log_error "  2. Database permissions are insufficient"
+    log_error "  3. Database schema is corrupted"
+    log_error "  4. Network issues between container and database"
+    log_error ""
+    log_error "DATABASE_URL: ${DATABASE_URL%%@*}@***"
     exit 1
   fi
+
   log_success "Prisma migrations completed"
 
 
@@ -227,6 +274,16 @@ monitor_processes() {
 log_info "Starting LyttleNGINX container..."
 log_info "Hostname: $(hostname)"
 log_info "Instance: ${HOSTNAME:-unknown}"
+log_info "Node version: $(node --version)"
+log_info "NPM version: $(npm --version)"
+
+# Show sanitized DATABASE_URL (hide password)
+if [ -n "$DATABASE_URL" ]; then
+    SANITIZED_URL=$(echo "$DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')
+    log_info "Database: $SANITIZED_URL"
+else
+    log_error "DATABASE_URL is not set!"
+fi
 
 # Check restart state
 check_restart_state
