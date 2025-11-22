@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
-import { CertificateError } from './errors/certificate.errors';
+import { CertificateError } from '../certificate/errors/certificate.errors';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {

@@ -8,6 +8,8 @@ import {
   Post,
 } from '@nestjs/common';
 import { TlsConfigService } from './tls-config.service';
+import { CertificatePemDto } from './dto/certificate-pem.dto';
+import { ValidateCertChainDto } from './dto/validate-cert-chain.dto';
 
 @Controller('tls')
 export class TlsController {
