@@ -131,10 +131,13 @@ nano .env
 **Minimum Configuration:**
 
 ```bash
-DATABASE_URL=postgresql://user:password@localhost:5432/lyttlenginx
+# Connection pooling is automatically configured, but you can customize:
+DATABASE_URL=postgresql://user:password@localhost:5432/lyttlenginx?connection_limit=10&pool_timeout=10&connect_timeout=10
 ADMIN_EMAIL=admin@example.com
 NODE_ENV=production
 ```
+
+> **Note:** Connection pooling limits are automatically applied (10 connections per instance). For high-traffic deployments, see [Database Connection Management](docs/DATABASE_CONNECTION_MANAGEMENT.md).
 
 ### 3. Setup Database
 
@@ -730,7 +733,7 @@ npm run test:cov
 ### Complete Documentation Set
 
 1. **[README.md](README.md)** (this file) - Project overview
-2. **[API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md)** - Authentication setup and usage ⭐ NEW
+2. **[API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md)** - Authentication setup and usage
 3. **[TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)** - Complete TLS guide (600+ lines)
 4. **[ENHANCED_FEATURES.md](ENHANCED_FEATURES.md)** - Enhanced features guide (500+ lines)
 5. **[API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)** - Full API documentation (700+ lines)
@@ -738,16 +741,21 @@ npm run test:cov
 7. **[DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)** - Docker deployment examples
 8. **[TLS_QUICK_REFERENCE.md](TLS_QUICK_REFERENCE.md)** - Quick command reference
 9. **[QUICK_START_ENHANCED.md](QUICK_START_ENHANCED.md)** - Enhanced features quick start
-10. **[.env.example](.env.example)** - Environment configuration template
+10. **[docs/DATABASE_CONNECTION_MANAGEMENT.md](docs/DATABASE_CONNECTION_MANAGEMENT.md)** - Connection pooling & optimization ⭐ NEW
+11. **[docs/QUICK_REFERENCE_CONNECTIONS.md](docs/QUICK_REFERENCE_CONNECTIONS.md)** - Connection monitoring quick reference ⭐ NEW
+12. **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - Deployment guide for connection fixes ⭐ NEW
+13. **[.env.example](.env.example)** - Environment configuration template
 
 ### Key Topics
 
-- **Authentication** → [API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md) ⭐ NEW
+- **Authentication** → [API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md)
 - **Certificate Management** → [TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)
+- **Database Connections** → [docs/DATABASE_CONNECTION_MANAGEMENT.md](docs/DATABASE_CONNECTION_MANAGEMENT.md) ⭐ NEW
 - **API Reference** → [API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)
 - **Examples** → [API_EXAMPLES.md](API_EXAMPLES.md)
 - **Docker** → [DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)
 - **Monitoring** → [ENHANCED_FEATURES.md](ENHANCED_FEATURES.md)
+- **Quick Reference** → [docs/QUICK_REFERENCE_CONNECTIONS.md](docs/QUICK_REFERENCE_CONNECTIONS.md) ⭐ NEW
 
 ---
 
