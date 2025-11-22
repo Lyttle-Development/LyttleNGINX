@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { addDays } from 'date-fns';
 import { hashDomains, joinDomains, parseDomains } from '../utils/domain-utils';
+import { AlertService } from '../alert/alert.service';
 
 const exec = promisify(execCb);
 const adminEmail = process.env.ADMIN_EMAIL || null;
@@ -23,7 +24,10 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   private interval: NodeJS.Timeout | null = null;
   private readonly renewIntervalMs = 1000 * 60 * 60 * 12; // 12 hours
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private alertService: AlertService,
+  ) {}
 
   async onModuleInit() {
     this.logger.log(

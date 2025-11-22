@@ -44,16 +44,16 @@ export class TlsController {
 
   @Post('certificate/info')
   @HttpCode(HttpStatus.OK)
-  async getCertificateInfo(@Body() body: { certPem: string }) {
-    return this.tlsConfigService.getCertificateInfo(body.certPem);
+  async getCertificateInfo(@Body() dto: CertificatePemDto) {
+    return this.tlsConfigService.getCertificateInfo(dto.certPem);
   }
 
   @Post('certificate/validate-chain')
   @HttpCode(HttpStatus.OK)
-  async validateChain(@Body() body: { certPem: string; chainPem?: string }) {
+  async validateChain(@Body() dto: ValidateCertChainDto) {
     return this.tlsConfigService.validateCertificateChain(
-      body.certPem,
-      body.chainPem,
+      dto.certPem,
+      dto.chainPem,
     );
   }
 }

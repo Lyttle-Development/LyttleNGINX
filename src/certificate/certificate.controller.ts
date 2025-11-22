@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { CertificateService } from './certificate.service';
 import { UploadCertificateDto } from './dto/upload-certificate.dto';
+import { GenerateSelfSignedDto } from './dto/generate-self-signed.dto';
 import { CertificateInfoDto } from './dto/certificate-info.dto';
 
 @Controller('certificates')
@@ -41,10 +42,10 @@ export class CertificateController {
 
   @Post('generate-self-signed')
   @HttpCode(HttpStatus.CREATED)
-  async generateSelfSigned(@Body() body: { domains: string[] }) {
+  async generateSelfSigned(@Body() dto: GenerateSelfSignedDto) {
     try {
       return await this.certificateService.generateSelfSignedCertificate(
-        body.domains,
+        dto.domains,
       );
     } catch (error) {
       throw new BadRequestException(

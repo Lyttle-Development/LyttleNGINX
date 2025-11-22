@@ -9,8 +9,13 @@ import { HealthModule } from './health/health.module';
 import { LogsModule } from './logs/logs.module';
 import { LogsService } from './logs/logs.service';
 
+import { RateLimitModule } from './rate-limit/rate-limit.module';
+import { MetricsModule } from './metrics/metrics.module';
+
 @Module({
   imports: [
+    RateLimitModule,
+    MetricsModule,
     PrismaModule,
     ReloaderModule,
     NginxModule,
