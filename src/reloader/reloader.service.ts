@@ -20,6 +20,7 @@ import {
 import { join } from 'path';
 import * as fs from 'fs';
 import { CertificateService } from '../certificate/certificate.service';
+import { TlsConfigService } from '../certificate/tls-config.service';
 import { lookup } from 'dns/promises'; // <-- Added
 
 const NGINX_ETC_DIR = '/etc/nginx';
@@ -47,6 +48,7 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
     private prisma: PrismaService,
     private nginx: NginxService,
     private certificate: CertificateService,
+    private tlsConfig: TlsConfigService,
   ) {}
 
   async onModuleInit() {
@@ -124,6 +126,10 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
 
       // ----------- PHASE 2: Obtain SSL Certificates -----------
       this.logger.log('Phase 2: Ensuring SSL certificates...');
+
+      // Ensure certbot webroot exists
+      this.tlsConfig.ensureCertbotWebroot();
+
       for (const entry of entries) {
         try {
           if (!entry.ssl) continue;

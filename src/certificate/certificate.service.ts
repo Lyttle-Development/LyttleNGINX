@@ -215,4 +215,303 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       );
     }
   }
+
+  /**
+   * Upload a custom certificate (e.g., purchased from CA or manually obtained)
+   */
+  async uploadCertificate(dto: {
+    domains: string[];
+    certPem: string;
+    keyPem: string;
+    chainPem?: string;
+  }) {
+    this.logger.log(
+      `[Upload] Uploading custom certificate for domains: [${joinDomains(dto.domains)}]`,
+    );
+    const hash = hashDomains(dto.domains);
+    const domainsStr = joinDomains(dto.domains);
+    const primaryDomain = dto.domains[0];
+
+    // Validate certificate and key match
+    await this.validateCertificateKeyPair(dto.certPem, dto.keyPem);
+
+    // Extract expiry from cert
+    const certFile = `/tmp/cert-${Date.now()}.pem`;
+    fs.writeFileSync(certFile, dto.certPem, 'utf8');
+    try {
+      const { stdout } = await exec(
+        `openssl x509 -enddate -noout -in ${certFile}`,
+      );
+      const match = stdout.match(/notAfter=(.*)/);
+      const expiresAt = match ? new Date(match[1]) : addDays(new Date(), 365);
+
+      // Combine cert with chain if provided
+      const fullChainPem = dto.chainPem
+        ? `${dto.certPem}\n${dto.chainPem}`
+        : dto.certPem;
+
+      // Write to filesystem
+      this.writeCertToFs(primaryDomain, fullChainPem, dto.keyPem);
+
+      // Save to database
+      const certRecord = await this.prisma.certificate.create({
+        data: {
+          domains: domainsStr,
+          domainsHash: hash,
+          certPem: fullChainPem,
+          keyPem: dto.keyPem,
+          expiresAt,
+          issuedAt: new Date(),
+          lastUsedAt: new Date(),
+          isOrphaned: false,
+        },
+      });
+
+      this.logger.log(
+        `[Upload] Successfully uploaded certificate (id: ${certRecord.id})`,
+      );
+      return certRecord;
+    } finally {
+      // Clean up temp file
+      try {
+        fs.unlinkSync(certFile);
+      } catch (e) {
+        // Ignore
+      }
+    }
+  }
+
+  /**
+   * Generate a self-signed certificate for testing/development
+   */
+  async generateSelfSignedCertificate(domains: string[]) {
+    this.logger.log(
+      `[Self-Signed] Generating self-signed certificate for domains: [${joinDomains(domains)}]`,
+    );
+    const hash = hashDomains(domains);
+    const domainsStr = joinDomains(domains);
+    const primaryDomain = domains[0];
+
+    // Generate self-signed certificate using openssl
+    const keyFile = `/tmp/key-${Date.now()}.pem`;
+    const certFile = `/tmp/cert-${Date.now()}.pem`;
+
+    try {
+      // Generate private key
+      await exec(`openssl genrsa -out ${keyFile} 2048`);
+
+      // Generate certificate
+      const sanList = domains.map((d) => `DNS:${d}`).join(',');
+      await exec(
+        `openssl req -new -x509 -key ${keyFile} -out ${certFile} -days 365 -subj "/CN=${primaryDomain}" -addext "subjectAltName=${sanList}"`,
+      );
+
+      const certPem = fs.readFileSync(certFile, 'utf8');
+      const keyPem = fs.readFileSync(keyFile, 'utf8');
+
+      // Write to filesystem
+      this.writeCertToFs(primaryDomain, certPem, keyPem);
+
+      // Save to database
+      const certRecord = await this.prisma.certificate.create({
+        data: {
+          domains: domainsStr,
+          domainsHash: hash,
+          certPem,
+          keyPem,
+          expiresAt: addDays(new Date(), 365),
+          issuedAt: new Date(),
+          lastUsedAt: new Date(),
+          isOrphaned: false,
+        },
+      });
+
+      this.logger.log(
+        `[Self-Signed] Successfully generated certificate (id: ${certRecord.id})`,
+      );
+      return certRecord;
+    } finally {
+      // Clean up temp files
+      try {
+        fs.unlinkSync(keyFile);
+        fs.unlinkSync(certFile);
+      } catch (e) {
+        // Ignore
+      }
+    }
+  }
+
+  /**
+   * List all certificates with their status
+   */
+  async listCertificates() {
+    const certs = await this.prisma.certificate.findMany({
+      orderBy: { expiresAt: 'asc' },
+    });
+
+    return certs.map((cert) => {
+      const now = new Date();
+      const daysUntilExpiry = Math.ceil(
+        (cert.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+      );
+      let status: 'valid' | 'expiring_soon' | 'expired';
+      if (daysUntilExpiry < 0) {
+        status = 'expired';
+      } else if (daysUntilExpiry <= RENEW_BEFORE_DAYS) {
+        status = 'expiring_soon';
+      } else {
+        status = 'valid';
+      }
+
+      return {
+        id: cert.id,
+        domains: parseDomains(cert.domains),
+        expiresAt: cert.expiresAt,
+        issuedAt: cert.issuedAt,
+        lastUsedAt: cert.lastUsedAt,
+        isOrphaned: cert.isOrphaned,
+        daysUntilExpiry,
+        status,
+      };
+    });
+  }
+
+  /**
+   * Get certificate info by ID
+   */
+  async getCertificateInfo(id: string) {
+    const cert = await this.prisma.certificate.findUnique({ where: { id } });
+    if (!cert) {
+      throw new Error(`Certificate not found: ${id}`);
+    }
+
+    const now = new Date();
+    const daysUntilExpiry = Math.ceil(
+      (cert.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    let status: 'valid' | 'expiring_soon' | 'expired';
+    if (daysUntilExpiry < 0) {
+      status = 'expired';
+    } else if (daysUntilExpiry <= RENEW_BEFORE_DAYS) {
+      status = 'expiring_soon';
+    } else {
+      status = 'valid';
+    }
+
+    return {
+      id: cert.id,
+      domains: parseDomains(cert.domains),
+      expiresAt: cert.expiresAt,
+      issuedAt: cert.issuedAt,
+      lastUsedAt: cert.lastUsedAt,
+      isOrphaned: cert.isOrphaned,
+      daysUntilExpiry,
+      status,
+    };
+  }
+
+  /**
+   * Renew a specific certificate by ID
+   */
+  async renewCertificateById(id: string) {
+    this.logger.log(`[Renew] Renewing certificate by id: ${id}`);
+    const cert = await this.prisma.certificate.findUnique({ where: { id } });
+    if (!cert) {
+      throw new Error(`Certificate not found: ${id}`);
+    }
+
+    const domains = parseDomains(cert.domains);
+    await this.ensureCertificate(domains);
+
+    return { message: `Certificate renewal initiated for ${cert.domains}` };
+  }
+
+  /**
+   * Delete a certificate
+   */
+  async deleteCertificate(id: string) {
+    this.logger.log(`[Delete] Deleting certificate: ${id}`);
+    const cert = await this.prisma.certificate.findUnique({ where: { id } });
+    if (!cert) {
+      throw new Error(`Certificate not found: ${id}`);
+    }
+
+    // Delete from filesystem
+    const primaryDomain = parseDomains(cert.domains)[0];
+    const dir = this.certDir(primaryDomain);
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true });
+        this.logger.log(`[Delete] Removed certificate directory: ${dir}`);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `[Delete] Failed to remove certificate directory: ${dir}`,
+        err,
+      );
+    }
+
+    // Delete from database
+    await this.prisma.certificate.delete({ where: { id } });
+    this.logger.log(`[Delete] Deleted certificate from database: ${id}`);
+  }
+
+  /**
+   * Validate domain ownership for certificate issuance
+   */
+  async validateDomainForCertificate(domain: string) {
+    this.logger.log(`[Validate] Validating domain: ${domain}`);
+    // This is a placeholder - in production, you'd check DNS, HTTP challenges, etc.
+    // For now, just check if domain resolves
+    const { lookup } = await import('dns/promises');
+    try {
+      await lookup(domain);
+      return { domain, valid: true, message: 'Domain resolves successfully' };
+    } catch (err) {
+      return {
+        domain,
+        valid: false,
+        message: `Domain does not resolve: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Validate that certificate and private key match
+   */
+  private async validateCertificateKeyPair(
+    certPem: string,
+    keyPem: string,
+  ): Promise<void> {
+    const certFile = `/tmp/cert-validate-${Date.now()}.pem`;
+    const keyFile = `/tmp/key-validate-${Date.now()}.pem`;
+
+    try {
+      fs.writeFileSync(certFile, certPem, 'utf8');
+      fs.writeFileSync(keyFile, keyPem, 'utf8');
+
+      // Get modulus from cert
+      const { stdout: certModulus } = await exec(
+        `openssl x509 -noout -modulus -in ${certFile}`,
+      );
+      // Get modulus from key
+      const { stdout: keyModulus } = await exec(
+        `openssl rsa -noout -modulus -in ${keyFile}`,
+      );
+
+      if (certModulus.trim() !== keyModulus.trim()) {
+        throw new Error('Certificate and private key do not match');
+      }
+
+      this.logger.log('[Validate] Certificate and key pair validated');
+    } finally {
+      // Clean up temp files
+      try {
+        fs.unlinkSync(certFile);
+        fs.unlinkSync(keyFile);
+      } catch (e) {
+        // Ignore
+      }
+    }
+  }
 }
