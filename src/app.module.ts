@@ -12,6 +12,7 @@ import { LogsService } from './logs/logs.service';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './auth/auth.module';
+import { DistributedLockModule } from './distributed-lock/distributed-lock.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuthModule } from './auth/auth.module';
     RateLimitModule,
     MetricsModule,
     PrismaModule,
+    DistributedLockModule,
     ReloaderModule,
     NginxModule,
     CertificateModule,

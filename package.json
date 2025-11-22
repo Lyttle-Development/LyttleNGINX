@@ -23,10 +23,10 @@
     "update": "npm update --save && npx npm-check-updates -u && npm install"
   },
   "volta": {
-    "node": "22.19.0"
+    "node": "24.11.1"
   },
   "engines": {
-    "node": "22.19.0"
+    "node": "24.11.1"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",

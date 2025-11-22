@@ -42,3 +42,21 @@ model Certificate {
 
   @@schema("public")
 }
+
+model ClusterNode {
+  id            String   @id @default(uuid())
+  hostname      String
+  instanceId    String   @unique
+  isLeader      Boolean  @default(false)
+  lastHeartbeat DateTime
+  version       String?
+  status        String   @default("active") // active, inactive, failed
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([isLeader, lastHeartbeat])
+  @@index([hostname])
+  @@schema("public")
+}
+

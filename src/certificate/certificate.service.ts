@@ -13,6 +13,7 @@ import * as path from 'path';
 import { addDays } from 'date-fns';
 import { hashDomains, joinDomains, parseDomains } from '../utils/domain-utils';
 import { AlertService } from '../alert/alert.service';
+import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
 
 const exec = promisify(execCb);
 const adminEmail = process.env.ADMIN_EMAIL || null;
@@ -23,26 +24,93 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(CertificateService.name);
   private interval: NodeJS.Timeout | null = null;
   private readonly renewIntervalMs = 1000 * 60 * 60 * 12; // 12 hours
+  private leaderLockInterval: NodeJS.Timeout | null = null;
+  private isCurrentlyLeader = false;
 
   constructor(
     private prisma: PrismaService,
     private alertService: AlertService,
+    private distributedLock: DistributedLockService,
   ) {}
 
   async onModuleInit() {
     this.logger.log(
-      `[Init] Starting certificate renewal interval (${this.renewIntervalMs / (1000 * 60)} min)`,
+      `[Init] Instance ID: ${this.distributedLock.getInstanceId()}`,
     );
-    this.interval = setInterval(
-      () => this.renewAllCertificates(),
-      this.renewIntervalMs,
+
+    // Start leader election process - only leader will renew certificates
+    this.logger.log(
+      `[Init] Starting leader election for certificate renewal (check interval: 60s)`,
     );
+    this.leaderLockInterval = setInterval(
+      () => this.leaderElectionCheck(),
+      60000, // Check every minute
+    );
+
+    // Do initial leader check
+    await this.leaderElectionCheck();
   }
 
   async onApplicationShutdown() {
+    this.logger.log('[Shutdown] Releasing leader lock and clearing intervals');
+
     if (this.interval) {
-      this.logger.log('[Shutdown] Clearing renewal interval');
       clearInterval(this.interval);
+      this.interval = null;
+    }
+
+    if (this.leaderLockInterval) {
+      clearInterval(this.leaderLockInterval);
+      this.leaderLockInterval = null;
+    }
+
+    if (this.isCurrentlyLeader) {
+      await this.distributedLock.releaseLeaderLock();
+    }
+
+    await this.distributedLock.releaseAllLocks();
+  }
+
+  /**
+   * Check if this instance should be the leader and start/stop renewal accordingly
+   */
+  private async leaderElectionCheck() {
+    try {
+      const isLeader = await this.distributedLock.acquireLeaderLock();
+
+      if (isLeader && !this.isCurrentlyLeader) {
+        this.logger.log(
+          '[Leader] This instance is now the LEADER - starting certificate renewal',
+        );
+        this.isCurrentlyLeader = true;
+
+        // Start renewal interval
+        if (!this.interval) {
+          this.interval = setInterval(
+            () => this.renewAllCertificates(),
+            this.renewIntervalMs,
+          );
+          // Also run immediately
+          await this.renewAllCertificates();
+        }
+      } else if (!isLeader && this.isCurrentlyLeader) {
+        this.logger.log(
+          '[Leader] Lost leadership - stopping certificate renewal',
+        );
+        this.isCurrentlyLeader = false;
+
+        // Stop renewal interval
+        if (this.interval) {
+          clearInterval(this.interval);
+          this.interval = null;
+        }
+      } else if (!isLeader) {
+        this.logger.debug('[Leader] Not the leader - skipping renewal tasks');
+      }
+    } catch (error) {
+      this.logger.error(
+        `[Leader] Error in leader election: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -94,11 +162,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       `[Cert] Ensuring certificate for [${domainsStr}] (hash: ${hash})`,
     );
 
-    // 1. Try DB
+    // 1. Try DB first (without lock - fast path)
     this.logger.log(
       `[DB] Looking up certificate in DB for hash: ${hash} (expires after ${renewBefore.toISOString()})`,
     );
-    const certEntry = await this.prisma.certificate.findFirst({
+    let certEntry = await this.prisma.certificate.findFirst({
       where: {
         domainsHash: hash,
         expiresAt: { gt: renewBefore },
@@ -122,63 +190,138 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       return;
     }
 
-    // 2. Not in DB (or expiring): run certbot, then save in DB
+    // 2. Need to issue certificate - use distributed lock to prevent conflicts
+    const lockName = `cert:issue:${hash}`;
     this.logger.log(
-      `[Certbot] No valid certificate in DB. Running certbot for: [${domainsStr}]`,
+      `[Lock] Attempting to acquire lock for certificate issuance: ${lockName}`,
     );
-    const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
-    try {
-      this.logger.log(
-        `[Certbot] Running command: certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
-      );
-      await exec(
-        `certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
-      );
-      this.logger.log(
-        `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
-      );
 
-      // Read the cert/key files produced by certbot
-      const certPath = path.join(this.certDir(primaryDomain), 'fullchain.pem');
-      const keyPath = path.join(this.certDir(primaryDomain), 'privkey.pem');
-      this.logger.log(`[FS] Reading certificate file: ${certPath}`);
-      const certPem = fs.readFileSync(certPath, 'utf8');
-      this.logger.log(`[FS] Reading key file: ${keyPath}`);
-      const keyPem = fs.readFileSync(keyPath, 'utf8');
+    const result = await this.distributedLock.withLock(
+      lockName,
+      async () => {
+        // Double-check DB after acquiring lock - another node might have just created it
+        this.logger.log(
+          `[Lock] Lock acquired. Double-checking if certificate exists in DB...`,
+        );
+        const recheck = await this.prisma.certificate.findFirst({
+          where: {
+            domainsHash: hash,
+            expiresAt: { gt: renewBefore },
+            isOrphaned: false,
+          },
+          orderBy: { expiresAt: 'desc' },
+        });
 
-      // Extract expiry from cert
-      this.logger.log(
-        `[OpenSSL] Extracting expiry from certificate file: ${certPath}`,
-      );
-      const { stdout } = await exec(
-        `openssl x509 -enddate -noout -in ${certPath}`,
-      );
-      const match = stdout.match(/notAfter=(.*)/);
-      const expiresAt = match ? new Date(match[1]) : addDays(new Date(), 90);
-      this.logger.log(
-        `[OpenSSL] Certificate expiry: ${expiresAt.toISOString()}`,
-      );
+        if (recheck) {
+          this.logger.log(
+            `[Lock] Certificate was created by another node (id: ${recheck.id}). Using it.`,
+          );
+          this.writeCertToFs(primaryDomain, recheck.certPem, recheck.keyPem);
+          await this.prisma.certificate.update({
+            where: { id: recheck.id },
+            data: { lastUsedAt: now },
+          });
+          return recheck;
+        }
 
-      const certRecord = await this.prisma.certificate.create({
-        data: {
-          domains: domainsStr,
+        // Still need to issue - proceed with certbot
+        this.logger.log(
+          `[Certbot] No valid certificate in DB. Running certbot for: [${domainsStr}]`,
+        );
+        const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
+
+        try {
+          this.logger.log(
+            `[Certbot] Running command: certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+          );
+          await exec(
+            `certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+          );
+          this.logger.log(
+            `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
+          );
+
+          // Read the cert/key files produced by certbot
+          const certPath = path.join(
+            this.certDir(primaryDomain),
+            'fullchain.pem',
+          );
+          const keyPath = path.join(this.certDir(primaryDomain), 'privkey.pem');
+          this.logger.log(`[FS] Reading certificate file: ${certPath}`);
+          const certPem = fs.readFileSync(certPath, 'utf8');
+          this.logger.log(`[FS] Reading key file: ${keyPath}`);
+          const keyPem = fs.readFileSync(keyPath, 'utf8');
+
+          // Extract expiry from cert
+          this.logger.log(
+            `[OpenSSL] Extracting expiry from certificate file: ${certPath}`,
+          );
+          const { stdout } = await exec(
+            `openssl x509 -enddate -noout -in ${certPath}`,
+          );
+          const match = stdout.match(/notAfter=(.*)/);
+          const expiresAt = match
+            ? new Date(match[1])
+            : addDays(new Date(), 90);
+          this.logger.log(
+            `[OpenSSL] Certificate expiry: ${expiresAt.toISOString()}`,
+          );
+
+          const certRecord = await this.prisma.certificate.create({
+            data: {
+              domains: domainsStr,
+              domainsHash: hash,
+              certPem,
+              keyPem,
+              expiresAt,
+              issuedAt: new Date(),
+              lastUsedAt: now,
+              isOrphaned: false,
+            },
+          });
+          this.logger.log(
+            `[DB] Saved new certificate to DB (id: ${certRecord.id}, expires: ${expiresAt.toISOString()})`,
+          );
+          return certRecord;
+        } catch (err) {
+          this.logger.error(
+            `[Certbot] Failed to obtain certificate for ${primaryDomain}: ${err instanceof Error ? err.stack : String(err)}`,
+          );
+          throw err;
+        }
+      },
+      {
+        timeoutMs: 10000,
+        retryDelayMs: 2000,
+        maxRetries: 5,
+      },
+    );
+
+    if (!result) {
+      // Failed to acquire lock after retries - check DB one more time
+      this.logger.warn(
+        `[Lock] Failed to acquire lock after retries. Checking DB one final time...`,
+      );
+      certEntry = await this.prisma.certificate.findFirst({
+        where: {
           domainsHash: hash,
-          certPem,
-          keyPem,
-          expiresAt,
-          issuedAt: new Date(),
-          lastUsedAt: now,
+          expiresAt: { gt: renewBefore },
           isOrphaned: false,
         },
+        orderBy: { expiresAt: 'desc' },
       });
-      this.logger.log(
-        `[DB] Saved new certificate to DB (id: ${certRecord.id}, expires: ${expiresAt.toISOString()})`,
+
+      if (certEntry) {
+        this.logger.log(
+          `[DB] Found certificate created by another node (id: ${certEntry.id}). Using it.`,
+        );
+        this.writeCertToFs(primaryDomain, certEntry.certPem, certEntry.keyPem);
+        return;
+      }
+
+      throw new Error(
+        `Failed to acquire lock for certificate issuance and no certificate found in DB`,
       );
-    } catch (err) {
-      this.logger.error(
-        `[Certbot] Failed to obtain certificate for ${primaryDomain}: ${err instanceof Error ? err.stack : String(err)}`,
-      );
-      throw err;
     }
   }
 
