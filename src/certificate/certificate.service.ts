@@ -269,15 +269,6 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           );
 
           // Use manual mode with shell hooks so all nodes can serve challenges from database
-          const env = {
-            ...process.env,
-            DB_USER: dbUser,
-            DB_PASSWORD: dbPassword,
-            DB_HOST: dbHost,
-            DB_PORT: dbPort,
-            DB_NAME: dbName,
-          };
-
           await exec(
             `DB_USER=${dbUser} DB_PASSWORD=${dbPassword} DB_HOST=${dbHost} DB_PORT=${dbPort} DB_NAME=${dbName} certbot certonly --manual --preferred-challenges=http --manual-auth-hook=${authHookPath} --manual-cleanup-hook=${cleanupHookPath} --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
           );
