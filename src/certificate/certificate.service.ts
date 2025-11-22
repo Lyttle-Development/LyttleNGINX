@@ -559,6 +559,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       status = 'valid';
     }
 
+    // Check OCSP support and certificate type
+    const certAnalysis = await this.analyzeCertificate(cert.certPem);
+
     return {
       id: cert.id,
       domains: parseDomains(cert.domains),
@@ -568,7 +571,96 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       isOrphaned: cert.isOrphaned,
       daysUntilExpiry,
       status,
+      hasOcspSupport: certAnalysis.hasOcsp,
+      issuer: certAnalysis.issuer,
+      certificateType: certAnalysis.type,
     };
+  }
+
+  /**
+   * Analyze a certificate to detect OCSP support and type
+   */
+  private async analyzeCertificate(certPem: string): Promise<{
+    hasOcsp: boolean;
+    issuer: string;
+    type: 'letsencrypt' | 'self-signed' | 'uploaded' | 'unknown';
+  }> {
+    try {
+      // Write cert to temp file for analysis
+      const tempFile = `/tmp/cert-${Date.now()}.pem`;
+      fs.writeFileSync(tempFile, certPem);
+
+      // Check for OCSP URI
+      let ocspUri = '';
+      try {
+        const { stdout } = await exec(
+          `openssl x509 -in ${tempFile} -noout -ocsp_uri`,
+        );
+        ocspUri = stdout.trim();
+      } catch (err) {
+        // No OCSP URI
+      }
+
+      // Check issuer
+      let issuer = 'Unknown';
+      try {
+        const { stdout } = await exec(
+          `openssl x509 -in ${tempFile} -noout -issuer`,
+        );
+        issuer = stdout.replace('issuer=', '').trim();
+      } catch (err) {
+        // Could not get issuer
+      }
+
+      // Check subject
+      let subject = '';
+      try {
+        const { stdout } = await exec(
+          `openssl x509 -in ${tempFile} -noout -subject`,
+        );
+        subject = stdout.replace('subject=', '').trim();
+      } catch (err) {
+        // Could not get subject
+      }
+
+      // Clean up temp file
+      try {
+        fs.unlinkSync(tempFile);
+      } catch (err) {
+        // Ignore cleanup errors
+      }
+
+      // Determine certificate type
+      let type: 'letsencrypt' | 'self-signed' | 'uploaded' | 'unknown' =
+        'unknown';
+
+      if (
+        issuer.includes("Let's Encrypt") ||
+        issuer.includes('E1') ||
+        issuer.includes('R3')
+      ) {
+        type = 'letsencrypt';
+      } else if (subject === issuer) {
+        type = 'self-signed';
+      } else if (issuer !== 'Unknown') {
+        type = 'uploaded';
+      }
+
+      return {
+        hasOcsp: ocspUri.length > 0,
+        issuer,
+        type,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `[CertAnalysis] Failed to analyze certificate: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return {
+        hasOcsp: false,
+        issuer: 'Unknown',
+        type: 'unknown',
+      };
+    }
   }
 
   /**
@@ -674,5 +766,59 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         // Ignore
       }
     }
+  }
+
+  /**
+   * Check OCSP support for all certificates
+   * Useful for identifying certificates that cause NGINX warnings
+   */
+  async checkAllCertificatesOcspSupport() {
+    this.logger.log('[OcspCheck] Checking OCSP support for all certificates');
+
+    const certs = await this.prisma.certificate.findMany({
+      where: { isOrphaned: false },
+      orderBy: { domains: 'asc' },
+    });
+
+    const results = await Promise.all(
+      certs.map(async (cert) => {
+        const analysis = await this.analyzeCertificate(cert.certPem);
+        const domains = parseDomains(cert.domains);
+
+        return {
+          id: cert.id,
+          domains,
+          primaryDomain: domains[0],
+          hasOcspSupport: analysis.hasOcsp,
+          certificateType: analysis.type,
+          issuer: analysis.issuer,
+          expiresAt: cert.expiresAt,
+        };
+      }),
+    );
+
+    const withOcsp = results.filter((r) => r.hasOcspSupport);
+    const withoutOcsp = results.filter((r) => !r.hasOcspSupport);
+
+    return {
+      total: results.length,
+      withOcspSupport: withOcsp.length,
+      withoutOcspSupport: withoutOcsp.length,
+      certificates: results,
+      summary: {
+        letsencrypt: results.filter((r) => r.certificateType === 'letsencrypt')
+          .length,
+        selfSigned: results.filter((r) => r.certificateType === 'self-signed')
+          .length,
+        uploaded: results.filter((r) => r.certificateType === 'uploaded')
+          .length,
+        unknown: results.filter((r) => r.certificateType === 'unknown').length,
+      },
+      certificatesWithoutOcsp: withoutOcsp.map((r) => ({
+        domains: r.domains,
+        type: r.certificateType,
+        issuer: r.issuer,
+      })),
+    };
   }
 }

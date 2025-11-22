@@ -84,4 +84,9 @@ export class CertificateController {
   async validateDomain(@Param('domain') domain: string) {
     return this.certificateService.validateDomainForCertificate(domain);
   }
+
+  @Get('health/ocsp-check')
+  async checkOcspSupport() {
+    return this.certificateService.checkAllCertificatesOcspSupport();
+  }
 }

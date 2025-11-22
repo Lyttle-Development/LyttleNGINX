@@ -7,4 +7,7 @@ export class CertificateInfoDto {
   isOrphaned: boolean;
   daysUntilExpiry: number;
   status: 'valid' | 'expiring_soon' | 'expired';
+  hasOcspSupport?: boolean;
+  issuer?: string;
+  certificateType?: 'letsencrypt' | 'self-signed' | 'uploaded' | 'unknown';
 }
