@@ -730,17 +730,19 @@ npm run test:cov
 ### Complete Documentation Set
 
 1. **[README.md](README.md)** (this file) - Project overview
-2. **[TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)** - Complete TLS guide (600+ lines)
-3. **[ENHANCED_FEATURES.md](ENHANCED_FEATURES.md)** - Enhanced features guide (500+ lines)
-4. **[API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)** - Full API documentation (700+ lines)
-5. **[API_EXAMPLES.md](API_EXAMPLES.md)** - API usage examples with curl, TypeScript, Python
-6. **[DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)** - Docker deployment examples
-7. **[TLS_QUICK_REFERENCE.md](TLS_QUICK_REFERENCE.md)** - Quick command reference
-8. **[QUICK_START_ENHANCED.md](QUICK_START_ENHANCED.md)** - Enhanced features quick start
-9. **[.env.example](.env.example)** - Environment configuration template
+2. **[API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md)** - Authentication setup and usage ⭐ NEW
+3. **[TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)** - Complete TLS guide (600+ lines)
+4. **[ENHANCED_FEATURES.md](ENHANCED_FEATURES.md)** - Enhanced features guide (500+ lines)
+5. **[API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)** - Full API documentation (700+ lines)
+6. **[API_EXAMPLES.md](API_EXAMPLES.md)** - API usage examples with curl, TypeScript, Python
+7. **[DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)** - Docker deployment examples
+8. **[TLS_QUICK_REFERENCE.md](TLS_QUICK_REFERENCE.md)** - Quick command reference
+9. **[QUICK_START_ENHANCED.md](QUICK_START_ENHANCED.md)** - Enhanced features quick start
+10. **[.env.example](.env.example)** - Environment configuration template
 
 ### Key Topics
 
+- **Authentication** → [API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md) ⭐ NEW
 - **Certificate Management** → [TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)
 - **API Reference** → [API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)
 - **Examples** → [API_EXAMPLES.md](API_EXAMPLES.md)
