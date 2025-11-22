@@ -56,25 +56,16 @@ services:
       - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-100}
 
     ports:
-      - target: 80
-        published: 80
-        protocol: tcp
-        mode: host
-      - target: 443
-        published: 443
-        protocol: tcp
-        mode: host
-      - target: 3000
-        published: 3003
-        protocol: tcp
-        mode: host
+      - 80:80
+      - 443:443
+      - 3003:3000
 
     healthcheck:
       test: [ "/healthcheck.sh" ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 90s
 
     logging:
       driver: "json-file"
