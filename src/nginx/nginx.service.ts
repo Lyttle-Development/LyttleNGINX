@@ -46,8 +46,31 @@ server {
 
   ${
     entry.type === ProxyType.REDIRECT
-      ? `return 301 ${entry.proxy_pass_host};`
+      ? `
+  # Allow ACME challenges before redirect - proxy to Node.js app
+  location /.well-known/acme-challenge/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  # Redirect all other traffic
+  location / {
+    return 301 ${entry.proxy_pass_host};
+  }
+      `
       : `
+  # Allow ACME challenges - proxy to Node.js app
+  location /.well-known/acme-challenge/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
   location / {
     ${resolved ? `proxy_pass ${entry.proxy_pass_host};` : 'return 503;'}
     proxy_ssl_verify off;
