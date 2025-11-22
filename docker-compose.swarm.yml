@@ -56,9 +56,18 @@ services:
       - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-100}
 
     ports:
-      - 80:80
-      - 443:443
-      - 3003:3000
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+      - target: 3000
+        published: 3003
+        protocol: tcp
+        mode: host
 
     healthcheck:
       test: [ "/healthcheck.sh" ]
