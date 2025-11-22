@@ -526,7 +526,44 @@ curl http://localhost:3000/certificates/backup/$FILENAME -o /backups/$FILENAME
 
 ## 🐳 Docker Deployment
 
-### Docker Compose
+### Docker Swarm (Recommended for Production) 🆕
+
+Deploy LyttleNGINX in **global mode** across your Docker Swarm cluster with built-in distributed coordination:
+
+```bash
+# Quick deployment with script
+./deploy-swarm.sh
+
+# Or manually
+docker stack deploy -c docker-compose.swarm.yml lyttlenginx
+```
+
+**Key Features:**
+
+- ✅ Runs on every node (global mode)
+- ✅ Distributed locking prevents certificate conflicts
+- ✅ Automatic leader election for renewals
+- ✅ Zero-downtime rolling updates
+- ✅ Automatic failure recovery
+
+**View cluster status:**
+
+```bash
+# See all nodes
+curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/nodes
+
+# View leader
+docker service logs lyttlenginx_lyttlenginx 2>&1 | grep "LEADER"
+
+# Check service health
+docker service ps lyttlenginx_lyttlenginx
+```
+
+**📖 Complete guide:** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
+
+---
+
+### Docker Compose (Single Instance)
 
 **docker-compose.yml:**
 

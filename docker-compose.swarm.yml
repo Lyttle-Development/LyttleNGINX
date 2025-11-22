@@ -1,0 +1,130 @@
+version: '3.8'
+
+services:
+  lyttlenginx:
+    image: ghcr.io/lyttle-development/lyttlenginx:main
+
+    # Deploy in global mode - one instance per node
+    deploy:
+      mode: global
+
+      # Resource limits to prevent one container from consuming all node resources
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+      # Update configuration for zero-downtime deployments
+      update_config:
+        parallelism: 1  # Update one node at a time
+        delay: 30s      # Wait 30s between updates
+        failure_action: rollback
+        monitor: 60s    # Monitor for 60s after update
+        max_failure_ratio: 0.3
+        order: start-first  # Start new container before stopping old one
+
+      # Rollback configuration
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: pause
+        monitor: 30s
+
+      # Restart policy
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 300s  # 5 minutes
+
+      # Placement constraints (optional - adjust as needed)
+      # placement:
+      #   constraints:
+      #     - node.role == worker
+
+      # Labels for Traefik or other tools (optional)
+      labels:
+        - "app=lyttlenginx"
+        - "version=1.0"
+
+    # Environment variables
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - NODE_ENV=${NODE_ENV:-production}
+      - RENEW_BEFORE_DAYS=${RENEW_BEFORE_DAYS:-30}
+
+      # JWT configuration
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:-7d}
+
+      # API Key for admin operations
+      - API_KEY=${API_KEY}
+
+      # Email configuration (optional)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+
+      # Rate limiting
+      - RATE_LIMIT_TTL=${RATE_LIMIT_TTL:-60}
+      - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-100}
+
+    # Network mode: host for direct access to ports
+    # This ensures all nodes can bind to ports 80/443
+    network_mode: host
+
+    # Volumes for persistence
+    volumes:
+      # Let's Encrypt certificates - shared across cluster
+      - letsencrypt-data:/etc/letsencrypt:rw
+      # NGINX logs (local to each node)
+      - nginx-logs:/var/log/nginx:rw
+      # Application logs (local to each node)
+      - app-logs:/app/logs:rw
+
+    # Health check
+    healthcheck:
+      test: [ "/healthcheck.sh" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "app,version"
+
+# Volumes
+volumes:
+  # Shared volume for Let's Encrypt certificates
+  # IMPORTANT: Use a distributed storage driver in production (e.g., NFS, GlusterFS, Ceph)
+  letsencrypt-data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NFS_SERVER:-10.0.0.1},rw,nolock,soft
+      device: ":${NFS_PATH:-/mnt/lyttlenginx/letsencrypt}"
+
+  # Local volumes for logs (per-node)
+  nginx-logs:
+    driver: local
+
+  app-logs:
+    driver: local
+
+# Networks (not used when network_mode: host)
+# networks:
+#   lyttlenginx-network:
+#     driver: overlay
+#     attachable: true
+
