@@ -75,25 +75,32 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
   /**
    * Check if this instance should be the leader and start/stop renewal accordingly
+   * ENHANCED: Better error handling and automatic recovery
    */
   private async leaderElectionCheck() {
     try {
-      // If we're already the leader, just verify we still hold the lock
+      // If we're already the leader, verify we still hold the lock
       if (this.isCurrentlyLeader) {
         const stillLeader = await this.distributedLock.isLeader();
 
         if (!stillLeader) {
-          this.logger.warn(
-            '[Leader] Lost leadership - lock was released or taken',
+          this.logger.error(
+            '[Leader] CRITICAL: Lost leadership - lock was released or taken by another node',
           );
           this.isCurrentlyLeader = false;
 
+          // Stop renewal interval
           if (this.interval) {
             clearInterval(this.interval);
             this.interval = null;
           }
+
+          // Log warning about certificate renewals
+          this.logger.warn(
+            '[Leader] Certificate renewals stopped on this node. Another node should take over.',
+          );
         } else {
-          this.logger.debug('[Leader] Still the leader');
+          this.logger.debug('[Leader] Health check: Still the leader ✓');
         }
         return;
       }
@@ -103,18 +110,33 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
       if (acquiredLock) {
         this.logger.log(
-          '[Leader] This instance is now the LEADER - starting certificate renewal',
+          '[Leader] ✓✓✓ This instance is now the LEADER - starting certificate renewal',
         );
         this.isCurrentlyLeader = true;
 
         // Start renewal interval
         if (!this.interval) {
+          this.logger.log(
+            `[Leader] Starting renewal interval (every ${this.renewIntervalMs / 1000}s)`,
+          );
           this.interval = setInterval(
-            () => this.renewAllCertificates(),
+            () =>
+              this.renewAllCertificates().catch((err) =>
+                this.logger.error(
+                  `[Leader] Renewal error: ${err instanceof Error ? err.message : String(err)}`,
+                ),
+              ),
             this.renewIntervalMs,
           );
-          // Also run immediately
-          await this.renewAllCertificates();
+
+          // Run initial renewal immediately (in background)
+          setImmediate(() =>
+            this.renewAllCertificates().catch((err) =>
+              this.logger.error(
+                `[Leader] Initial renewal error: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            ),
+          );
         }
       } else {
         this.logger.debug(
@@ -125,6 +147,19 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       this.logger.error(
         `[Leader] Error in leader election: ${error instanceof Error ? error.message : String(error)}`,
       );
+
+      // On error, ensure we're not stuck thinking we're the leader
+      if (this.isCurrentlyLeader) {
+        this.logger.warn(
+          '[Leader] Resetting leader state due to error in health check',
+        );
+        this.isCurrentlyLeader = false;
+
+        if (this.interval) {
+          clearInterval(this.interval);
+          this.interval = null;
+        }
+      }
     }
   }
 

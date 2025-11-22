@@ -17,9 +17,11 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ClusterHeartbeatService.name);
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
+  private leaderCheckInterval: NodeJS.Timeout | null = null;
   private readonly heartbeatIntervalMs = 30000; // 30 seconds
   private readonly staleThresholdMs = 120000; // 2 minutes
   private readonly deleteThresholdMs = 3600000; // 1 hour - delete very old stale nodes
+  private readonly leaderCheckIntervalMs = 15000; // 15 seconds - check for leader frequently
 
   constructor(
     private prisma: PrismaService,
@@ -58,6 +60,24 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
           ),
         45000,
       ); // Every 45 seconds - between heartbeat intervals
+
+      // Start leader check - ensures there's always exactly one leader
+      this.leaderCheckInterval = setInterval(
+        () =>
+          this.ensureLeaderExists().catch((err) =>
+            this.logger.error(`[LeaderCheck] Interval error: ${err.message}`),
+          ),
+        this.leaderCheckIntervalMs,
+      );
+
+      // Initial leader check after a brief delay
+      setTimeout(() => {
+        this.ensureLeaderExists().catch((err) =>
+          this.logger.error(
+            `[LeaderCheck] Initial check failed: ${err.message}`,
+          ),
+        );
+      }, 5000); // 5 seconds after startup
     } catch (error) {
       this.logger.error(
         `[Init] Failed to initialize cluster heartbeat: ${error instanceof Error ? error.message : String(error)}`,
@@ -73,6 +93,10 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
 
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
+    }
+
+    if (this.leaderCheckInterval) {
+      clearInterval(this.leaderCheckInterval);
     }
 
     // Mark node as inactive
@@ -394,6 +418,185 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
       leaderCount: leaders.length,
       hasMultipleLeaders: leaders.length > 1,
     };
+  }
+
+  /**
+   * CRITICAL: Ensure exactly one leader exists in the cluster
+   * This method handles:
+   * 1. No leader exists -> elect one
+   * 2. Multiple leaders exist -> keep only one
+   * 3. Stale leader exists -> remove and elect new one
+   */
+  async ensureLeaderExists() {
+    try {
+      const activeNodes = await this.prisma.clusterNode.findMany({
+        where: { status: 'active' },
+        orderBy: { lastHeartbeat: 'desc' },
+      });
+
+      if (activeNodes.length === 0) {
+        this.logger.warn('[LeaderCheck] No active nodes in cluster');
+        return;
+      }
+
+      const leaders = activeNodes.filter((n) => n.isLeader);
+      const staleThreshold = new Date(Date.now() - this.staleThresholdMs);
+
+      // Case 1: Multiple leaders exist - keep the healthiest one
+      if (leaders.length > 1) {
+        this.logger.error(
+          `[LeaderCheck] CRITICAL: ${leaders.length} leaders detected! Resolving...`,
+        );
+
+        // Find the best leader (most recent heartbeat, active status)
+        const validLeader = leaders[0]; // Already sorted by lastHeartbeat desc
+        const invalidLeaders = leaders.slice(1);
+
+        // Demote invalid leaders in DB
+        await this.prisma.clusterNode.updateMany({
+          where: {
+            instanceId: { in: invalidLeaders.map((l) => l.instanceId) },
+          },
+          data: { isLeader: false },
+        });
+
+        // If any of the invalid leaders is THIS instance, release the lock
+        const thisInstanceId = this.distributedLock.getInstanceId();
+        if (invalidLeaders.some((l) => l.instanceId === thisInstanceId)) {
+          this.logger.warn(
+            '[LeaderCheck] This instance was an invalid leader - releasing lock',
+          );
+          await this.distributedLock.releaseLeaderLock();
+        }
+
+        this.logger.log(
+          `[LeaderCheck] Resolved split-brain: kept ${validLeader.hostname} as leader`,
+        );
+        return;
+      }
+
+      // Case 2: One leader exists - validate it's healthy
+      if (leaders.length === 1) {
+        const leader = leaders[0];
+        const thisInstanceId = this.distributedLock.getInstanceId();
+
+        // Check if leader is stale
+        if (leader.lastHeartbeat < staleThreshold) {
+          this.logger.error(
+            `[LeaderCheck] CRITICAL: Leader ${leader.hostname} is STALE (last heartbeat: ${leader.lastHeartbeat.toISOString()})`,
+          );
+
+          // Demote stale leader
+          await this.prisma.clusterNode.update({
+            where: { instanceId: leader.instanceId },
+            data: { isLeader: false, status: 'stale' },
+          });
+
+          this.logger.log(
+            '[LeaderCheck] Demoted stale leader, will elect new one...',
+          );
+          // Fall through to elect new leader
+        } else {
+          // Leader is healthy
+          this.logger.debug(
+            `[LeaderCheck] Leader ${leader.hostname} is healthy`,
+          );
+
+          // If we think we're the leader but DB says someone else is, release our lock
+          const weAreLeader = await this.distributedLock.isLeader();
+          if (weAreLeader && leader.instanceId !== thisInstanceId) {
+            this.logger.error(
+              `[LeaderCheck] CRITICAL: Lock mismatch! We hold lock but ${leader.hostname} is DB leader. Releasing lock.`,
+            );
+            await this.distributedLock.releaseLeaderLock();
+          }
+          return;
+        }
+      }
+
+      // Case 3: No leader exists - elect one!
+      this.logger.warn('[LeaderCheck] NO LEADER EXISTS - initiating election');
+
+      // Try to become the leader
+      const thisInstanceId = this.distributedLock.getInstanceId();
+      const acquired = await this.distributedLock.acquireLeaderLock();
+
+      if (acquired) {
+        this.logger.log(
+          '[LeaderCheck] ✓ This node successfully became the LEADER',
+        );
+
+        // Update DB to reflect leadership
+        await this.prisma.clusterNode.update({
+          where: { instanceId: thisInstanceId },
+          data: { isLeader: true },
+        });
+      } else {
+        // Another node beat us to it - that's okay
+        this.logger.debug(
+          '[LeaderCheck] Another node became leader (lock already held)',
+        );
+
+        // Verify someone actually has it now
+        setTimeout(async () => {
+          const leaderCheck = await this.prisma.clusterNode.findFirst({
+            where: { isLeader: true, status: 'active' },
+          });
+
+          if (!leaderCheck) {
+            this.logger.error(
+              '[LeaderCheck] CRITICAL: Still no leader after election attempt! Will retry...',
+            );
+          }
+        }, 2000);
+      }
+    } catch (error) {
+      this.logger.error(
+        `[LeaderCheck] Failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Force this node to try to become the leader
+   * Used for manual intervention or recovery scenarios
+   */
+  async tryBecomeLeader(): Promise<boolean> {
+    try {
+      const thisInstanceId = this.distributedLock.getInstanceId();
+
+      // First check if we already are the leader
+      const isLeader = await this.distributedLock.isLeader();
+      if (isLeader) {
+        this.logger.log('[TryBecomeLeader] This node is already the leader');
+        return true;
+      }
+
+      // Try to acquire the lock
+      const acquired = await this.distributedLock.acquireLeaderLock();
+
+      if (acquired) {
+        this.logger.log('[TryBecomeLeader] ✓ Successfully became the leader');
+
+        // Update DB
+        await this.prisma.clusterNode.update({
+          where: { instanceId: thisInstanceId },
+          data: { isLeader: true },
+        });
+
+        return true;
+      } else {
+        this.logger.log(
+          '[TryBecomeLeader] ✗ Failed to become leader (lock held by another node)',
+        );
+        return false;
+      }
+    } catch (error) {
+      this.logger.error(
+        `[TryBecomeLeader] Error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    }
   }
 
   /**

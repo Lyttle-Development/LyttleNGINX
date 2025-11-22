@@ -218,4 +218,23 @@ export class DistributedLockService {
   getInstanceId(): string {
     return this.instanceId;
   }
+
+  /**
+   * Get detailed status about leader lock
+   * Useful for debugging and monitoring
+   */
+  getLeaderLockStatus(): {
+    isLeader: boolean;
+    heldForMs: number | null;
+    instanceId: string;
+  } {
+    const lockName = 'cluster:leader';
+    const lockInfo = this.heldLocks.get(lockName);
+
+    return {
+      isLeader: lockInfo !== undefined,
+      heldForMs: lockInfo ? Date.now() - lockInfo.acquiredAt : null,
+      instanceId: this.instanceId,
+    };
+  }
 }
