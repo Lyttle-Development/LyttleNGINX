@@ -69,25 +69,9 @@ else
     echo -e "${YELLOW}⚠ psql not found, skipping database check${NC}"
 fi
 
-# Check if using NFS
 echo ""
-if [ -n "$NFS_SERVER" ] && [ -n "$NFS_PATH" ]; then
-    echo -e "${BLUE}NFS Configuration:${NC}"
-    echo "  Server: $NFS_SERVER"
-    echo "  Path: $NFS_PATH"
-
-    # Test NFS connectivity
-    if command -v showmount > /dev/null 2>&1; then
-        if showmount -e "$NFS_SERVER" > /dev/null 2>&1; then
-            echo -e "${GREEN}✓ NFS server is accessible${NC}"
-        else
-            echo -e "${YELLOW}⚠ Cannot connect to NFS server${NC}"
-        fi
-    fi
-else
-    echo -e "${YELLOW}⚠ NFS not configured - using local volumes${NC}"
-    echo "  This is OK for testing but NOT recommended for production"
-fi
+echo -e "${GREEN}✓ Certificate storage: Database-driven (no shared storage needed)${NC}"
+echo "  Certificates are stored in PostgreSQL and synced to local filesystem on each node"
 
 # Deploy stack
 echo ""

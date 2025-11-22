@@ -7,14 +7,17 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Install dependencies and generate Prisma client
-RUN npm ci --only=production && \
-    npm cache clean --force && \
+# Install ALL dependencies (including devDependencies needed for build)
+RUN npm ci && \
     npx prisma generate
 
 # Copy source and build
 COPY . .
 RUN npm run build
+
+# Prune dev dependencies after build
+RUN npm prune --production && \
+    npm cache clean --force
 
 # Production stage
 FROM debian:bookworm-slim

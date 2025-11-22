@@ -79,15 +79,6 @@ services:
     # This ensures all nodes can bind to ports 80/443
     network_mode: host
 
-    # Volumes for persistence
-    volumes:
-      # Let's Encrypt certificates - shared across cluster
-      - letsencrypt-data:/etc/letsencrypt:rw
-      # NGINX logs (local to each node)
-      - nginx-logs:/var/log/nginx:rw
-      # Application logs (local to each node)
-      - app-logs:/app/logs:rw
-
     # Health check
     healthcheck:
       test: [ "/healthcheck.sh" ]
@@ -103,28 +94,3 @@ services:
         max-size: "10m"
         max-file: "3"
         labels: "app,version"
-
-# Volumes
-volumes:
-  # Shared volume for Let's Encrypt certificates
-  # IMPORTANT: Use a distributed storage driver in production (e.g., NFS, GlusterFS, Ceph)
-  letsencrypt-data:
-    driver: local
-    driver_opts:
-      type: nfs
-      o: addr=${NFS_SERVER:-10.0.0.1},rw,nolock,soft
-      device: ":${NFS_PATH:-/mnt/lyttlenginx/letsencrypt}"
-
-  # Local volumes for logs (per-node)
-  nginx-logs:
-    driver: local
-
-  app-logs:
-    driver: local
-
-# Networks (not used when network_mode: host)
-# networks:
-#   lyttlenginx-network:
-#     driver: overlay
-#     attachable: true
-
