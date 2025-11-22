@@ -31,7 +31,9 @@ COPY nginx/html /etc/nginx/html
 # Ensure proper permissions for Nginx logs and SSL
 RUN mkdir -p /var/log/nginx && touch /var/log/nginx/error.log /var/log/nginx/access.log && \
     chmod 666 /var/log/nginx/*.log && \
-    mkdir -p /etc/nginx/ssl && chmod 755 /etc/nginx/ssl
+    mkdir -p /etc/nginx/ssl && chmod 755 /etc/nginx/ssl && \
+    mkdir -p /var/www/certbot && chmod 755 /var/www/certbot && \
+    mkdir -p /etc/letsencrypt/live && chmod 755 /etc/letsencrypt/live
 
 # Create nginx user/group and set ownership
 RUN addgroup --system --gid 101 nginx && \
