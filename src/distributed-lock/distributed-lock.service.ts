@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class DistributedLockService {
   private readonly logger = new Logger(DistributedLockService.name);
   private readonly instanceId: string;
-  private heldLocks = new Map<string, number>();
+  private heldLocks = new Map<string, { lockId: number; acquiredAt: number }>();
 
   constructor(private prisma: PrismaService) {
     // Generate unique instance ID for this container
@@ -43,7 +43,7 @@ export class DistributedLockService {
       const acquired = result[0]?.pg_try_advisory_lock || false;
 
       if (acquired) {
-        this.heldLocks.set(lockName, lockId);
+        this.heldLocks.set(lockName, { lockId, acquiredAt: Date.now() });
         this.logger.log(
           `[Lock] Acquired lock "${lockName}" (id: ${lockId}) after ${Date.now() - startTime}ms`,
         );
@@ -66,8 +66,8 @@ export class DistributedLockService {
    * Release an advisory lock
    */
   async releaseLock(lockName: string): Promise<void> {
-    const lockId = this.heldLocks.get(lockName);
-    if (!lockId) {
+    const lockInfo = this.heldLocks.get(lockName);
+    if (!lockInfo) {
       this.logger.warn(
         `[Lock] Attempted to release lock "${lockName}" that was not held by this instance`,
       );
@@ -76,10 +76,13 @@ export class DistributedLockService {
 
     try {
       await this.prisma.$queryRaw`
-        SELECT pg_advisory_unlock(${lockId}::bigint)
+        SELECT pg_advisory_unlock(${lockInfo.lockId}::bigint)
       `;
       this.heldLocks.delete(lockName);
-      this.logger.log(`[Lock] Released lock "${lockName}" (id: ${lockId})`);
+      const heldDuration = Date.now() - lockInfo.acquiredAt;
+      this.logger.log(
+        `[Lock] Released lock "${lockName}" (id: ${lockInfo.lockId}) after ${heldDuration}ms`,
+      );
     } catch (error) {
       this.logger.error(
         `[Lock] Error releasing lock "${lockName}": ${error instanceof Error ? error.message : String(error)}`,
@@ -145,10 +148,19 @@ export class DistributedLockService {
   /**
    * Acquire and hold leader lock for a duration
    * Used for periodic tasks that should only run on one node
+   * CRITICAL: Uses PostgreSQL advisory lock for true distributed locking
    */
   async acquireLeaderLock(): Promise<boolean> {
     const lockName = 'cluster:leader';
-    return this.tryAcquireLock(lockName, 5000);
+    const acquired = await this.tryAcquireLock(lockName, 5000);
+
+    if (acquired) {
+      this.logger.log(
+        '[LeaderLock] Successfully acquired leader lock - this node is now the leader',
+      );
+    }
+
+    return acquired;
   }
 
   /**
@@ -163,11 +175,25 @@ export class DistributedLockService {
    * Should be called on shutdown
    */
   async releaseAllLocks(): Promise<void> {
-    this.logger.log(`[Shutdown] Releasing ${this.heldLocks.size} held lock(s)`);
+    const locks = Array.from(this.heldLocks.keys());
+    this.logger.log(
+      `[Shutdown] Releasing ${locks.length} held lock(s): ${locks.join(', ')}`,
+    );
 
-    for (const lockName of Array.from(this.heldLocks.keys())) {
+    for (const lockName of locks) {
       await this.releaseLock(lockName);
     }
+  }
+
+  /**
+   * Get information about currently held locks
+   */
+  getHeldLocksInfo(): Array<{ name: string; heldForMs: number }> {
+    const now = Date.now();
+    return Array.from(this.heldLocks.entries()).map(([name, info]) => ({
+      name,
+      heldForMs: now - info.acquiredAt,
+    }));
   }
 
   /**

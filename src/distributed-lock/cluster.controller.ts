@@ -56,4 +56,20 @@ export class ClusterController {
       },
     };
   }
+
+  /**
+   * Manually trigger cleanup of stale nodes
+   */
+  @Get('admin/cleanup')
+  async manualCleanup() {
+    return this.clusterHeartbeat.manualCleanup();
+  }
+
+  /**
+   * Manually enforce single leader (fixes split-brain)
+   */
+  @Get('admin/enforce-leader')
+  async manualEnforceLeader() {
+    return this.clusterHeartbeat.manualEnforceLeader();
+  }
 }

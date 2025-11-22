@@ -49,6 +49,17 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 - **Configurable Thresholds** - Set custom alert timing (default: 14 days)
 - **Alert Types** - Expiring soon, expired, renewal success/failure
 
+### 🌐 Cluster Management
+
+- **Distributed Locking** - PostgreSQL advisory locks for coordination
+- **Leader Election** - Automatic leader election with fail-over
+- **Node Heartbeats** - Real-time cluster health monitoring
+- **Stale Node Cleanup** - Automatic removal of dead nodes (2 min timeout)
+- **Split-Brain Prevention** - Multiple safety layers enforce single leader
+- **Auto-Recovery** - Self-healing from crashes and network issues
+- **Admin Endpoints** - Manual cluster management and diagnostics
+- **Health Monitoring** - Built-in scripts for cluster health checks
+
 ### 🛡️ Security Features
 
 - **TLS 1.2/1.3 Only** - No legacy protocol support
