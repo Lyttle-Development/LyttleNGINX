@@ -426,6 +426,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
         select: {
           hostname: true,
           instanceId: true,
+          ipAddress: true,
           status: true,
           lastHeartbeat: true,
         },
