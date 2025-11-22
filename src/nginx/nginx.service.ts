@@ -127,30 +127,6 @@ server {
 
 ${proxyConfig}
 
-  # Ensure upstream 5xx are intercepted so error_page is used
-  proxy_intercept_errors on;
-
-  # Custom error pages for 5xx responses.
-  error_page 500 /error-5xx.html;
-  location = /error-5xx.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /5xx.html =502;
-  }
-
-  error_page 503 /error-broken.html;
-  location = /error-broken.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /broken.html =502;
-  }
-
-  error_page 502 504 /error-loading.html;
-  location = /error-loading.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /loading.html =502;
-  }
 
   ${entry.nginx_custom_code || ''}
 }
@@ -188,30 +164,6 @@ server {
 
 ${proxyConfig}
 
-  # Ensure upstream 5xx are intercepted so error_page is used
-  proxy_intercept_errors on;
-
-  # Custom error pages for 5xx responses.
-  error_page 500 /error-5xx.html;
-  location = /error-5xx.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /5xx.html =502;
-  }
-
-  error_page 503 /error-broken.html;
-  location = /error-broken.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /broken.html =502;
-  }
-
-  error_page 502 504 /error-loading.html;
-  location = /error-loading.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /loading.html =502;
-  }
 
   ${entry.nginx_custom_code || ''}
 }
