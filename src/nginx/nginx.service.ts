@@ -4,26 +4,6 @@ import * as fs from 'fs';
 
 @Injectable()
 export class NginxService {
-  /**
-   * Generate proxy_pass directive with variable support for dynamic DNS resolution
-   * This prevents NGINX from failing to start if upstream is temporarily unavailable
-   */
-  private generateProxyPass(proxyPassHost: string): string {
-    // Extract protocol, host, and path from proxy_pass_host
-    const match = proxyPassHost.match(/^(https?:\/\/)([^\/]+)(\/.*)?$/);
-
-    if (!match) {
-      // Fallback to direct proxy_pass if URL doesn't match expected format
-      return `proxy_pass ${proxyPassHost};`;
-    }
-
-    const [, protocol, host, path = ''] = match;
-
-    // Use a variable to force NGINX to resolve at runtime
-    return `set $upstream_endpoint ${protocol}${host};
-    proxy_pass $upstream_endpoint${path};`;
-  }
-
   public generateNginxConfig(
     entries: ProxyEntry[],
     resolved: boolean = true,
@@ -44,43 +24,42 @@ export class NginxService {
         const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
         const hasCert = fs.existsSync(certPath) && fs.existsSync(keyPath);
 
-        // Only create separate HTTP/HTTPS blocks for PROXY entries (not REDIRECT)
-        // REDIRECT entries should use single block like old code to avoid double redirects
-        if (hasCert && entry.ssl && entry.type === ProxyType.PROXY) {
-          // HTTP block - redirect to HTTPS
-          config += `
-# HTTP to HTTPS redirect for ${primaryDomain}
+        // Use single server block for all entry types (matches pre-TLS behavior)
+        {
+          // Add SSL listeners if cert exists and ssl=true
+          const sslLines =
+            hasCert && entry.ssl
+              ? `
+  listen 443 ssl;
+  listen [::]:443 ssl;
+  ssl_certificate ${certPath};
+  ssl_certificate_key ${keyPath};
+      `
+              : '';
+
+          const server_block = `
 server {
   listen 80;
   listen [::]:80;
+  ${sslLines}
   server_name ${domains.join(' ')};
 
-  # Allow ACME challenge for Let's Encrypt
-  location /.well-known/acme-challenge/ {
-    root /var/www/certbot;
-  }
-}
-`;
-
-          // HTTPS block - main configuration for PROXY type
-          const proxyConfig = `
-  # Use variable for dynamic DNS resolution
-  resolver 127.0.0.11 valid=30s ipv6=off;
-  resolver_timeout 5s;
-  
+  ${
+    entry.type === ProxyType.REDIRECT
+      ? `return 301 ${entry.proxy_pass_host};`
+      : `
   location / {
-    ${resolved ? this.generateProxyPass(entry.proxy_pass_host) : 'return 503;'}
+    ${resolved ? `proxy_pass ${entry.proxy_pass_host};` : 'return 503;'}
     proxy_ssl_verify off;
 
     proxy_pass_request_headers on;
     proxy_set_header Host              $host;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_set_header X-Forwarded-Ssl   on;
+    proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host  $host;
-    proxy_set_header X-Forwarded-Port  443;
-    proxy_set_header Forwarded         "for=$remote_addr;proto=https;host=$host";
+    proxy_set_header X-Forwarded-Port  $server_port;
+    proxy_set_header Forwarded         "for=$remote_addr;proto=$scheme;host=$host";
 
     proxy_set_header CF-Connecting-IP  $http_cf_connecting_ip;
     proxy_set_header CF-IPCountry      $http_cf_ipcountry;
@@ -93,10 +72,8 @@ server {
     proxy_set_header Connection        $connection_upgrade;
 
     proxy_read_timeout 86400;
-    
-    # Prevent redirect loops by rewriting backend redirects
-    proxy_redirect http:// https://;
-    proxy_redirect ~^http://([^/]+):(\d+)/(.*)$ https://$1/$3;
+  }
+      `
   }
 
   # Ensure upstream 5xx are intercepted so error_page is used
@@ -123,134 +100,11 @@ server {
       root /etc/nginx/html/errors;
       try_files /loading.html =200;
   }
-`;
-
-          config += `
-# HTTPS server for ${primaryDomain}
-server {
-  listen 443 ssl http2;
-  listen [::]:443 ssl http2;
-  server_name ${domains.join(' ')};
-
-  # SSL Certificate
-  ssl_certificate ${certPath};
-  ssl_certificate_key ${keyPath};
-
-  # HSTS (optional but recommended for production)
-  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-  # Additional security headers
-  add_header X-Frame-Options "SAMEORIGIN" always;
-  add_header X-Content-Type-Options "nosniff" always;
-  add_header X-XSS-Protection "1; mode=block" always;
-
-${proxyConfig}
-
-
+  
   ${entry.nginx_custom_code || ''}
 }
 `;
-        } else {
-          // For REDIRECT entries or entries without SSL: Use old-style single block
-          // This matches the behavior before TLS implementation
-
-          // Add SSL listeners if cert exists and ssl=true
-          const sslLines =
-            hasCert && entry.ssl
-              ? `
-  listen 443 ssl http2;
-  listen [::]:443 ssl http2;
-  ssl_certificate ${certPath};
-  ssl_certificate_key ${keyPath};
-`
-              : '';
-
-          // Check if redirect would cause a loop (redirecting to the EXACT same domain)
-          const redirectTarget = entry.proxy_pass_host;
-          const wouldCauseLoop =
-            entry.type === ProxyType.REDIRECT &&
-            domains.some((d) => {
-              const normalizedDomain = d.startsWith('*.') ? d.substring(2) : d;
-              // Extract domain from redirect target URL
-              const targetMatch = redirectTarget.match(/https?:\/\/([^\/]+)/);
-              const targetDomain = targetMatch ? targetMatch[1] : '';
-              // Check for exact match (with or without www)
-              return (
-                targetDomain === normalizedDomain ||
-                targetDomain === 'www.' + normalizedDomain ||
-                'www.' + targetDomain === normalizedDomain
-              );
-            });
-
-          const proxyConfig =
-            entry.type === ProxyType.REDIRECT && !wouldCauseLoop
-              ? `  # Redirect wrapped in location block so ACME challenges work
-  location / {
-    return 301 ${entry.proxy_pass_host};
-  }`
-              : wouldCauseLoop
-                ? `  # REDIRECT DISABLED: Would cause loop (redirecting to own domain)
-  # Original target was: ${entry.proxy_pass_host}
-  location / {
-    return 500 "Redirect loop detected - contact administrator";
-  }`
-                : `
-  location / {
-    ${resolved ? `proxy_pass ${entry.proxy_pass_host};` : 'return 503;'}
-    proxy_ssl_verify off;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_read_timeout 86400;
-  }`;
-
-          config += `
-# Single-block server for ${primaryDomain} (REDIRECT or no SSL)
-server {
-  listen 80;
-  listen [::]:80;
-${sslLines}
-  server_name ${domains.join(' ')};
-
-  # Allow ACME challenge for Let's Encrypt
-  location /.well-known/acme-challenge/ {
-    root /var/www/certbot;
-  }
-
-${proxyConfig}
-
-  # Ensure upstream 5xx are intercepted so error_page is used
-  proxy_intercept_errors on;
-
-  # Custom error pages for 5xx responses
-  error_page 500 /error-5xx.html;
-  location = /error-5xx.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /5xx.html =200;
-  }
-
-  error_page 503 /error-broken.html;
-  location = /error-broken.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /broken.html =200;
-  }
-
-  error_page 502 504 /error-loading.html;
-  location = /error-loading.html {
-      internal;
-      root /etc/nginx/html/errors;
-      try_files /loading.html =200;
-  }
-
-  ${entry.nginx_custom_code || ''}
-}
-`;
+          config += server_block;
         }
       } catch (error) {
         console.error(`Error generating config for entry ${entry.id}:`, error);
