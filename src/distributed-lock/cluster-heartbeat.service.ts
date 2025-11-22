@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { DistributedLockService } from './distributed-lock.service';
 import * as os from 'os';
+import { getNodeIpAddress } from '../utils/network-utils';
 
 /**
  * Service to track cluster nodes and their health status
@@ -109,6 +110,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   private async registerNode() {
     const instanceId = this.distributedLock.getInstanceId();
     const hostname = os.hostname();
+    const ipAddress = getNodeIpAddress();
 
     try {
       await this.prisma.clusterNode.upsert({
@@ -116,6 +118,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
         create: {
           instanceId,
           hostname,
+          ipAddress,
           lastHeartbeat: new Date(),
           status: 'active',
           version: process.env.npm_package_version || 'unknown',
@@ -129,6 +132,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
         },
         update: {
           hostname,
+          ipAddress,
           lastHeartbeat: new Date(),
           status: 'active',
           version: process.env.npm_package_version || 'unknown',
@@ -136,7 +140,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
       });
 
       this.logger.log(
-        `[Register] Node registered: ${hostname} (${instanceId})`,
+        `[Register] Node registered: ${hostname} (${instanceId}) at ${ipAddress || 'unknown IP'}`,
       );
     } catch (error) {
       this.logger.error(
@@ -150,6 +154,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
    */
   private async sendHeartbeat() {
     const instanceId = this.distributedLock.getInstanceId();
+    const ipAddress = getNodeIpAddress();
 
     try {
       const isLeader = await this.distributedLock.isLeader();
@@ -181,6 +186,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
         where: { instanceId },
         data: {
           lastHeartbeat: new Date(),
+          ipAddress,
           isLeader: finalLeaderStatus,
           status: 'active',
           metadata: {

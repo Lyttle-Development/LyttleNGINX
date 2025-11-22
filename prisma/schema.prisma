@@ -47,6 +47,7 @@ model ClusterNode {
   id            String   @id @default(uuid())
   hostname      String
   instanceId    String   @unique
+  ipAddress     String? // IP address of the node for direct communication
   isLeader      Boolean  @default(false)
   lastHeartbeat DateTime
   version       String?
@@ -57,6 +58,7 @@ model ClusterNode {
 
   @@index([isLeader, lastHeartbeat])
   @@index([hostname])
+  @@index([ipAddress])
   @@schema("public")
 }
 

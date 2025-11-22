@@ -23,6 +23,7 @@ export class ClusterController {
         id: node.id,
         hostname: node.hostname,
         instanceId: node.instanceId,
+        ipAddress: node.ipAddress,
         isLeader: node.isLeader,
         status: node.status,
         lastHeartbeat: node.lastHeartbeat,
@@ -54,6 +55,7 @@ export class ClusterController {
         id: leader.id,
         hostname: leader.hostname,
         instanceId: leader.instanceId,
+        ipAddress: leader.ipAddress,
         lastHeartbeat: leader.lastHeartbeat,
         version: leader.version,
         metadata: leader.metadata,
@@ -89,6 +91,7 @@ export class ClusterController {
         ? {
             hostname: dbLeader.hostname,
             instanceId: dbLeader.instanceId,
+            ipAddress: dbLeader.ipAddress,
             lastHeartbeat: dbLeader.lastHeartbeat,
             status: dbLeader.status,
           }
@@ -96,6 +99,7 @@ export class ClusterController {
       allLeadersInDb: allLeaders.map((l) => ({
         hostname: l.hostname,
         instanceId: l.instanceId,
+        ipAddress: l.ipAddress,
         status: l.status,
         lastHeartbeat: l.lastHeartbeat,
       })),
