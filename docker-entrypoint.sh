@@ -133,17 +133,22 @@ verify_prerequisites() {
     fi
     log_success "Database is accessible"
 
-    # Run Prisma migrations
-    log_info "Running Prisma migrations..."
-    if ! npx prisma migrate deploy; then
-        log_error "Failed to run Prisma migrations"
-        exit 1
-    fi
-    log_success "Prisma migrations completed"
+  # Generate Prisma client first (must be done before migrations)
+  log_info "Generating Prisma client..."
+  if ! npx prisma generate; then
+    log_error "Failed to generate Prisma client"
+    exit 1
+  fi
+  log_success "Prisma client generated"
 
-    # Generate Prisma client (should already be done, but just in case)
-    log_info "Ensuring Prisma client is generated..."
-    npx prisma generate > /dev/null 2>&1 || true
+  # Run Prisma migrations
+  log_info "Running Prisma migrations..."
+  if ! npx prisma migrate deploy; then
+    log_error "Failed to run Prisma migrations"
+    exit 1
+  fi
+  log_success "Prisma migrations completed"
+
 
     log_success "Prerequisites verified"
 }

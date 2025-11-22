@@ -4,6 +4,26 @@ import * as fs from 'fs';
 
 @Injectable()
 export class NginxService {
+  /**
+   * Generate proxy_pass directive with variable support for dynamic DNS resolution
+   * This prevents NGINX from failing to start if upstream is temporarily unavailable
+   */
+  private generateProxyPass(proxyPassHost: string): string {
+    // Extract protocol, host, and path from proxy_pass_host
+    const match = proxyPassHost.match(/^(https?:\/\/)([^\/]+)(\/.*)?$/);
+
+    if (!match) {
+      // Fallback to direct proxy_pass if URL doesn't match expected format
+      return `proxy_pass ${proxyPassHost};`;
+    }
+
+    const [, protocol, host, path = ''] = match;
+
+    // Use a variable to force NGINX to resolve at runtime
+    return `set $upstream_endpoint ${protocol}${host};
+    proxy_pass $upstream_endpoint${path};`;
+  }
+
   public generateNginxConfig(
     entries: ProxyEntry[],
     resolved: boolean = true,
@@ -51,8 +71,12 @@ server {
             entry.type === ProxyType.REDIRECT
               ? `  return 301 ${entry.proxy_pass_host};`
               : `
+  # Use variable for dynamic DNS resolution
+  resolver 127.0.0.11 valid=30s ipv6=off;
+  resolver_timeout 5s;
+  
   location / {
-    ${resolved ? `proxy_pass ${entry.proxy_pass_host};` : 'return 503;'}
+    ${resolved ? this.generateProxyPass(entry.proxy_pass_host) : 'return 503;'}
     proxy_ssl_verify off;
 
     proxy_pass_request_headers on;

@@ -25,19 +25,35 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit() {
-    this.logger.log('[Init] Starting cluster heartbeat service');
+    try {
+      this.logger.log('[Init] Starting cluster heartbeat service');
 
-    // Register this node
-    await this.registerNode();
+      // Register this node
+      await this.registerNode();
 
-    // Start heartbeat interval
-    this.heartbeatInterval = setInterval(
-      () => this.sendHeartbeat(),
-      this.heartbeatIntervalMs,
-    );
+      // Start heartbeat interval
+      this.heartbeatInterval = setInterval(
+        () =>
+          this.sendHeartbeat().catch((err) =>
+            this.logger.error(`[Heartbeat] Interval error: ${err.message}`),
+          ),
+        this.heartbeatIntervalMs,
+      );
 
-    // Start cleanup of stale nodes
-    setInterval(() => this.cleanupStaleNodes(), 60000); // Every minute
+      // Start cleanup of stale nodes
+      setInterval(
+        () =>
+          this.cleanupStaleNodes().catch((err) =>
+            this.logger.error(`[Cleanup] Interval error: ${err.message}`),
+          ),
+        60000,
+      ); // Every minute
+    } catch (error) {
+      this.logger.error(
+        `[Init] Failed to initialize cluster heartbeat: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      // Don't throw - allow app to continue without cluster tracking
+    }
   }
 
   async onModuleDestroy() {
