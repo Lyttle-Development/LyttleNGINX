@@ -437,7 +437,12 @@ cleanupChallenge();
     this.logger.log(
       '[Renewal] Starting renewal for all certificate domain groups...',
     );
-    const entries = await this.prisma.proxyEntry.findMany();
+    // Only fetch entries that need SSL certificates (ssl=true)
+    const entries = await this.prisma.proxyEntry.findMany({
+      where: {
+        ssl: true,
+      },
+    });
     const domainGroups = Array.from(
       new Set(entries.map((e) => joinDomains(parseDomains(e.domains)))),
     ).map((group) => parseDomains(group));
