@@ -245,105 +245,41 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
 
         try {
-          // Create Node.js-based auth hook script that stores challenges in database
-          const authHookScript = `
-#!/usr/bin/env node
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient({
-  datasourceUrl: process.env.DATABASE_URL
-});
+          // Use shell script hooks that directly interact with PostgreSQL
+          // These scripts are copied into the container at /certbot-auth-hook.sh and /certbot-cleanup-hook.sh
+          const authHookPath = '/certbot-auth-hook.sh';
+          const cleanupHookPath = '/certbot-cleanup-hook.sh';
 
-async function storeChallenge() {
-  try {
-    const token = process.env.CERTBOT_TOKEN;
-    const validation = process.env.CERTBOT_VALIDATION;
-    const domain = process.env.CERTBOT_DOMAIN;
-    
-    if (!token || !validation || !domain) {
-      console.error('Missing required environment variables');
-      process.exit(1);
-    }
-    
-    console.log(\`[Auth Hook] Storing challenge for domain: \${domain}\`);
-    
-    await prisma.acmeChallenge.upsert({
-      where: { token },
-      create: {
-        token,
-        keyAuth: validation,
-        domain,
-        expiresAt: new Date(Date.now() + 3600000) // 1 hour
-      },
-      update: {
-        keyAuth: validation,
-        domain,
-        expiresAt: new Date(Date.now() + 3600000)
-      }
-    });
-    
-    console.log(\`[Auth Hook] Challenge stored successfully: \${token}\`);
-    await prisma.$disconnect();
-    
-    // Give Let's Encrypt time to propagate
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    process.exit(0);
-  } catch (error) {
-    console.error('[Auth Hook] Error storing challenge:', error);
-    process.exit(1);
-  }
-}
+          // Parse DATABASE_URL to get connection details for psql in the hooks
+          const dbUrl = process.env.DATABASE_URL || '';
+          const dbMatch = dbUrl.match(
+            /postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/([^?]+)/,
+          );
 
-storeChallenge();
-`;
+          if (!dbMatch) {
+            throw new Error(
+              'Could not parse DATABASE_URL for certbot hooks. Expected format: postgresql://user:pass@host:port/dbname',
+            );
+          }
 
-          const cleanupHookScript = `
-#!/usr/bin/env node
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient({
-  datasourceUrl: process.env.DATABASE_URL
-});
-
-async function cleanupChallenge() {
-  try {
-    const token = process.env.CERTBOT_TOKEN;
-    
-    if (!token) {
-      console.error('Missing CERTBOT_TOKEN');
-      process.exit(1);
-    }
-    
-    console.log(\`[Cleanup Hook] Removing challenge: \${token}\`);
-    
-    await prisma.acmeChallenge.deleteMany({
-      where: { token }
-    });
-    
-    console.log('[Cleanup Hook] Challenge removed successfully');
-    await prisma.$disconnect();
-    process.exit(0);
-  } catch (error) {
-    console.error('[Cleanup Hook] Error removing challenge:', error);
-    process.exit(1);
-  }
-}
-
-cleanupChallenge();
-`;
-
-          // Write temporary hook scripts
-          const authHookPath = '/tmp/certbot-auth-hook.js';
-          const cleanupHookPath = '/tmp/certbot-cleanup-hook.js';
-
-          fs.writeFileSync(authHookPath, authHookScript, { mode: 0o755 });
-          fs.writeFileSync(cleanupHookPath, cleanupHookScript, { mode: 0o755 });
+          const [, dbUser, dbPassword, dbHost, dbPort, dbName] = dbMatch;
 
           this.logger.log(
             `[Certbot] Running command: certbot certonly --manual --preferred-challenges=http --manual-auth-hook=${authHookPath} --manual-cleanup-hook=${cleanupHookPath} --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
           );
 
-          // Use manual mode with Node.js hooks so all nodes can serve challenges from database
+          // Use manual mode with shell hooks so all nodes can serve challenges from database
+          const env = {
+            ...process.env,
+            DB_USER: dbUser,
+            DB_PASSWORD: dbPassword,
+            DB_HOST: dbHost,
+            DB_PORT: dbPort,
+            DB_NAME: dbName,
+          };
+
           await exec(
-            `certbot certonly --manual --preferred-challenges=http --manual-auth-hook=${authHookPath} --manual-cleanup-hook=${cleanupHookPath} --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+            `DB_USER=${dbUser} DB_PASSWORD=${dbPassword} DB_HOST=${dbHost} DB_PORT=${dbPort} DB_NAME=${dbName} certbot certonly --manual --preferred-challenges=http --manual-auth-hook=${authHookPath} --manual-cleanup-hook=${cleanupHookPath} --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
           );
           this.logger.log(
             `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
