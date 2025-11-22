@@ -60,3 +60,17 @@ model ClusterNode {
   @@schema("public")
 }
 
+model AcmeChallenge {
+  id        String   @id @default(uuid())
+  token     String   @unique // The challenge token (filename)
+  keyAuth   String // The key authorization (file content)
+  domain    String // Domain this challenge is for
+  createdAt DateTime @default(now())
+  expiresAt DateTime // Challenges expire after 1 hour
+
+  @@index([token])
+  @@index([domain])
+  @@index([expiresAt])
+  @@schema("public")
+}
+

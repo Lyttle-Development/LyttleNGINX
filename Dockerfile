@@ -39,7 +39,8 @@ RUN apt-get update && \
         certbot \
         python3-certbot-nginx \
         procps \
-        netcat-openbsd && \
+        netcat-openbsd \
+        postgresql-client && \
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     apt-get clean && \
@@ -56,7 +57,9 @@ COPY --from=builder /app/prisma ./prisma
 # Copy entrypoint scripts and make them executable
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY healthcheck.sh /healthcheck.sh
-RUN chmod +x /docker-entrypoint.sh /healthcheck.sh
+COPY certbot-auth-hook.sh /certbot-auth-hook.sh
+COPY certbot-cleanup-hook.sh /certbot-cleanup-hook.sh
+RUN chmod +x /docker-entrypoint.sh /healthcheck.sh /certbot-auth-hook.sh /certbot-cleanup-hook.sh
 
 # Copy nginx config to /app/nginx (for reloader service to access)
 COPY nginx /app/nginx

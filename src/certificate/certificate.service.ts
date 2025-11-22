@@ -245,11 +245,22 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
 
         try {
-          this.logger.log(
-            `[Certbot] Running command: certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+          // Parse DATABASE_URL to get connection details for hooks
+          const dbUrl = process.env.DATABASE_URL || '';
+          const dbMatch = dbUrl.match(
+            /postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/([^?]+)/,
           );
+          const dbEnvVars = dbMatch
+            ? `DB_USER=${dbMatch[1]} DB_PASSWORD=${dbMatch[2]} DB_HOST=${dbMatch[3]} DB_PORT=${dbMatch[4]} DB_NAME=${dbMatch[5]}`
+            : '';
+
+          this.logger.log(
+            `[Certbot] Running command: certbot certonly --manual --preferred-challenges=http --manual-auth-hook=/certbot-auth-hook.sh --manual-cleanup-hook=/certbot-cleanup-hook.sh --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+          );
+
+          // Use manual mode with hooks so all nodes can serve challenges from database
           await exec(
-            `certbot certonly --nginx --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+            `${dbEnvVars} certbot certonly --manual --preferred-challenges=http --manual-auth-hook=/certbot-auth-hook.sh --manual-cleanup-hook=/certbot-cleanup-hook.sh --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
           );
           this.logger.log(
             `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
