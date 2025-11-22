@@ -44,8 +44,9 @@ export class NginxService {
         const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
         const hasCert = fs.existsSync(certPath) && fs.existsSync(keyPath);
 
-        // If SSL is enabled and cert exists, create separate blocks for HTTP and HTTPS
-        if (hasCert && entry.ssl) {
+        // Only create separate HTTP/HTTPS blocks for PROXY entries (not REDIRECT)
+        // REDIRECT entries should use single block like old code to avoid double redirects
+        if (hasCert && entry.ssl && entry.type === ProxyType.PROXY) {
           // HTTP block - redirect to HTTPS
           config += `
 # HTTP to HTTPS redirect for ${primaryDomain}
@@ -58,19 +59,11 @@ server {
   location /.well-known/acme-challenge/ {
     root /var/www/certbot;
   }
-
-  # Redirect all other traffic to HTTPS
-  location / {
-    return 301 https://$host$request_uri;
-  }
 }
 `;
 
-          // HTTPS block - main configuration
-          const proxyConfig =
-            entry.type === ProxyType.REDIRECT
-              ? `  return 301 ${entry.proxy_pass_host};`
-              : `
+          // HTTPS block - main configuration for PROXY type
+          const proxyConfig = `
   # Use variable for dynamic DNS resolution
   resolver 127.0.0.11 valid=30s ipv6=off;
   resolver_timeout 5s;
@@ -158,13 +151,52 @@ ${proxyConfig}
 }
 `;
         } else {
-          // No SSL or cert not available - HTTP only
+          // For REDIRECT entries or entries without SSL: Use old-style single block
+          // This matches the behavior before TLS implementation
+
+          // Add SSL listeners if cert exists and ssl=true
+          const sslLines =
+            hasCert && entry.ssl
+              ? `
+  listen 443 ssl http2;
+  listen [::]:443 ssl http2;
+  ssl_certificate ${certPath};
+  ssl_certificate_key ${keyPath};
+`
+              : '';
+
+          // Check if redirect would cause a loop (redirecting to the EXACT same domain)
+          const redirectTarget = entry.proxy_pass_host;
+          const wouldCauseLoop =
+            entry.type === ProxyType.REDIRECT &&
+            domains.some((d) => {
+              const normalizedDomain = d.startsWith('*.') ? d.substring(2) : d;
+              // Extract domain from redirect target URL
+              const targetMatch = redirectTarget.match(/https?:\/\/([^\/]+)/);
+              const targetDomain = targetMatch ? targetMatch[1] : '';
+              // Check for exact match (with or without www)
+              return (
+                targetDomain === normalizedDomain ||
+                targetDomain === 'www.' + normalizedDomain ||
+                'www.' + targetDomain === normalizedDomain
+              );
+            });
+
           const proxyConfig =
-            entry.type === ProxyType.REDIRECT
-              ? `  return 301 ${entry.proxy_pass_host};`
-              : `
+            entry.type === ProxyType.REDIRECT && !wouldCauseLoop
+              ? `  # Redirect wrapped in location block so ACME challenges work
   location / {
-    proxy_pass ${entry.proxy_pass_host};
+    return 301 ${entry.proxy_pass_host};
+  }`
+              : wouldCauseLoop
+                ? `  # REDIRECT DISABLED: Would cause loop (redirecting to own domain)
+  # Original target was: ${entry.proxy_pass_host}
+  location / {
+    return 500 "Redirect loop detected - contact administrator";
+  }`
+                : `
+  location / {
+    ${resolved ? `proxy_pass ${entry.proxy_pass_host};` : 'return 503;'}
     proxy_ssl_verify off;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -177,10 +209,11 @@ ${proxyConfig}
   }`;
 
           config += `
-# HTTP-only server for ${primaryDomain}
+# Single-block server for ${primaryDomain} (REDIRECT or no SSL)
 server {
   listen 80;
   listen [::]:80;
+${sslLines}
   server_name ${domains.join(' ')};
 
   # Allow ACME challenge for Let's Encrypt
@@ -190,6 +223,30 @@ server {
 
 ${proxyConfig}
 
+  # Ensure upstream 5xx are intercepted so error_page is used
+  proxy_intercept_errors on;
+
+  # Custom error pages for 5xx responses
+  error_page 500 /error-5xx.html;
+  location = /error-5xx.html {
+      internal;
+      root /etc/nginx/html/errors;
+      try_files /5xx.html =200;
+  }
+
+  error_page 503 /error-broken.html;
+  location = /error-broken.html {
+      internal;
+      root /etc/nginx/html/errors;
+      try_files /broken.html =200;
+  }
+
+  error_page 502 504 /error-loading.html;
+  location = /error-loading.html {
+      internal;
+      root /etc/nginx/html/errors;
+      try_files /loading.html =200;
+  }
 
   ${entry.nginx_custom_code || ''}
 }
