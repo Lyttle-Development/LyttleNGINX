@@ -83,10 +83,11 @@ server {
     proxy_set_header Host              $host;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Ssl   on;
     proxy_set_header X-Forwarded-Host  $host;
-    proxy_set_header X-Forwarded-Port  $server_port;
-    proxy_set_header Forwarded         "for=$remote_addr;proto=$scheme;host=$host";
+    proxy_set_header X-Forwarded-Port  443;
+    proxy_set_header Forwarded         "for=$remote_addr;proto=https;host=$host";
 
     proxy_set_header CF-Connecting-IP  $http_cf_connecting_ip;
     proxy_set_header CF-IPCountry      $http_cf_ipcountry;
@@ -100,8 +101,9 @@ server {
 
     proxy_read_timeout 86400;
     
-    # Additional security headers
-    proxy_set_header X-Forwarded-Ssl on;
+    # Prevent redirect loops by rewriting backend redirects
+    proxy_redirect http:// https://;
+    proxy_redirect ~^http://([^/]+):(\d+)/(.*)$ https://$1/$3;
   }
 
   # Ensure upstream 5xx are intercepted so error_page is used
@@ -112,21 +114,21 @@ server {
   location = /error-5xx.html {
       internal;
       root /etc/nginx/html/errors;
-      try_files /5xx.html =502;
+      try_files /5xx.html =200;
   }
 
   error_page 503 /error-broken.html;
   location = /error-broken.html {
       internal;
       root /etc/nginx/html/errors;
-      try_files /broken.html =502;
+      try_files /broken.html =200;
   }
 
   error_page 502 504 /error-loading.html;
   location = /error-loading.html {
       internal;
       root /etc/nginx/html/errors;
-      try_files /loading.html =502;
+      try_files /loading.html =200;
   }
 `;
 
