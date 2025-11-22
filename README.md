@@ -311,13 +311,21 @@ npm run prisma:migrate
 | POST   | `/tls/certificate/info`           | Parse certificate   |
 | POST   | `/tls/certificate/validate-chain` | Validate chain      |
 
+### Authentication Endpoints
+
+| Method | Endpoint       | Description                 | Auth     |
+|--------|----------------|-----------------------------|----------|
+| POST   | `/auth/login`  | Login and get JWT token     | Public   |
+| GET    | `/auth/status` | Check authentication status | Required |
+| GET    | `/auth/info`   | Get auth configuration info | Public   |
+
 ### Health Endpoints
 
-| Method | Endpoint         | Description         |
-|--------|------------------|---------------------|
-| GET    | `/health`        | Health check        |
-| GET    | `/ready`         | Readiness check     |
-| POST   | `/health/reload` | Reload NGINX config |
+| Method | Endpoint         | Description         | Auth   |
+|--------|------------------|---------------------|--------|
+| GET    | `/health`        | Health check        | Public |
+| GET    | `/ready`         | Readiness check     | Public |
+| POST   | `/health/reload` | Reload NGINX config | Public |
 
 **📖 Complete API documentation:** [API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)
 
@@ -806,12 +814,12 @@ For issues and questions:
 
 ## 📊 Statistics
 
-- **Lines of Code:** ~10,000+
+- **Lines of Code:** ~12,000+
 - **Documentation:** 2,500+ lines
-- **API Endpoints:** 30+
-- **Services:** 15+
-- **Controllers:** 8
-- **Modules:** 10+
+- **API Endpoints:** 35+
+- **Services:** 17+
+- **Controllers:** 9
+- **Modules:** 11+
 - **Build Status:** ✅ Passing
 
 ---

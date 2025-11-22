@@ -11,9 +11,11 @@ import { LogsService } from './logs/logs.service';
 
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
+    AuthModule,
     RateLimitModule,
     MetricsModule,
     PrismaModule,

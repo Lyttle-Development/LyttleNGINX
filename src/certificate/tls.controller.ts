@@ -6,10 +6,12 @@ import {
   HttpStatus,
   Param,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import { TlsConfigService } from './tls-config.service';
 import { CertificatePemDto } from './dto/certificate-pem.dto';
 import { ValidateCertChainDto } from './dto/validate-cert-chain.dto';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-auth.guard';
 
 @Controller('tls')
 export class TlsController {
@@ -39,18 +41,21 @@ export class TlsController {
   }
 
   @Get('dhparam/status')
+  @UseGuards(OptionalJwtAuthGuard)
   async checkDhParams() {
     const exists = this.tlsConfigService.dhParamsExist();
     return { exists, path: '/etc/nginx/ssl/dhparam.pem' };
   }
 
   @Post('certificate/info')
+  @UseGuards(OptionalJwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async getCertificateInfo(@Body() dto: CertificatePemDto) {
     return this.tlsConfigService.getCertificateInfo(dto.certPem);
   }
 
   @Post('certificate/validate-chain')
+  @UseGuards(OptionalJwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async validateChain(@Body() dto: ValidateCertChainDto) {
     return this.tlsConfigService.validateCertificateChain(
