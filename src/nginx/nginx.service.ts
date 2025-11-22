@@ -44,33 +44,21 @@ server {
   ${sslLines}
   server_name ${domains.join(' ')};
 
+  # Allow ACME challenges - proxy to Node.js app (applies to all entry types)
+    proxy_pass http://127.0.0.1:3000/.well-known/acme-challenge/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
   ${
     entry.type === ProxyType.REDIRECT
-      ? `
-  # Allow ACME challenges before redirect - proxy to Node.js app
-  location /.well-known/acme-challenge/ {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  # Redirect all other traffic
+      ? `# Redirect all other traffic
   location / {
     return 301 ${entry.proxy_pass_host};
-  }
-      `
-      : `
-  # Allow ACME challenges - proxy to Node.js app
-  location /.well-known/acme-challenge/ {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
+  }`
+      : `# Proxy traffic to upstream
   location / {
     ${resolved ? `proxy_pass ${entry.proxy_pass_host};` : 'return 503;'}
     proxy_ssl_verify off;
@@ -95,8 +83,7 @@ server {
     proxy_set_header Connection        $connection_upgrade;
 
     proxy_read_timeout 86400;
-  }
-      `
+  }`
   }
 
   # Ensure upstream 5xx are intercepted so error_page is used
