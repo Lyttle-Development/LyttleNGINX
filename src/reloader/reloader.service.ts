@@ -202,18 +202,13 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
         }
 
         // Check if upstream host resolves (skip for REDIRECT type)
+        let resolved = false
         if (entry.type !== 'REDIRECT') {
-          const resolvable = await isHostResolvable(upstreamHost);
-          if (!resolvable) {
-            this.logger.warn(
-              `Skipping entry id=${entry.id} due to unresolved upstream host: ${upstreamHost}`,
-            );
-            continue;
-          }
+          resolved = await isHostResolvable(upstreamHost);
         }
 
         this.logger.log(`Generating nginx config for entry id=${entry.id}`);
-        const entryConfig = this.nginx.generateNginxConfig([entry]);
+        const entryConfig = this.nginx.generateNginxConfig([entry], resolved);
         const entryFilename = join(confdDir, `${entry.id}.conf.tmp`);
         this.logger.log(`Writing temp config file: ${entryFilename}`);
         await writeFile(entryFilename, entryConfig, { encoding: 'utf-8' });
