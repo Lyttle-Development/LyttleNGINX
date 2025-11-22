@@ -88,7 +88,7 @@ RUN mkdir -p /app/state && chmod 755 /app/state
 EXPOSE 80 443 3000
 
 # Enhanced healthcheck with proper retry logic
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=3 \
   CMD /healthcheck.sh || exit 1
 
 # Use tini for proper signal handling and zombie reaping

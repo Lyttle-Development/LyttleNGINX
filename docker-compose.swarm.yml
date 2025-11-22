@@ -70,11 +70,11 @@ services:
         mode: host
 
     healthcheck:
-      test: [ "/healthcheck.sh" ]
-      interval: 30s
-      timeout: 10s
+      test: [ "CMD-SHELL", "/healthcheck.sh" ]
+      interval: 15s
+      timeout: 5s
       retries: 3
-      start_period: 90s
+      start_period: 45s
 
     logging:
       driver: "json-file"
