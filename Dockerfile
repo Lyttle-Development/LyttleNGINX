@@ -58,7 +58,10 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY healthcheck.sh /healthcheck.sh
 RUN chmod +x /docker-entrypoint.sh /healthcheck.sh
 
-# Copy nginx config
+# Copy nginx config to /app/nginx (for reloader service to access)
+COPY nginx /app/nginx
+
+# Also copy initial config to /etc/nginx
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 COPY nginx/conf.d /etc/nginx/conf.d
 COPY nginx/html /etc/nginx/html
