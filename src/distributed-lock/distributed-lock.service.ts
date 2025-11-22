@@ -1,5 +1,5 @@
-import {Injectable, Logger} from '@nestjs/common';
-import {PrismaService} from '../prisma/prisma.service';
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 
 /**
  * Distributed lock service using PostgreSQL advisory locks
@@ -132,43 +132,14 @@ export class DistributedLockService {
 
   /**
    * Check if this instance is currently the leader
-   * Leader is responsible for cert renewals and cleanup tasks
+   * Returns true if we are holding the leader lock
    */
   async isLeader(): Promise<boolean> {
-    try {
-      // Use a well-known lock name for leader election
-      const lockName = 'cluster:leader';
-      const lockId = this.stringToLockId(lockName);
+    const lockName = 'cluster:leader';
 
-      // Try to acquire leader lock (non-blocking)
-      const result = await this.prisma.$queryRaw<
-        [
-          {
-            pg_try_advisory_lock: boolean;
-          },
-        ]
-      >`
-        SELECT pg_try_advisory_lock(${lockId}::bigint) as pg_try_advisory_lock
-      `;
-
-      const acquired = result[0]?.pg_try_advisory_lock || false;
-
-      if (acquired) {
-        // We're the leader, but release immediately since this is just a check
-        // The actual leader lock should be held for longer periods
-        await this.prisma.$queryRaw`
-          SELECT pg_advisory_unlock(${lockId}::bigint)
-        `;
-        return true;
-      }
-
-      return false;
-    } catch (error) {
-      this.logger.error(
-        `[Leader] Error checking leader status: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return false;
-    }
+    // Simply check if we have the leader lock in our held locks
+    // Don't try to acquire it - that would release it immediately!
+    return this.heldLocks.has(lockName);
   }
 
   /**

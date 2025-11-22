@@ -40,15 +40,17 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
     // Start leader election process - only leader will renew certificates
     this.logger.log(
-      `[Init] Starting leader election for certificate renewal (check interval: 60s)`,
-    );
-    this.leaderLockInterval = setInterval(
-      () => this.leaderElectionCheck(),
-      60000, // Check every minute
+      `[Init] Starting leader election for certificate renewal (check interval: 30s)`,
     );
 
-    // Do initial leader check
+    // Try to become leader immediately
     await this.leaderElectionCheck();
+
+    // Re-check every 30 seconds (in case leader dies or we want to take over)
+    this.leaderLockInterval = setInterval(
+      () => this.leaderElectionCheck(),
+      30000, // Check every 30 seconds
+    );
   }
 
   async onApplicationShutdown() {
@@ -76,9 +78,30 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
    */
   private async leaderElectionCheck() {
     try {
-      const isLeader = await this.distributedLock.acquireLeaderLock();
+      // If we're already the leader, just verify we still hold the lock
+      if (this.isCurrentlyLeader) {
+        const stillLeader = await this.distributedLock.isLeader();
 
-      if (isLeader && !this.isCurrentlyLeader) {
+        if (!stillLeader) {
+          this.logger.warn(
+            '[Leader] Lost leadership - lock was released or taken',
+          );
+          this.isCurrentlyLeader = false;
+
+          if (this.interval) {
+            clearInterval(this.interval);
+            this.interval = null;
+          }
+        } else {
+          this.logger.debug('[Leader] Still the leader');
+        }
+        return;
+      }
+
+      // We're not the leader, try to become one
+      const acquiredLock = await this.distributedLock.acquireLeaderLock();
+
+      if (acquiredLock) {
         this.logger.log(
           '[Leader] This instance is now the LEADER - starting certificate renewal',
         );
@@ -93,19 +116,10 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           // Also run immediately
           await this.renewAllCertificates();
         }
-      } else if (!isLeader && this.isCurrentlyLeader) {
-        this.logger.log(
-          '[Leader] Lost leadership - stopping certificate renewal',
+      } else {
+        this.logger.debug(
+          '[Leader] Not the leader - another node holds the lock',
         );
-        this.isCurrentlyLeader = false;
-
-        // Stop renewal interval
-        if (this.interval) {
-          clearInterval(this.interval);
-          this.interval = null;
-        }
-      } else if (!isLeader) {
-        this.logger.debug('[Leader] Not the leader - skipping renewal tasks');
       }
     } catch (error) {
       this.logger.error(
