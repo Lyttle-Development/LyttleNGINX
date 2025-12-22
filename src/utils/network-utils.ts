@@ -1,43 +1,63 @@
 import * as os from 'os';
 
 /**
- * Get the public IP address of this node using an external service
+ * Get the public IP address of this node using external services
+ * Tries multiple services for redundancy
  */
 export async function getPublicIpAddress(): Promise<string | null> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+  const services = [
+    'https://api.ipify.org',
+    'https://api64.ipify.org',
+    'https://icanhazip.com',
+    'https://ifconfig.me/ip',
+  ];
 
-    const response = await fetch('https://api.ipify.org', {
-      signal: controller.signal,
-    });
+  for (const service of services) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
 
-    clearTimeout(timeoutId);
+      const response = await fetch(service, {
+        signal: controller.signal,
+      });
 
-    if (response.ok) {
-      const ip = await response.text();
-      // Basic validation to ensure it looks like an IP
-      if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)) {
-        return ip;
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const ip = (await response.text()).trim();
+        // Basic validation to ensure it looks like an IPv4 address
+        if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)) {
+          // Additional validation: check that each octet is 0-255
+          const octets = ip.split('.').map(Number);
+          if (octets.every((octet) => octet >= 0 && octet <= 255)) {
+            return ip;
+          }
+        }
       }
+    } catch (error) {
+      // Try next service if this one fails
     }
-    return null;
-  } catch (error) {
-    // Fail silently on network errors, fallback will be used
-    return null;
   }
+
+  return null;
 }
 
 /**
  * Get the primary IP address of this node
  * Prioritizes public IP, then non-internal IPv4 addresses, falls back to internal addresses
+ * PRODUCTION-GRADE: Multiple fallbacks and comprehensive error handling
  */
 export async function getNodeIpAddress(): Promise<string | null> {
-  // Try to get public IP first
+  // Try to get public IP first (with multiple services for redundancy)
   const publicIp = await getPublicIpAddress();
   if (publicIp) {
+    console.log(`[Network] Using public IP: ${publicIp}`);
     return publicIp;
   }
+
+  console.log(
+    '[Network] Public IP detection failed, using local network interfaces',
+  );
 
   try {
     const interfaces = os.networkInterfaces();
@@ -50,8 +70,9 @@ export async function getNodeIpAddress(): Promise<string | null> {
 
       for (const addr of iface) {
         // Only consider IPv4 addresses
-        if (addr.family === 'IPv4') {
+        if (addr.family === 'IPv4' && !addr.internal) {
           addresses.push(addr.address);
+          console.log(`[Network] Found interface ${name}: ${addr.address}`);
         }
       }
     }
@@ -62,23 +83,26 @@ export async function getNodeIpAddress(): Promise<string | null> {
       (addr) => isInternalIp(addr) && addr !== '127.0.0.1',
     );
 
-    // Prefer external addresses, then internal (non-localhost), then localhost
+    // Prefer external addresses, then internal (non-localhost)
     if (externalAddresses.length > 0) {
+      console.log(`[Network] Using external address: ${externalAddresses[0]}`);
       return externalAddresses[0];
     }
 
     if (internalAddresses.length > 0) {
+      console.log(`[Network] Using internal address: ${internalAddresses[0]}`);
       return internalAddresses[0];
     }
 
-    // Fallback to localhost if nothing else found
-    if (addresses.includes('127.0.0.1')) {
-      return '127.0.0.1';
-    }
-
-    return null;
+    // Last resort: use localhost
+    console.warn(
+      '[Network] No network interfaces found, falling back to localhost',
+    );
+    return '127.0.0.1';
   } catch (error) {
-    console.error('Failed to get node IP address:', error);
+    console.error(
+      `[Network] Failed to get node IP address: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
 }
@@ -104,9 +128,7 @@ function isInternalIp(ip: string): boolean {
   if (parts[0] === 192 && parts[1] === 168) return true;
 
   // 169.254.x.x (link-local)
-  if (parts[0] === 169 && parts[1] === 254) return true;
-
-  return false;
+  return parts[0] === 169 && parts[1] === 254;
 }
 
 /**

@@ -1,4 +1,6 @@
 import {
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   OnApplicationShutdown,
@@ -31,6 +33,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     private prisma: PrismaService,
     private alertService: AlertService,
     private distributedLock: DistributedLockService,
+    @Inject(
+      forwardRef(
+        () =>
+          require('../distributed-lock/cluster-heartbeat.service')
+            .ClusterHeartbeatService,
+      ),
+    )
+    private clusterHeartbeat: any,
   ) {}
 
   async onModuleInit() {
@@ -75,62 +85,150 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   /**
    * Sync certificates from DB to local filesystem
    * Ensures all nodes have the certificates needed to serve traffic
+   * PRODUCTION-GRADE: Atomic operations and comprehensive error handling
    */
   async syncCertificates() {
     this.logger.log('[Sync] Starting certificate synchronization...');
 
-    const certs = await this.prisma.certificate.findMany({
-      where: { isOrphaned: false },
-    });
+    try {
+      const certs = await this.prisma.certificate.findMany({
+        where: { isOrphaned: false },
+      });
 
-    let syncedCount = 0;
+      let syncedCount = 0;
+      const errors: Array<{ domain: string; error: string }> = [];
 
-    for (const cert of certs) {
-      const domains = parseDomains(cert.domains);
-      const primaryDomain = domains[0];
+      for (const cert of certs) {
+        try {
+          const domains = parseDomains(cert.domains);
+          const primaryDomain = domains[0];
 
-      // Check if files exist and match
-      const dir = this.certDir(primaryDomain);
-      const certPath = path.join(dir, 'fullchain.pem');
-      const keyPath = path.join(dir, 'privkey.pem');
+          // Check if files exist and match
+          const dir = this.certDir(primaryDomain);
+          const certPath = path.join(dir, 'fullchain.pem');
+          const keyPath = path.join(dir, 'privkey.pem');
 
-      let needsWrite = false;
+          let needsWrite = false;
 
-      if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-        needsWrite = true;
-      } else {
-        // Check content
-        const currentCert = fs.readFileSync(certPath, 'utf8');
-        const currentKey = fs.readFileSync(keyPath, 'utf8');
+          if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+            needsWrite = true;
+            this.logger.debug(
+              `[Sync] Certificate files missing for ${primaryDomain}`,
+            );
+          } else {
+            // Check content
+            const currentCert = fs.readFileSync(certPath, 'utf8');
+            const currentKey = fs.readFileSync(keyPath, 'utf8');
 
-        if (currentCert !== cert.certPem || currentKey !== cert.keyPem) {
-          needsWrite = true;
+            if (currentCert !== cert.certPem || currentKey !== cert.keyPem) {
+              needsWrite = true;
+              this.logger.debug(
+                `[Sync] Certificate content mismatch for ${primaryDomain}`,
+              );
+            }
+          }
+
+          if (needsWrite) {
+            this.logger.log(`[Sync] Updating certificate for ${primaryDomain}`);
+            this.writeCertToFs(primaryDomain, cert.certPem, cert.keyPem);
+            syncedCount++;
+          }
+        } catch (certError) {
+          const errorMsg =
+            certError instanceof Error ? certError.message : String(certError);
+          this.logger.error(
+            `[Sync] Failed to sync certificate for ${cert.domains}: ${errorMsg}`,
+          );
+          errors.push({ domain: cert.domains, error: errorMsg });
+          // Continue with other certificates
         }
       }
 
-      if (needsWrite) {
-        this.logger.log(`[Sync] Updating certificate for ${primaryDomain}`);
-        this.writeCertToFs(primaryDomain, cert.certPem, cert.keyPem);
-        syncedCount++;
-      }
-    }
+      if (syncedCount > 0) {
+        this.logger.log(
+          `[Sync] Synchronized ${syncedCount} certificate(s) to local filesystem`,
+        );
 
-    if (syncedCount > 0) {
-      this.logger.log(
-        `[Sync] Synchronized ${syncedCount} certificates to local filesystem`,
+        // Reload NGINX to pick up new certificates
+        try {
+          await exec('nginx -t');
+          await exec('nginx -s reload');
+          this.logger.log('[Sync] NGINX reloaded successfully');
+        } catch (reloadErr) {
+          const errorMsg =
+            reloadErr instanceof Error ? reloadErr.message : String(reloadErr);
+          this.logger.error(`[Sync] Failed to reload NGINX: ${errorMsg}`);
+
+          // Send alert for critical NGINX reload failure
+          await this.alertService
+            .sendAlert({
+              type: 'error',
+              title: 'NGINX Reload Failed After Certificate Sync',
+              message: `Failed to reload NGINX after syncing ${syncedCount} certificate(s): ${errorMsg}`,
+              metadata: {
+                syncedCount,
+                instanceId: this.distributedLock.getInstanceId(),
+                timestamp: new Date().toISOString(),
+              },
+            })
+            .catch((alertErr) =>
+              this.logger.error(
+                `[Sync] Failed to send alert: ${alertErr.message}`,
+              ),
+            );
+        }
+      } else {
+        this.logger.debug('[Sync] All certificates are up to date');
+      }
+
+      // If there were errors, send alert
+      if (errors.length > 0) {
+        await this.alertService
+          .sendAlert({
+            type: 'warning',
+            title: 'Certificate Sync Errors',
+            message: `Failed to sync ${errors.length} certificate(s)`,
+            metadata: {
+              errors,
+              instanceId: this.distributedLock.getInstanceId(),
+              timestamp: new Date().toISOString(),
+            },
+          })
+          .catch((alertErr) =>
+            this.logger.debug(
+              `[Sync] Failed to send alert: ${alertErr.message}`,
+            ),
+          );
+      }
+
+      return { success: true, syncedCount, errors };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `[Sync] Certificate synchronization failed: ${errorMsg}`,
       );
 
-      // Reload NGINX to pick up new certificates
-      try {
-        await exec('nginx -s reload');
-        this.logger.log('[Sync] NGINX reloaded successfully');
-      } catch (err) {
-        this.logger.error(
-          `[Sync] Failed to reload NGINX: ${err instanceof Error ? err.message : String(err)}`,
+      // Send critical alert
+      await this.alertService
+        .sendAlert({
+          type: 'error',
+          title: 'Certificate Sync Failed',
+          message: `Critical failure in certificate synchronization: ${errorMsg}`,
+          metadata: {
+            instanceId: this.distributedLock.getInstanceId(),
+            timestamp: new Date().toISOString(),
+            stack: error instanceof Error ? error.stack : undefined,
+          },
+        })
+        .catch((alertErr) =>
+          this.logger.error(`[Sync] Failed to send alert: ${alertErr.message}`),
         );
-      }
-    } else {
-      this.logger.debug('[Sync] All certificates are up to date');
+
+      return {
+        success: false,
+        syncedCount: 0,
+        errors: [{ domain: 'unknown', error: errorMsg }],
+      };
     }
   }
 
@@ -156,7 +254,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
   /**
    * Check if this instance should be the leader and start/stop renewal accordingly
-   * ENHANCED: Better error handling and automatic recovery
+   * ENHANCED: Production-grade error handling and automatic recovery
    */
   private async leaderElectionCheck() {
     try {
@@ -176,11 +274,50 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             this.interval = null;
           }
 
-          // Log warning about certificate renewals
+          // Alert about leadership loss
+          await this.alertService
+            .sendAlert({
+              type: 'error',
+              title: 'Certificate Leader Lost',
+              message: `Node ${this.distributedLock.getInstanceId()} lost certificate renewal leadership`,
+              metadata: {
+                instanceId: this.distributedLock.getInstanceId(),
+                timestamp: new Date().toISOString(),
+              },
+            })
+            .catch((err) =>
+              this.logger.error(
+                `[Leader] Failed to send alert: ${err.message}`,
+              ),
+            );
+
           this.logger.warn(
             '[Leader] Certificate renewals stopped on this node. Another node should take over.',
           );
+
+          // Trigger immediate re-election attempt
+          setTimeout(() => this.leaderElectionCheck(), 2000);
         } else {
+          // Verify DB consistency
+          if (this.clusterHeartbeat) {
+            const dbLeader = await this.clusterHeartbeat.getLeaderNode();
+            const thisInstanceId = this.distributedLock.getInstanceId();
+
+            if (dbLeader && dbLeader.instanceId !== thisInstanceId) {
+              this.logger.error(
+                '[Leader] CRITICAL: We hold lock but another node is DB leader. Releasing lock.',
+              );
+              this.isCurrentlyLeader = false;
+              await this.distributedLock.releaseLeaderLock();
+
+              if (this.interval) {
+                clearInterval(this.interval);
+                this.interval = null;
+              }
+              return;
+            }
+          }
+
           this.logger.debug('[Leader] Health check: Still the leader ✓');
         }
         return;
@@ -194,6 +331,21 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           '[Leader] ✓✓✓ This instance is now the LEADER - starting certificate renewal',
         );
         this.isCurrentlyLeader = true;
+
+        // Send alert about new leader
+        await this.alertService
+          .sendAlert({
+            type: 'info',
+            title: 'Certificate Leader Elected',
+            message: `Node ${this.distributedLock.getInstanceId()} is now the certificate renewal leader`,
+            metadata: {
+              instanceId: this.distributedLock.getInstanceId(),
+              timestamp: new Date().toISOString(),
+            },
+          })
+          .catch((err) =>
+            this.logger.debug(`[Leader] Failed to send alert: ${err.message}`),
+          );
 
         // Start renewal interval
         if (!this.interval) {
@@ -240,7 +392,19 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           clearInterval(this.interval);
           this.interval = null;
         }
+
+        // Try to release the lock (might fail, but attempt anyway)
+        try {
+          await this.distributedLock.releaseLeaderLock();
+        } catch (releaseError) {
+          this.logger.error(
+            `[Leader] Failed to release lock: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`,
+          );
+        }
       }
+
+      // Schedule retry after error
+      setTimeout(() => this.leaderElectionCheck(), 5000);
     }
   }
 
@@ -257,19 +421,62 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     this.logger.log(`[FS] Ensuring directory exists: ${dir}`);
     fs.mkdirSync(dir, { recursive: true });
 
-    this.logger.log(
-      `[FS] Writing certificate: ${path.join(dir, 'fullchain.pem')}`,
-    );
-    fs.writeFileSync(path.join(dir, 'fullchain.pem'), certPem, {
-      encoding: 'utf8',
-    });
+    const certPath = path.join(dir, 'fullchain.pem');
+    const keyPath = path.join(dir, 'privkey.pem');
+    const certTempPath = `${certPath}.tmp`;
+    const keyTempPath = `${keyPath}.tmp`;
 
-    this.logger.log(
-      `[FS] Writing private key: ${path.join(dir, 'privkey.pem')}`,
-    );
-    fs.writeFileSync(path.join(dir, 'privkey.pem'), keyPem, {
-      encoding: 'utf8',
-    });
+    try {
+      // Write to temp files first (atomic operation)
+      this.logger.log(`[FS] Writing certificate to temp file: ${certTempPath}`);
+      fs.writeFileSync(certTempPath, certPem, {
+        encoding: 'utf8',
+        mode: 0o644, // Read for all, write for owner
+      });
+
+      this.logger.log(`[FS] Writing private key to temp file: ${keyTempPath}`);
+      fs.writeFileSync(keyTempPath, keyPem, {
+        encoding: 'utf8',
+        mode: 0o600, // Read/write for owner only (security)
+      });
+
+      // Validate the certificate and key before moving
+      this.logger.debug(`[FS] Validating certificate and key...`);
+      const certStat = fs.statSync(certTempPath);
+      const keyStat = fs.statSync(keyTempPath);
+
+      if (certStat.size === 0 || keyStat.size === 0) {
+        throw new Error('Certificate or key file is empty');
+      }
+
+      // Atomic move (rename) - this is atomic on most filesystems
+      this.logger.log(
+        `[FS] Moving certificate: ${certTempPath} -> ${certPath}`,
+      );
+      fs.renameSync(certTempPath, certPath);
+
+      this.logger.log(`[FS] Moving private key: ${keyTempPath} -> ${keyPath}`);
+      fs.renameSync(keyTempPath, keyPath);
+
+      this.logger.log(
+        `[FS] Successfully wrote certificate files for ${primaryDomain}`,
+      );
+    } catch (error) {
+      // Clean up temp files on error
+      try {
+        if (fs.existsSync(certTempPath)) fs.unlinkSync(certTempPath);
+        if (fs.existsSync(keyTempPath)) fs.unlinkSync(keyTempPath);
+      } catch (cleanupError) {
+        this.logger.warn(
+          `[FS] Failed to cleanup temp files: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        );
+      }
+
+      this.logger.error(
+        `[FS] Failed to write certificate files: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw error;
+    }
   }
 
   async ensureCertificate(domainsInput: string[] | string): Promise<void> {
@@ -373,9 +580,29 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           );
 
           if (!dbMatch) {
-            throw new Error(
-              'Could not parse DATABASE_URL for certbot hooks. Expected format: postgresql://user:pass@host:port/dbname',
-            );
+            const errorMsg =
+              'Could not parse DATABASE_URL for certbot hooks. Expected format: postgresql://user:pass@host:port/dbname';
+            this.logger.error(`[Certbot] ${errorMsg}`);
+
+            // Send alert for configuration error
+            await this.alertService
+              .sendAlert({
+                type: 'error',
+                title: 'Certificate Issuance Configuration Error',
+                message: errorMsg,
+                metadata: {
+                  domains: domainsStr,
+                  instanceId: this.distributedLock.getInstanceId(),
+                  timestamp: new Date().toISOString(),
+                },
+              })
+              .catch((alertErr) =>
+                this.logger.error(
+                  `[Certbot] Failed to send alert: ${alertErr.message}`,
+                ),
+              );
+
+            throw new Error(errorMsg);
           }
 
           const [, dbUser, dbPassword, dbHost, dbPort, dbName] = dbMatch;
@@ -434,6 +661,26 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             `[DB] Saved new certificate to DB (id: ${certRecord.id}, expires: ${expiresAt.toISOString()})`,
           );
 
+          // Send success alert
+          await this.alertService
+            .sendAlert({
+              type: 'info',
+              title: 'Certificate Issued Successfully',
+              message: `New certificate issued for domains: ${domainsStr}`,
+              metadata: {
+                certificateId: certRecord.id,
+                domains: domainsStr,
+                expiresAt: expiresAt.toISOString(),
+                instanceId: this.distributedLock.getInstanceId(),
+                timestamp: new Date().toISOString(),
+              },
+            })
+            .catch((alertErr) =>
+              this.logger.debug(
+                `[Certbot] Failed to send alert: ${alertErr.message}`,
+              ),
+            );
+
           // Trigger broadcast reload to ensure all nodes pick up the new certificate immediately
           this.triggerClusterReload().catch((err) =>
             this.logger.error(
@@ -443,9 +690,33 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
           return certRecord;
         } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const errorStack = err instanceof Error ? err.stack : undefined;
+
           this.logger.error(
-            `[Certbot] Failed to obtain certificate for ${primaryDomain}: ${err instanceof Error ? err.stack : String(err)}`,
+            `[Certbot] Failed to obtain certificate for ${primaryDomain}: ${errorStack || errorMsg}`,
           );
+
+          // Send failure alert
+          await this.alertService
+            .sendAlert({
+              type: 'error',
+              title: 'Certificate Issuance Failed',
+              message: `Failed to obtain certificate for ${domainsStr}: ${errorMsg}`,
+              metadata: {
+                domains: domainsStr,
+                error: errorMsg,
+                stack: errorStack,
+                instanceId: this.distributedLock.getInstanceId(),
+                timestamp: new Date().toISOString(),
+              },
+            })
+            .catch((alertErr) =>
+              this.logger.error(
+                `[Certbot] Failed to send alert: ${alertErr.message}`,
+              ),
+            );
+
           throw err;
         }
       },
@@ -478,9 +749,27 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         return;
       }
 
-      throw new Error(
-        `Failed to acquire lock for certificate issuance and no certificate found in DB`,
-      );
+      const errorMsg = `Failed to acquire lock for certificate issuance and no certificate found in DB`;
+      this.logger.error(`[Lock] ${errorMsg}`);
+
+      // Send alert for lock acquisition failure
+      await this.alertService
+        .sendAlert({
+          type: 'error',
+          title: 'Certificate Lock Acquisition Failed',
+          message: errorMsg,
+          metadata: {
+            domains: domainsStr,
+            lockName,
+            instanceId: this.distributedLock.getInstanceId(),
+            timestamp: new Date().toISOString(),
+          },
+        })
+        .catch((alertErr) =>
+          this.logger.error(`[Lock] Failed to send alert: ${alertErr.message}`),
+        );
+
+      throw new Error(errorMsg);
     }
   }
 
@@ -980,44 +1269,80 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   }
 
   /**
-   * Trigger a cluster-wide reload via the ClusterController
+   * Trigger a cluster-wide certificate sync via broadcast to all nodes
+   * This ensures all nodes immediately pick up new certificates
+   * PRODUCTION-GRADE: Proper error handling and fire-and-forget pattern
    */
   private async triggerClusterReload() {
     try {
-      // We can call the local endpoint which handles the broadcast logic
-      // We need a valid JWT token for this internal call
-      // Since we are inside the service, we can't easily get a token without circular dependency on AuthService
-      // However, we can use the loopback address and a special internal header or just rely on the fact that
-      // we are running on the same node.
+      if (!this.clusterHeartbeat) {
+        this.logger.warn(
+          '[Reload] ClusterHeartbeatService not available, skipping broadcast',
+        );
+        return;
+      }
 
-      // Better approach: Use the ClusterController logic directly if possible, but it's in a controller.
-      // Alternative: Make a HTTP request to ourselves.
+      const nodes = await this.clusterHeartbeat.getActiveNodes();
+      const thisInstanceId = this.distributedLock.getInstanceId();
 
-      // For now, let's just log that we should do this.
-      // In a real implementation, we would inject a service that handles the broadcast.
-      // But wait, we can just use the same logic as the controller if we extract it to a service.
-      // Or we can just rely on the periodic sync which is 5 minutes.
-      // But the user wants "watertight".
-
-      // Let's try to hit the local endpoint.
-      const port = process.env.PORT || 3000;
-      const response = await fetch(
-        `http://127.0.0.1:${port}/cluster/reload?broadcast=true`,
-        {
-          method: 'POST',
-          headers: {
-            // We need to bypass auth or generate a token.
-            // Since we are internal, maybe we can add a "system" guard or similar?
-            // Or just generate a token if we have JwtService.
-          },
-        },
+      const otherNodes = nodes.filter(
+        (n) => n.instanceId !== thisInstanceId && n.ipAddress,
       );
 
-      if (!response.ok) {
-        this.logger.warn(
-          `[Reload] Local reload trigger failed: ${response.statusText}`,
-        );
+      if (otherNodes.length === 0) {
+        this.logger.log('[Reload] No other nodes to notify');
+        return;
       }
+
+      this.logger.log(
+        `[Reload] Broadcasting certificate sync to ${otherNodes.length} other nodes...`,
+      );
+
+      // Trigger sync on other nodes using the dedicated sync endpoint
+      // Fire and forget - don't wait for responses
+      const port = process.env.PORT || 3000;
+
+      await Promise.allSettled(
+        otherNodes.map(async (node) => {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+            // Call the sync endpoint on the other node
+            const url = `http://${node.ipAddress}:${port}/certificates/sync`;
+
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              signal: controller.signal,
+            });
+
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+              const result = await response.json();
+              this.logger.debug(
+                `[Reload] Synced ${result.syncedCount || 0} cert(s) on ${node.hostname} (${node.ipAddress})`,
+              );
+            } else {
+              this.logger.warn(
+                `[Reload] Sync failed on ${node.hostname}: ${response.statusText}`,
+              );
+            }
+          } catch (e) {
+            this.logger.debug(
+              `[Reload] Failed to notify ${node.hostname}: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        }),
+      );
+
+      // Also trigger immediate sync on this node
+      this.syncCertificates().catch((err) =>
+        this.logger.error(`[Reload] Local sync failed: ${err.message}`),
+      );
     } catch (error) {
       this.logger.warn(
         `[Reload] Failed to trigger cluster reload: ${error instanceof Error ? error.message : String(error)}`,

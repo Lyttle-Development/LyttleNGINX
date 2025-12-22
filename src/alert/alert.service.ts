@@ -166,6 +166,40 @@ Please check the logs and renew manually if needed.
     ]);
   }
 
+  /**
+   * Generic alert method for custom messages
+   * Used by various services for operational alerts
+   */
+  async sendAlert(params: {
+    type: 'info' | 'warning' | 'error' | 'success';
+    title: string;
+    message: string;
+    metadata?: Record<string, any>;
+  }): Promise<void> {
+    const { type, title, message, metadata } = params;
+
+    // Map type to severity
+    const severityMap = {
+      info: 'success' as const,
+      warning: 'warning' as const,
+      error: 'error' as const,
+      success: 'success' as const,
+    };
+
+    const severity = severityMap[type];
+
+    // Add metadata to message if provided
+    let fullMessage = message;
+    if (metadata) {
+      fullMessage += '\n\nMetadata:\n' + JSON.stringify(metadata, null, 2);
+    }
+
+    await Promise.allSettled([
+      this.sendEmailAlert(title, fullMessage),
+      this.sendWebhookAlert(title, fullMessage, severity),
+    ]);
+  }
+
   private async sendEmailAlert(
     subject: string,
     message: string,

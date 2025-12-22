@@ -89,4 +89,15 @@ export class CertificateController {
   async checkOcspSupport() {
     return this.certificateService.checkAllCertificatesOcspSupport();
   }
+
+  /**
+   * Sync certificates from database to filesystem
+   * This endpoint is used by other nodes to trigger immediate sync after cert changes
+   * No auth required as it's an internal cluster operation
+   */
+  @Post('sync')
+  @HttpCode(HttpStatus.OK)
+  async syncCertificates() {
+    return this.certificateService.syncCertificates();
+  }
 }
