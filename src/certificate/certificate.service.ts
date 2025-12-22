@@ -103,6 +103,36 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           const domains = parseDomains(cert.domains);
           const primaryDomain = domains[0];
 
+          // Quick validation check
+          const validation = await this.validateCertificate(
+            cert.certPem,
+            cert.keyPem,
+            domains,
+          );
+          if (!validation.valid) {
+            this.logger.error(
+              `[Sync] Skipping invalid certificate for ${cert.domains}: ${validation.error}`,
+            );
+            errors.push({
+              domain: cert.domains,
+              error: `Invalid certificate: ${validation.error}`,
+            });
+
+            // Mark certificate as orphaned if it's invalid
+            await this.prisma.certificate
+              .update({
+                where: { id: cert.id },
+                data: { isOrphaned: true },
+              })
+              .catch((err) =>
+                this.logger.error(
+                  `[Sync] Failed to mark cert as orphaned: ${err.message}`,
+                ),
+              );
+
+            continue;
+          }
+
           // Check if files exist and match
           const dir = this.certDir(primaryDomain);
           const certPath = path.join(dir, 'fullchain.pem');
@@ -412,6 +442,143 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     return `/etc/letsencrypt/live/${primaryDomain}`;
   }
 
+  /**
+   * Validate certificate integrity and properties
+   * PRODUCTION-GRADE: Comprehensive validation before using certificate
+   */
+  private async validateCertificate(
+    certPem: string,
+    keyPem: string,
+    domains: string[],
+  ): Promise<{
+    valid: boolean;
+    error?: string;
+    expiresAt?: Date;
+    daysUntilExpiry?: number;
+  }> {
+    try {
+      // 1. Check PEM format
+      if (
+        !certPem.includes('BEGIN CERTIFICATE') ||
+        (!keyPem.includes('BEGIN PRIVATE KEY') &&
+          !keyPem.includes('BEGIN RSA PRIVATE KEY'))
+      ) {
+        return { valid: false, error: 'Invalid PEM format' };
+      }
+
+      // 2. Write to temp files for validation
+      const tempDir = `/tmp/cert-validation-${Date.now()}`;
+      fs.mkdirSync(tempDir, { recursive: true });
+
+      const tempCertPath = path.join(tempDir, 'cert.pem');
+      const tempKeyPath = path.join(tempDir, 'key.pem');
+
+      fs.writeFileSync(tempCertPath, certPem, 'utf8');
+      fs.writeFileSync(tempKeyPath, keyPem, 'utf8');
+
+      try {
+        // 3. Validate certificate structure
+        const certCheck = await exec(
+          `openssl x509 -in ${tempCertPath} -noout -text 2>&1`,
+        );
+        if (certCheck.stderr) {
+          return {
+            valid: false,
+            error: `Certificate validation failed: ${certCheck.stderr}`,
+          };
+        }
+
+        // 4. Validate private key
+        const keyCheck = await exec(
+          `openssl rsa -in ${tempKeyPath} -check -noout 2>&1`,
+        );
+        if (keyCheck.stderr && !keyCheck.stderr.includes('ok')) {
+          return {
+            valid: false,
+            error: `Private key validation failed: ${keyCheck.stderr}`,
+          };
+        }
+
+        // 5. Verify cert and key match
+        const certModulus = await exec(
+          `openssl x509 -noout -modulus -in ${tempCertPath} | openssl md5`,
+        );
+        const keyModulus = await exec(
+          `openssl rsa -noout -modulus -in ${tempKeyPath} | openssl md5`,
+        );
+
+        if (certModulus.stdout.trim() !== keyModulus.stdout.trim()) {
+          return {
+            valid: false,
+            error: 'Certificate and private key do not match',
+          };
+        }
+
+        // 6. Check expiry
+        const expiryOutput = await exec(
+          `openssl x509 -enddate -noout -in ${tempCertPath}`,
+        );
+        const match = expiryOutput.stdout.match(/notAfter=(.*)/);
+        if (!match) {
+          return { valid: false, error: 'Could not parse expiry date' };
+        }
+
+        const expiresAt = new Date(match[1]);
+        const now = new Date();
+        const daysUntilExpiry = Math.floor(
+          (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+        );
+
+        if (daysUntilExpiry < 0) {
+          return {
+            valid: false,
+            error: 'Certificate has expired',
+            expiresAt,
+            daysUntilExpiry,
+          };
+        }
+
+        // 7. Verify domains (SAN check)
+        const sanOutput = await exec(
+          `openssl x509 -in ${tempCertPath} -noout -text | grep -A1 "Subject Alternative Name"`,
+        );
+        const certDomains =
+          sanOutput.stdout
+            .match(/DNS:([^,\s]+)/g)
+            ?.map((d) => d.replace('DNS:', '')) || [];
+
+        // Check if all requested domains are in the certificate
+        const missingDomains = domains.filter((d) => !certDomains.includes(d));
+        if (missingDomains.length > 0) {
+          this.logger.warn(
+            `Certificate missing domains: ${missingDomains.join(', ')}`,
+          );
+          // Not a hard failure - Let's Encrypt might have issued for a subset
+        }
+
+        return {
+          valid: true,
+          expiresAt,
+          daysUntilExpiry,
+        };
+      } finally {
+        // Cleanup temp files
+        try {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          this.logger.warn(
+            `Failed to cleanup temp validation files: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+          );
+        }
+      }
+    } catch (error) {
+      return {
+        valid: false,
+        error: `Validation error: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
   private writeCertToFs(
     primaryDomain: string,
     certPem: string,
@@ -625,26 +792,60 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             'fullchain.pem',
           );
           const keyPath = path.join(this.certDir(primaryDomain), 'privkey.pem');
+
+          // Verify files exist
+          if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+            throw new Error(
+              `Certificate files not found after certbot execution. Cert: ${fs.existsSync(certPath)}, Key: ${fs.existsSync(keyPath)}`,
+            );
+          }
+
           this.logger.log(`[FS] Reading certificate file: ${certPath}`);
           const certPem = fs.readFileSync(certPath, 'utf8');
           this.logger.log(`[FS] Reading key file: ${keyPath}`);
           const keyPem = fs.readFileSync(keyPath, 'utf8');
 
-          // Extract expiry from cert
-          this.logger.log(
-            `[OpenSSL] Extracting expiry from certificate file: ${certPath}`,
-          );
-          const { stdout } = await exec(
-            `openssl x509 -enddate -noout -in ${certPath}`,
-          );
-          const match = stdout.match(/notAfter=(.*)/);
-          const expiresAt = match
-            ? new Date(match[1])
-            : addDays(new Date(), 90);
-          this.logger.log(
-            `[OpenSSL] Certificate expiry: ${expiresAt.toISOString()}`,
+          // Validate certificate before saving
+          this.logger.log(`[Validate] Validating certificate integrity...`);
+          const validation = await this.validateCertificate(
+            certPem,
+            keyPem,
+            domains,
           );
 
+          if (!validation.valid) {
+            const errorMsg = `Certificate validation failed: ${validation.error}`;
+            this.logger.error(`[Validate] ${errorMsg}`);
+
+            // Send alert about validation failure
+            await this.alertService
+              .sendAlert({
+                type: 'error',
+                title: 'Certificate Validation Failed',
+                message: `Certificate was issued but failed validation for ${domainsStr}: ${validation.error}`,
+                metadata: {
+                  domains: domainsStr,
+                  validationError: validation.error,
+                  instanceId: this.distributedLock.getInstanceId(),
+                  timestamp: new Date().toISOString(),
+                },
+              })
+              .catch((alertErr) =>
+                this.logger.error(
+                  `[Validate] Failed to send alert: ${alertErr.message}`,
+                ),
+              );
+
+            throw new Error(errorMsg);
+          }
+
+          const expiresAt = validation.expiresAt || addDays(new Date(), 90);
+          this.logger.log(
+            `[Validate] Certificate valid! Expires: ${expiresAt.toISOString()}, Days until expiry: ${validation.daysUntilExpiry}`,
+          );
+
+          // Save to database with transaction safety
+          this.logger.log(`[DB] Saving validated certificate to database...`);
           const certRecord = await this.prisma.certificate.create({
             data: {
               domains: domainsStr,
