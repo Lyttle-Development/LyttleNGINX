@@ -18,7 +18,16 @@ import { AlertService } from '../alert/alert.service';
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
 
 const exec = promisify(execCb);
-const adminEmail = process.env.ADMIN_EMAIL || null;
+
+// Validate ADMIN_EMAIL is set (required by Let's Encrypt)
+const adminEmail = process.env.ADMIN_EMAIL;
+if (!adminEmail) {
+  throw new Error(
+    "ADMIN_EMAIL environment variable is required for Let's Encrypt certificate issuance. " +
+      'Please set ADMIN_EMAIL in your environment configuration.',
+  );
+}
+
 const RENEW_BEFORE_DAYS = parseInt(process.env.RENEW_BEFORE_DAYS || '30', 10);
 
 @Injectable()
@@ -443,6 +452,100 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   }
 
   /**
+   * Check Let's Encrypt rate limits before certificate issuance
+   * Let's Encrypt limits: 50 certificates per registered domain per week
+   * PRODUCTION-GRADE: Prevents hitting API rate limits
+   */
+  private async checkLetsEncryptRateLimit(
+    primaryDomain: string,
+  ): Promise<boolean> {
+    try {
+      // Get the registered domain (e.g., example.com from subdomain.example.com)
+      const registeredDomain = this.getRegisteredDomain(primaryDomain);
+
+      // Check certificates issued in the last 7 days for this registered domain
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      const recentCertsCount = await this.prisma.certificate.count({
+        where: {
+          domains: { contains: registeredDomain },
+          issuedAt: { gte: weekAgo },
+          status: 'active',
+        },
+      });
+
+      // Let's Encrypt limit is 50 per week, but we'll be conservative and alert at 40
+      const SAFE_LIMIT = 40;
+      const HARD_LIMIT = 50;
+
+      if (recentCertsCount >= HARD_LIMIT) {
+        this.logger.error(
+          `[RateLimit] BLOCKED: ${registeredDomain} has ${recentCertsCount} certificates in last 7 days (limit: 50)`,
+        );
+        return false;
+      }
+
+      if (recentCertsCount >= SAFE_LIMIT) {
+        this.logger.warn(
+          `[RateLimit] WARNING: ${registeredDomain} has ${recentCertsCount} certificates in last 7 days (approaching limit: 50)`,
+        );
+
+        // Send warning alert
+        await this.alertService
+          .sendAlert({
+            type: 'warning',
+            title: "Let's Encrypt Rate Limit Warning",
+            message: `Domain ${registeredDomain} has ${recentCertsCount} certificates issued in the last 7 days. Approaching limit of 50.`,
+            metadata: {
+              domain: registeredDomain,
+              certCount: recentCertsCount,
+              limit: HARD_LIMIT,
+              instanceId: this.distributedLock.getInstanceId(),
+              timestamp: new Date().toISOString(),
+            },
+          })
+          .catch((alertErr) =>
+            this.logger.debug(
+              `[RateLimit] Failed to send alert: ${alertErr.message}`,
+            ),
+          );
+      } else {
+        this.logger.debug(
+          `[RateLimit] OK: ${registeredDomain} has ${recentCertsCount} certificates in last 7 days`,
+        );
+      }
+
+      return true;
+    } catch (error) {
+      // On error, allow the request to proceed (fail open, not fail closed)
+      this.logger.warn(
+        `[RateLimit] Error checking rate limit: ${error instanceof Error ? error.message : String(error)}. Allowing request.`,
+      );
+      return true;
+    }
+  }
+
+  /**
+   * Extract registered domain from FQDN
+   * Examples: subdomain.example.com -> example.com, www.example.co.uk -> example.co.uk
+   */
+  private getRegisteredDomain(domain: string): string {
+    const parts = domain.split('.');
+
+    // Handle special TLDs like .co.uk, .com.au, etc.
+    const specialTlds = ['co.uk', 'com.au', 'co.nz', 'co.za', 'com.br'];
+    const lastTwo = parts.slice(-2).join('.');
+
+    if (specialTlds.includes(lastTwo)) {
+      // Return last 3 parts (e.g., example.co.uk)
+      return parts.slice(-3).join('.');
+    }
+
+    // Return last 2 parts (e.g., example.com)
+    return parts.slice(-2).join('.');
+  }
+
+  /**
    * Validate certificate integrity and properties
    * PRODUCTION-GRADE: Comprehensive validation before using certificate
    */
@@ -695,7 +798,34 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       return;
     }
 
-    // 2. Need to issue certificate - use distributed lock to prevent conflicts
+    // 2. Check Let's Encrypt rate limits before attempting issuance
+    const rateLimitOk = await this.checkLetsEncryptRateLimit(primaryDomain);
+    if (!rateLimitOk) {
+      const errorMsg = `Rate limit check failed for ${primaryDomain}. Too many certificates issued recently.`;
+      this.logger.error(`[RateLimit] ${errorMsg}`);
+
+      await this.alertService
+        .sendAlert({
+          type: 'error',
+          title: "Let's Encrypt Rate Limit",
+          message: errorMsg,
+          metadata: {
+            domain: primaryDomain,
+            allDomains: domainsStr,
+            instanceId: this.distributedLock.getInstanceId(),
+            timestamp: new Date().toISOString(),
+          },
+        })
+        .catch((alertErr) =>
+          this.logger.error(
+            `[RateLimit] Failed to send alert: ${alertErr.message}`,
+          ),
+        );
+
+      throw new Error(errorMsg);
+    }
+
+    // 3. Need to issue certificate - use distributed lock to prevent conflicts
     const lockName = `cert:issue:${hash}`;
     this.logger.log(
       `[Lock] Attempting to acquire lock for certificate issuance: ${lockName}`,
