@@ -5,7 +5,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["public"]
 }
 
 model ProxyEntry {
@@ -15,15 +14,11 @@ model ProxyEntry {
   nginx_custom_code String?
   type              ProxyType @default(PROXY)
   ssl               Boolean   @default(false)
-
-  @@schema("public")
 }
 
 enum ProxyType {
   REDIRECT
   PROXY
-
-  @@schema("public")
 }
 
 model Certificate {
@@ -47,7 +42,6 @@ model Certificate {
   @@unique([domainsHash])
   @@index([domainsHash])
   @@index([retryAfter])
-  @@schema("public")
 }
 
 model ClusterNode {
@@ -66,7 +60,6 @@ model ClusterNode {
   @@index([isLeader, lastHeartbeat])
   @@index([hostname])
   @@index([ipAddress])
-  @@schema("public")
 }
 
 model AcmeChallenge {
@@ -80,5 +73,6 @@ model AcmeChallenge {
   @@index([token])
   @@index([domain])
   @@index([expiresAt])
-  @@schema("public")
 }
+
+
