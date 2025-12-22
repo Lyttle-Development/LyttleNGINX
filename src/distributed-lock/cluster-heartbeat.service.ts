@@ -19,8 +19,8 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
   private leaderCheckInterval: NodeJS.Timeout | null = null;
-  private readonly heartbeatIntervalMs = 30000; // 30 seconds
-  private readonly staleThresholdMs = 120000; // 2 minutes
+  private readonly heartbeatIntervalMs = 10000; // 10 seconds
+  private readonly staleThresholdMs = 45000; // 45 seconds
   private readonly deleteThresholdMs = 3600000; // 1 hour - delete very old stale nodes
   private readonly leaderCheckIntervalMs = 10000; // 10 seconds - check for leader MORE frequently
 
@@ -127,7 +127,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   private async registerNode() {
     const instanceId = this.distributedLock.getInstanceId();
     const hostname = os.hostname();
-    const ipAddress = getNodeIpAddress();
+    const ipAddress = await getNodeIpAddress();
 
     try {
       await this.prisma.clusterNode.upsert({
@@ -171,7 +171,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
    */
   private async sendHeartbeat() {
     const instanceId = this.distributedLock.getInstanceId();
-    const ipAddress = getNodeIpAddress();
+    const ipAddress = await getNodeIpAddress();
 
     try {
       const isLeader = await this.distributedLock.isLeader();

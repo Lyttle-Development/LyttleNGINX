@@ -51,6 +51,87 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       () => this.leaderElectionCheck(),
       30000, // Check every 30 seconds
     );
+
+    // Sync certificates from DB to FS on startup
+    this.syncCertificates().catch((err) =>
+      this.logger.error(
+        `[Sync] Initial certificate sync failed: ${err.message}`,
+      ),
+    );
+
+    // Schedule periodic sync (every 5 minutes)
+    setInterval(
+      () => {
+        this.syncCertificates().catch((err) =>
+          this.logger.error(
+            `[Sync] Periodic certificate sync failed: ${err.message}`,
+          ),
+        );
+      },
+      5 * 60 * 1000,
+    );
+  }
+
+  /**
+   * Sync certificates from DB to local filesystem
+   * Ensures all nodes have the certificates needed to serve traffic
+   */
+  async syncCertificates() {
+    this.logger.log('[Sync] Starting certificate synchronization...');
+
+    const certs = await this.prisma.certificate.findMany({
+      where: { isOrphaned: false },
+    });
+
+    let syncedCount = 0;
+
+    for (const cert of certs) {
+      const domains = parseDomains(cert.domains);
+      const primaryDomain = domains[0];
+
+      // Check if files exist and match
+      const dir = this.certDir(primaryDomain);
+      const certPath = path.join(dir, 'fullchain.pem');
+      const keyPath = path.join(dir, 'privkey.pem');
+
+      let needsWrite = false;
+
+      if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+        needsWrite = true;
+      } else {
+        // Check content
+        const currentCert = fs.readFileSync(certPath, 'utf8');
+        const currentKey = fs.readFileSync(keyPath, 'utf8');
+
+        if (currentCert !== cert.certPem || currentKey !== cert.keyPem) {
+          needsWrite = true;
+        }
+      }
+
+      if (needsWrite) {
+        this.logger.log(`[Sync] Updating certificate for ${primaryDomain}`);
+        this.writeCertToFs(primaryDomain, cert.certPem, cert.keyPem);
+        syncedCount++;
+      }
+    }
+
+    if (syncedCount > 0) {
+      this.logger.log(
+        `[Sync] Synchronized ${syncedCount} certificates to local filesystem`,
+      );
+
+      // Reload NGINX to pick up new certificates
+      try {
+        await exec('nginx -s reload');
+        this.logger.log('[Sync] NGINX reloaded successfully');
+      } catch (err) {
+        this.logger.error(
+          `[Sync] Failed to reload NGINX: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else {
+      this.logger.debug('[Sync] All certificates are up to date');
+    }
   }
 
   async onApplicationShutdown() {

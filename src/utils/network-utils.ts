@@ -1,10 +1,44 @@
 import * as os from 'os';
 
 /**
- * Get the primary IP address of this node
- * Prioritizes non-internal IPv4 addresses, falls back to internal addresses
+ * Get the public IP address of this node using an external service
  */
-export function getNodeIpAddress(): string | null {
+export async function getPublicIpAddress(): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+
+    const response = await fetch('https://api.ipify.org', {
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const ip = await response.text();
+      // Basic validation to ensure it looks like an IP
+      if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)) {
+        return ip;
+      }
+    }
+    return null;
+  } catch (error) {
+    // Fail silently on network errors, fallback will be used
+    return null;
+  }
+}
+
+/**
+ * Get the primary IP address of this node
+ * Prioritizes public IP, then non-internal IPv4 addresses, falls back to internal addresses
+ */
+export async function getNodeIpAddress(): Promise<string | null> {
+  // Try to get public IP first
+  const publicIp = await getPublicIpAddress();
+  if (publicIp) {
+    return publicIp;
+  }
+
   try {
     const interfaces = os.networkInterfaces();
     const addresses: string[] = [];

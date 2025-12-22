@@ -1,15 +1,95 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Logger,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ClusterHeartbeatService } from './cluster-heartbeat.service';
 import { DistributedLockService } from './distributed-lock.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ReloaderService } from '../reloader/reloader.service';
+import { JwtService } from '@nestjs/jwt';
 
 @Controller('cluster')
 @UseGuards(JwtAuthGuard)
 export class ClusterController {
+  private readonly logger = new Logger(ClusterController.name);
+
   constructor(
     private readonly clusterHeartbeat: ClusterHeartbeatService,
     private readonly distributedLock: DistributedLockService,
+    private readonly reloader: ReloaderService,
+    private readonly jwtService: JwtService,
   ) {}
+
+  /**
+   * Trigger a reload on this node and optionally broadcast to others
+   */
+  @Post('reload')
+  async reload(@Query('broadcast') broadcast: string) {
+    const shouldBroadcast = broadcast !== 'false';
+
+    this.logger.log(`[Reload] Triggered. Broadcast: ${shouldBroadcast}`);
+
+    // Reload local
+    const result = await this.reloader.reloadConfig();
+
+    if (shouldBroadcast) {
+      // Get other active nodes
+      const nodes = await this.clusterHeartbeat.getActiveNodes();
+      const thisInstanceId = this.distributedLock.getInstanceId();
+
+      const otherNodes = nodes.filter(
+        (n) => n.instanceId !== thisInstanceId && n.ipAddress,
+      );
+
+      this.logger.log(
+        `[Reload] Broadcasting to ${otherNodes.length} other nodes...`,
+      );
+
+      // Generate a short-lived token for inter-node communication
+      const token = this.jwtService.sign(
+        { role: 'admin', sub: 'system-broadcast' },
+        { expiresIn: '1m' },
+      );
+
+      // Fire and forget broadcast
+      otherNodes.forEach(async (node) => {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+          // Assuming default port 3000 if not specified in env
+          // In a real scenario, we might want to store the port in ClusterNode metadata
+          const port = process.env.PORT || 3000;
+          const url = `http://${node.ipAddress}:${port}/cluster/reload?broadcast=false`;
+
+          this.logger.debug(`[Reload] Calling ${url}`);
+
+          await fetch(url, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            signal: controller.signal,
+          });
+
+          clearTimeout(timeoutId);
+        } catch (e) {
+          this.logger.error(
+            `[Reload] Failed to broadcast to ${node.hostname} (${node.ipAddress}): ${e.message}`,
+          );
+        }
+      });
+    }
+
+    return {
+      local: result,
+      broadcast: shouldBroadcast,
+    };
+  }
 
   /**
    * Get all active cluster nodes
