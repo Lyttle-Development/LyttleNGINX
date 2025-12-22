@@ -11,9 +11,10 @@ import { TlsConfigService } from './tls-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AlertModule } from '../alert/alert.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), AlertModule],
+  imports: [ScheduleModule.forRoot(), AlertModule, AuthModule],
   controllers: [
     CertificateController,
     TlsController,
