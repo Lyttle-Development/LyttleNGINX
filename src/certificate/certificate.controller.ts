@@ -14,7 +14,7 @@ import { CertificateService } from './certificate.service';
 import { UploadCertificateDto } from './dto/upload-certificate.dto';
 import { GenerateSelfSignedDto } from './dto/generate-self-signed.dto';
 import { CertificateInfoDto } from './dto/certificate-info.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 
 @Controller('certificates')
 export class CertificateController {
@@ -59,14 +59,14 @@ export class CertificateController {
   }
 
   @Post('renew/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
   async renewCertificate(@Param('id') id: string) {
     return this.certificateService.renewCertificateById(id);
   }
 
   @Post('renew-all')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
   async renewAllCertificates() {
     await this.certificateService.renewAllCertificates();
@@ -74,7 +74,7 @@ export class CertificateController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteCertificate(@Param('id') id: string) {
     await this.certificateService.deleteCertificate(id);

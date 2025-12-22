@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { IsNotEmpty, IsString } from 'class-validator';
 import { AuthService } from './auth.service';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { ApiKeyGuard } from './guards/api-key.guard';
 
 class LoginDto {
   @IsString()
@@ -42,7 +42,7 @@ export class AuthController {
   }
 
   @Get('status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(ApiKeyGuard)
   async getStatus() {
     return {
       authenticated: true,

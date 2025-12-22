@@ -8,12 +8,12 @@ import {
 } from '@nestjs/common';
 import { ClusterHeartbeatService } from './cluster-heartbeat.service';
 import { DistributedLockService } from './distributed-lock.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ReloaderService } from '../reloader/reloader.service';
 import { JwtService } from '@nestjs/jwt';
+import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 
 @Controller('cluster')
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiKeyGuard)
 export class ClusterController {
   private readonly logger = new Logger(ClusterController.name);
 
