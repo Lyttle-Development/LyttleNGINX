@@ -658,6 +658,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       : parseDomains(domainsInput);
     const primaryDomain = domains[0];
     const hash = hashDomains(domains);
+    const domainsHash = hash;
     const domainsStr = joinDomains(domains);
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
@@ -822,12 +823,12 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
               .sendAlert({
                 type: 'error',
                 title: 'Certificate Validation Failed',
-                message: `Certificate was issued but failed validation for ${domainsStr}: ${validation.error}`,
+                message: errorMsg,
                 metadata: {
                   domains: domainsStr,
-                  validationError: validation.error,
                   instanceId: this.distributedLock.getInstanceId(),
                   timestamp: new Date().toISOString(),
+                  validationError: validation.error,
                 },
               })
               .catch((alertErr) =>
@@ -839,77 +840,90 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             throw new Error(errorMsg);
           }
 
-          const expiresAt = validation.expiresAt || addDays(new Date(), 90);
-          this.logger.log(
-            `[Validate] Certificate valid! Expires: ${expiresAt.toISOString()}, Days until expiry: ${validation.daysUntilExpiry}`,
-          );
-
-          // Save to database with transaction safety
-          this.logger.log(`[DB] Saving validated certificate to database...`);
-          const certRecord = await this.prisma.certificate.create({
-            data: {
-              domains: domainsStr,
-              domainsHash: hash,
+          this.logger.log(`[DB] Saving certificate to database...`);
+          const certRecord = await this.prisma.certificate.upsert({
+            where: { domainsHash } as any,
+            update: {
               certPem,
               keyPem,
-              expiresAt,
+              expiresAt: validation.expiresAt,
               issuedAt: new Date(),
               lastUsedAt: now,
               isOrphaned: false,
-            },
+              status: 'active',
+              failureReason: null,
+              retryAfter: null,
+              failureCount: 0,
+              issuedByNode: this.distributedLock.getInstanceId(),
+            } as any,
+            create: {
+              domains: domainsStr,
+              domainsHash,
+              certPem,
+              keyPem,
+              expiresAt: validation.expiresAt,
+              issuedAt: new Date(),
+              lastUsedAt: now,
+              isOrphaned: false,
+              status: 'active',
+              issuedByNode: this.distributedLock.getInstanceId(),
+            } as any,
           });
+
           this.logger.log(
-            `[DB] Saved new certificate to DB (id: ${certRecord.id}, expires: ${expiresAt.toISOString()})`,
+            `[DB] Certificate saved (id: ${certRecord.id}, expires: ${certRecord.expiresAt.toISOString()}). Writing to FS...`,
           );
-
-          // Send success alert
-          await this.alertService
-            .sendAlert({
-              type: 'info',
-              title: 'Certificate Issued Successfully',
-              message: `New certificate issued for domains: ${domainsStr}`,
-              metadata: {
-                certificateId: certRecord.id,
-                domains: domainsStr,
-                expiresAt: expiresAt.toISOString(),
-                instanceId: this.distributedLock.getInstanceId(),
-                timestamp: new Date().toISOString(),
-              },
-            })
-            .catch((alertErr) =>
-              this.logger.debug(
-                `[Certbot] Failed to send alert: ${alertErr.message}`,
-              ),
-            );
-
-          // Trigger broadcast reload to ensure all nodes pick up the new certificate immediately
-          this.triggerClusterReload().catch((err) =>
-            this.logger.error(
-              `[Reload] Failed to trigger cluster reload: ${err.message}`,
-            ),
-          );
-
+          this.writeCertToFs(primaryDomain, certPem, keyPem);
           return certRecord;
         } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          const errorStack = err instanceof Error ? err.stack : undefined;
-
-          this.logger.error(
-            `[Certbot] Failed to obtain certificate for ${primaryDomain}: ${errorStack || errorMsg}`,
+          // Persist failure with backoff
+          const message = err instanceof Error ? err.message : String(err);
+          const stack = err instanceof Error ? err.stack : undefined;
+          const failureCountInc = 1;
+          const nextRetryMs = Math.min(
+            1000 * 60 * 60 * 24,
+            1000 * 60 * 2 ** Math.min(5, failureCountInc) +
+              Math.floor(Math.random() * 30000),
           );
+          const retryAfter = new Date(Date.now() + nextRetryMs);
 
-          // Send failure alert
+          await this.prisma.certificate.upsert({
+            where: { domainsHash } as any,
+            update: {
+              status: 'failed',
+              failureReason: message,
+              retryAfter,
+              failureCount: { increment: 1 },
+              issuedByNode: this.distributedLock.getInstanceId(),
+            } as any,
+            create: {
+              domains: domainsStr,
+              domainsHash,
+              certPem: '',
+              keyPem: '',
+              expiresAt: now,
+              issuedAt: now,
+              lastUsedAt: now,
+              isOrphaned: false,
+              status: 'failed',
+              failureReason: message,
+              retryAfter,
+              failureCount: 1,
+              issuedByNode: this.distributedLock.getInstanceId(),
+            } as any,
+          });
+
           await this.alertService
             .sendAlert({
               type: 'error',
               title: 'Certificate Issuance Failed',
-              message: `Failed to obtain certificate for ${domainsStr}: ${errorMsg}`,
+              message: `Failed to obtain certificate for ${domainsStr}: ${message}`,
               metadata: {
                 domains: domainsStr,
-                error: errorMsg,
-                stack: errorStack,
+                error: message,
+                stack,
                 instanceId: this.distributedLock.getInstanceId(),
-                timestamp: new Date().toISOString(),
+                retryAfter: retryAfter.toISOString(),
               },
             })
             .catch((alertErr) =>
@@ -978,6 +992,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     this.logger.log(
       '[Renewal] Starting renewal for all certificate domain groups...',
     );
+    const now = new Date();
+    const retryableAfter = new Date(now.getTime());
+
     // Only fetch entries that need SSL certificates (ssl=true)
     const entries = await this.prisma.proxyEntry.findMany({
       where: {
@@ -1004,6 +1021,29 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         );
       }
     }
+
+    // Backoff-aware: also retry failed certs whose retryAfter has passed
+    const failedCerts = await this.prisma.certificate.findMany({
+      where: {
+        retryAfter: { lte: retryableAfter },
+        isOrphaned: false,
+      },
+    } as any);
+
+    for (const cert of failedCerts) {
+      const domains = parseDomains(cert.domains);
+      try {
+        this.logger.log(
+          `[Renewal] Retrying failed certificate for [${cert.domains}] (failureCount=${(cert as any).failureCount ?? 0})`,
+        );
+        await this.ensureCertificate(domains);
+      } catch (err) {
+        this.logger.error(
+          `[Renewal] Retry failed for [${cert.domains}]: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     // After possible renewals, reload nginx
     try {
       this.logger.log('[Renewal] Reloading nginx after cert renewal check...');
