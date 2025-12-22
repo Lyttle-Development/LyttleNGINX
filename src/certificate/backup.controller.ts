@@ -13,7 +13,6 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { CertificateBackupService } from './certificate-backup.service';
-import { OptionalJwtAuthGuard } from '../auth/guards/optional-auth.guard';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 
 @Controller('certificates/backup')
@@ -32,7 +31,7 @@ export class BackupController {
   }
 
   @Get()
-  @UseGuards(OptionalJwtAuthGuard)
+  @UseGuards(ApiKeyGuard)
   async listBackups() {
     return this.backupService.listBackups();
   }
@@ -66,7 +65,7 @@ export class BackupController {
   }
 
   @Get('export/:id')
-  @UseGuards(OptionalJwtAuthGuard)
+  @UseGuards(ApiKeyGuard)
   async exportCertificate(@Param('id') id: string) {
     return this.backupService.exportCertificate(id);
   }

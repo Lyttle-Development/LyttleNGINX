@@ -9,7 +9,6 @@ import {
 import { ClusterHeartbeatService } from './cluster-heartbeat.service';
 import { DistributedLockService } from './distributed-lock.service';
 import { ReloaderService } from '../reloader/reloader.service';
-import { JwtService } from '@nestjs/jwt';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 
 @Controller('cluster')
@@ -21,7 +20,6 @@ export class ClusterController {
     private readonly clusterHeartbeat: ClusterHeartbeatService,
     private readonly distributedLock: DistributedLockService,
     private readonly reloader: ReloaderService,
-    private readonly jwtService: JwtService,
   ) {}
 
   /**
@@ -49,11 +47,8 @@ export class ClusterController {
         `[Reload] Broadcasting to ${otherNodes.length} other nodes...`,
       );
 
-      // Generate a short-lived token for inter-node communication
-      const token = this.jwtService.sign(
-        { role: 'admin', sub: 'system-broadcast' },
-        { expiresIn: '1m' },
-      );
+      // Get API key from environment for inter-node communication
+      const apiKey = process.env.API_KEY?.split(',')[0]; // Use first API key
 
       // Fire and forget broadcast
       otherNodes.forEach(async (node) => {
@@ -71,7 +66,7 @@ export class ClusterController {
           await fetch(url, {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${token}`,
+              'X-API-Key': apiKey || '',
             },
             signal: controller.signal,
           });

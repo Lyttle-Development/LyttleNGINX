@@ -12,11 +12,7 @@ export class ApiKeyGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     // Skip authentication in development if no API keys configured
-    if (
-      process.env.NODE_ENV === 'development' &&
-      !process.env.JWT_SECRET &&
-      !process.env.API_KEY
-    ) {
+    if (process.env.NODE_ENV === 'development' && !process.env.API_KEY) {
       return true;
     }
 

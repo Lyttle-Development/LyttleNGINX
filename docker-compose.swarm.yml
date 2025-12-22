@@ -47,8 +47,6 @@ services:
       - ADMIN_EMAIL=${ADMIN_EMAIL}
       - NODE_ENV=${NODE_ENV:-production}
       - RENEW_BEFORE_DAYS=${RENEW_BEFORE_DAYS:-30}
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_EXPIRATION=${JWT_EXPIRATION:-7d}
       - API_KEY=${API_KEY}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}

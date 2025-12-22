@@ -11,15 +11,15 @@ echo ""
 
 # Configuration
 API_URL="${API_URL:-http://localhost:3000}"
-TOKEN="${JWT_TOKEN:-}"
+API_KEY="${API_KEY:-}"
 
-if [ -z "$TOKEN" ]; then
-    echo "❌ JWT_TOKEN environment variable not set"
-    echo "Please set JWT_TOKEN with a valid admin token"
+if [ -z "$API_KEY" ]; then
+    echo "❌ API_KEY environment variable not set"
+    echo "Please set API_KEY with a valid API key"
     exit 1
 fi
 
-AUTH_HEADER="Authorization: Bearer $TOKEN"
+AUTH_HEADER="X-API-Key: $API_KEY"
 
 echo "Using API URL: $API_URL"
 echo ""

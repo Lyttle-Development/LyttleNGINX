@@ -329,7 +329,6 @@ npm run prisma:migrate
 
 | Method | Endpoint       | Description                 | Auth     |
 |--------|----------------|-----------------------------|----------|
-| POST   | `/auth/login`  | Login and get JWT token     | Public   |
 | GET    | `/auth/status` | Check authentication status | Required |
 | GET    | `/auth/info`   | Get auth configuration info | Public   |
 
