@@ -11,7 +11,7 @@ export class AuthService {
 
   constructor(private jwtService: JwtService) {
     // Load API keys from environment (comma-separated)
-    const apiKeys = process.env.API_KEYS?.split(',').filter(Boolean) || [];
+    const apiKeys = process.env.API_KEY?.split(',').filter(Boolean) || [];
     this.validApiKeys = new Set(apiKeys);
 
     // Load admin credentials from environment

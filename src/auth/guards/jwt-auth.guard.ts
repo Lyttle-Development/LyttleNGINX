@@ -11,7 +11,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     if (
       process.env.NODE_ENV === 'development' &&
       !process.env.JWT_SECRET &&
-      !process.env.API_KEYS
+      !process.env.API_KEY
     ) {
       return true;
     }

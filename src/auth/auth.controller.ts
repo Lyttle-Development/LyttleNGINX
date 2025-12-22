@@ -56,7 +56,7 @@ export class AuthController {
       authEnabled: this.authService.isAuthEnabled(),
       methods: ['jwt', 'api-key'],
       jwtConfigured: !!process.env.JWT_SECRET,
-      apiKeyConfigured: !!process.env.API_KEYS,
+      apiKeyConfigured: !!process.env.API_KEY,
     };
   }
 }
