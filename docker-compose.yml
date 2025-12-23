@@ -3,8 +3,24 @@ services:
   app:
     image: ghcr.io/lyttle-development/lyttlenginx:main
     environment:
-      DATABASE_URL: postgresql://user:pass@host:port/db
-      ADMIN_EMAIL: admin@example.com
+      DATABASE_URL: ${DATABASE_URL:-postgresql://user:pass@host:port/db}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      NODE_ENV: ${NODE_ENV:-production}
+      API_KEY: ${API_KEY}
+      RENEW_BEFORE_DAYS: ${RENEW_BEFORE_DAYS:-30}
+      ALERT_THRESHOLD_DAYS: ${ALERT_THRESHOLD_DAYS:-14}
+      LETSENCRYPT_STAGING: ${LETSENCRYPT_STAGING:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      ALERT_EMAIL: ${ALERT_EMAIL:-}
+      ALERT_FROM_EMAIL: ${ALERT_FROM_EMAIL:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      RATE_LIMIT_TTL: ${RATE_LIMIT_TTL:-60}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
 
     # USE
     network_mode: host
