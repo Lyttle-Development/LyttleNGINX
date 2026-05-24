@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 3 — Cluster coordination redesign
-- Most recently completed session: Session 12 — Add cluster operations and per-node ACK tracking
-- Next recommended session from the roadmap: Session 13 — Implement staged NGINX config generation and atomic activation
+- Current phase: Phase 4 — Configuration rollout and rollback safety
+- Most recently completed session: Session 13 — Implement staged NGINX config generation and atomic activation
+- Next recommended session from the roadmap: Session 14 — Restrict or redesign `nginx_custom_code`
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -465,13 +465,35 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 13 — Implement staged NGINX config generation and atomic activation
 
-- Status: not started
+- Status: done
 - Objective: make config rollout transactional and rollbackable
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: current config deployment is destructive
-- Follow-up sessions: Session 14, Session 27
-- Notes: last-known-good config handling is still pending
+- Files touched:
+  - `src/reloader/reloader.service.ts`
+  - `src/nginx/nginx.service.ts`
+  - `nginx/nginx.conf`
+  - `nginx/conf.d/default.conf`
+  - `docker-entrypoint.sh`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session13/transactional-nginx-rollout.test.js`
+- Tests added/updated:
+  - added `test/session13/transactional-nginx-rollout.test.js` to verify staged release validation, atomic `current` symlink activation, rollback to the prior release on reload failure, and the bootstrap runtime layout wiring
+  - re-ran `npm test`, `npm run typecheck`, and `npm run build` after the staged rollout changes landed
+- Risks:
+  - the stable loader currently swaps only the managed virtual-host release path; broader NGINX extensibility such as `nginx_custom_code` still remains unsafe until Session 14 narrows or redesigns that surface
+  - release metadata is currently filesystem-backed inside the container/runtime volume rather than persisted in PostgreSQL, so operators must retain the runtime state directory to preserve local rollout history across node replacement
+  - certificate and TLS asset paths are still live-system paths outside the staged release tree, so later certificate-hardening sessions must keep config rollout and certificate artifact activation coordinated
+- Follow-up sessions:
+  - Session 14 — restrict or redesign `nginx_custom_code`
+  - Session 17 — rework cluster certificate distribution and activation
+  - Session 25 — expand metrics and alerting
+  - Session 27 — add chaos and fault-injection validation
+- Notes:
+  - reloader deployments now create full staged releases under `/etc/nginx/runtime/releases/<release-id>` instead of clearing `/etc/nginx` in place
+  - each staged release is validated with a release-specific `nginx -t` config before activation, and activation now swaps the `current` release symlink atomically
+  - the runtime keeps both `current` and `last-known-good` symlinks, and failed reloads automatically roll back to the previous release before returning an error
+  - each release writes `lyttle-nginx-release.json` metadata with phase, node, validation output, and rollback details so apply state is inspectable on disk
 
 ## Session 14 — Restrict or redesign `nginx_custom_code`
 

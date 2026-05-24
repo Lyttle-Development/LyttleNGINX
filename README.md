@@ -14,6 +14,8 @@
   <img src="https://img.shields.io/badge/session%209-complete-blue" alt="Session 9" />
   <img src="https://img.shields.io/badge/session%2010-complete-blue" alt="Session 10" />
   <img src="https://img.shields.io/badge/session%2011-complete-blue" alt="Session 11" />
+  <img src="https://img.shields.io/badge/session%2012-complete-blue" alt="Session 12" />
+  <img src="https://img.shields.io/badge/session%2013-complete-blue" alt="Session 13" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -27,9 +29,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 3 in progress
-- **Completed in Sessions 1-11 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, and lease-backed heartbeat/leader reconciliation
-- **Next recommended implementation session:** Session 12 — add cluster operations and per-node ACK tracking
+- **Roadmap status:** Phase 4 in progress
+- **Completed in Sessions 1-13 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, and staged NGINX release activation with rollback-safe config deployment
+- **Next recommended implementation session:** Session 14 — restrict or redesign `nginx_custom_code`
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -62,7 +64,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-11 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, and lease-backed cluster coordination behavior. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-13 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, and transactional NGINX rollout behavior. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -801,6 +803,14 @@ Cluster-wide mutations now use a durable operation journal:
 - `GET /cluster/operations` returns recent cluster operations and summary counts
 - `GET /cluster/operations/:operationId` returns per-node acknowledgement state for a specific operation
 - internal certificate-sync broadcasts also use the same operation journal so later certificate activation work can build on a shared ACK model
+
+Transactional config activation now uses a managed runtime release layout:
+
+- the stable loader at `/etc/nginx/nginx.conf` reads virtual-host configs from `/etc/nginx/runtime/current/conf.d/*.conf`
+- each reload stages a full config snapshot under `/etc/nginx/runtime/releases/<release-id>`
+- the staged snapshot is validated with `nginx -t -c <release>/.validation-nginx.conf` before activation
+- activation swaps the `current` symlink atomically, preserves a `last-known-good` symlink, and rolls back automatically if `nginx -s reload` fails
+- each staged release records metadata in `lyttle-nginx-release.json`, including validation output, apply node, phase, and rollback context when relevant
 
 If your Swarm nodes are not mutually reachable by node hostname, override `CLUSTER_CONTROL_ADDRESS` with a routable internal DNS name or address per node before treating cluster operations as healthy.
 

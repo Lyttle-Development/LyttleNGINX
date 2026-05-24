@@ -6,26 +6,41 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NginxService } from '../nginx/nginx.service';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import {
+  access,
   copyFile,
   mkdir,
   readdir,
+  readFile,
+  readlink,
   rename,
   rm,
   stat,
+  symlink,
   unlink,
   writeFile,
 } from 'fs/promises';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 import * as fs from 'fs';
 import { CertificateService } from '../certificate/certificate.service';
 import { TlsConfigService } from '../certificate/tls-config.service';
 import { lookup } from 'dns/promises'; // <-- Added
 import { HealthService } from '../health/health.service';
 
-const NGINX_ETC_DIR = '/etc/nginx';
-const NGINX_SOURCE_DIR = join(process.cwd(), 'nginx');
+const NGINX_ETC_DIR = process.env['NGINX_ETC_DIR'] ?? '/etc/nginx';
+const NGINX_SOURCE_DIR =
+  process.env['NGINX_SOURCE_DIR'] ?? join(process.cwd(), 'nginx');
+const NGINX_LOG_DIR = process.env['NGINX_LOG_DIR'] ?? '/var/log/nginx';
+const NGINX_RUNTIME_DIR = join(NGINX_ETC_DIR, 'runtime');
+const NGINX_RELEASES_DIR = join(NGINX_RUNTIME_DIR, 'releases');
+const NGINX_CURRENT_RELEASE_LINK = join(NGINX_RUNTIME_DIR, 'current');
+const NGINX_LAST_KNOWN_GOOD_LINK = join(
+  NGINX_RUNTIME_DIR,
+  'last-known-good',
+);
+const NGINX_RELEASE_METADATA_FILE = 'lyttle-nginx-release.json';
+const RELEASE_RETENTION_COUNT = 5;
 
 // Helper function to check if host resolves
 async function isHostResolvable(host: string): Promise<boolean> {
@@ -40,7 +55,7 @@ async function isHostResolvable(host: string): Promise<boolean> {
 @Injectable()
 export class ReloaderService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ReloaderService.name);
-  private intervalHandle: NodeJS.Timeout | null = null;
+  private intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   // reload interval: every 5 minutes
   private readonly intervalMs = 5 * 60 * 1000;
@@ -91,40 +106,28 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
 
   async reloadConfig(): Promise<{ ok: boolean; error?: string }> {
     try {
-      this.logger.log('Starting nginx reload process...');
+      this.logger.log('Starting staged nginx reload process...');
 
-      // Step 1: Remove all content from /etc/nginx
-      this.logger.log(`Clearing directory: ${NGINX_ETC_DIR}`);
-      await this.clearDirectory(NGINX_ETC_DIR, false);
+      this.logger.log(`Ensuring ${NGINX_LOG_DIR} exists...`);
+      await mkdir(NGINX_LOG_DIR, { recursive: true });
 
-      // Step 2: Copy full /nginx (project) to /etc/nginx
-      this.logger.log(`Copying from ${NGINX_SOURCE_DIR} to ${NGINX_ETC_DIR}`);
-      await this.copyDirectoryRecursive(NGINX_SOURCE_DIR, NGINX_ETC_DIR);
+      await this.ensureRuntimeLayout();
 
-      this.logger.log('Ensuring /var/log/nginx exists...');
-      await mkdir('/var/log/nginx', { recursive: true });
-
-      // Step 3: Ensure any directories required by proxy/redirect configs exist
-      this.logger.log(
-        'Ensuring directories required by proxies/redirects exist...',
-      );
-      await this.ensureProxyAndRedirectDirs();
-
-      // Step 4: Fetch proxy entries
+      // Step 1: Fetch proxy entries and ensure any required directories exist
       this.logger.log('Fetching proxy entries from database...');
       const entries = await this.prisma.proxyEntry.findMany();
       this.logger.log(`Found ${entries.length} proxy entries.`);
 
+      this.logger.log(
+        'Ensuring directories required by proxies/redirects exist...',
+      );
+      await this.ensureProxyAndRedirectDirs(entries);
+
       // ----------- PHASE 1: Generate configs (HTTP only, as no SSL certs exist yet) -----------
-      this.logger.log('Phase 1: Generating HTTP-only nginx configs...');
-      await this.generateNginxConfs(entries);
-
-      // Validate and reload
-      this.logger.log('Validating nginx config syntax (nginx -t)...');
-      await this.execShell('nginx -t');
-
-      this.logger.log('Reloading nginx (nginx -s reload)...');
-      await this.execShell('nginx -s reload');
+      const httpOnlyRelease = await this.deployConfigSnapshot(entries, {
+        phase: 'http-bootstrap',
+        details: `http-only rollout for ${entries.length} proxy entr${entries.length === 1 ? 'y' : 'ies'}`,
+      });
 
       // ----------- PHASE 2: Obtain SSL Certificates -----------
       this.logger.log('Phase 2: Ensuring SSL certificates...');
@@ -162,21 +165,16 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
       }
 
       // ----------- PHASE 3: Re-generate configs (now with SSL where possible) -----------
-      this.logger.log('Phase 3: Generating SSL-enabled nginx configs...');
-      await this.generateNginxConfs(entries);
-
-      // Validate and reload
-      this.logger.log('Validating nginx config syntax (nginx -t)...');
-      await this.execShell('nginx -t');
-
-      this.logger.log('Reloading nginx (nginx -s reload)...');
-      await this.execShell('nginx -s reload');
+      const sslRelease = await this.deployConfigSnapshot(entries, {
+        phase: 'ssl-activation',
+        details: `ssl-aware rollout for ${entries.length} proxy entr${entries.length === 1 ? 'y' : 'ies'}`,
+      });
 
       this.logger.log(
-        'Nginx config and directories replaced/reloaded successfully.',
+        'Nginx config staged, validated, and activated successfully.',
       );
       this.healthService.recordConfigApplySuccess(
-        `reloaded ${entries.length} proxy entr${entries.length === 1 ? 'y' : 'ies'}`,
+        `activated release ${sslRelease.releaseId} (${sslRelease.phase}); previous release ${sslRelease.previousReleaseId ?? httpOnlyRelease.previousReleaseId ?? 'none'}`,
       );
       return { ok: true };
     } catch (error: any) {
@@ -193,10 +191,15 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Helper: Generate nginx confs for all entries (auto SSL detection)
-  private async generateNginxConfs(entries: any[]): Promise<void> {
-    const confdDir = join(NGINX_ETC_DIR, 'conf.d');
+  private async generateNginxConfs(
+    entries: any[],
+    releasePath: string,
+  ): Promise<void> {
+    const confdDir = join(releasePath, 'conf.d');
     this.logger.log(`Ensuring conf.d directory exists at: ${confdDir}`);
     await mkdir(confdDir, { recursive: true });
+
+    await this.rewriteBundledDefaultConfig(releasePath);
 
     for (const entry of entries) {
       try {
@@ -210,13 +213,16 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
         }
 
         // Check if upstream host resolves (skip for REDIRECT type)
-        let resolved = false
+        let resolved = false;
         if (entry.type !== 'REDIRECT') {
           resolved = await isHostResolvable(upstreamHost);
         }
 
         this.logger.log(`Generating nginx config for entry id=${entry.id}`);
-        const entryConfig = this.nginx.generateNginxConfig([entry], resolved);
+        const entryConfig = this.nginx.generateNginxConfig([entry], {
+          resolved,
+          htmlRoot: join(releasePath, 'html'),
+        });
         const entryFilename = join(confdDir, `${entry.id}.conf.tmp`);
         this.logger.log(`Writing temp config file: ${entryFilename}`);
         await writeFile(entryFilename, entryConfig, { encoding: 'utf-8' });
@@ -317,11 +323,10 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Ensure directories required by proxies/redirects exist
-  private async ensureProxyAndRedirectDirs(): Promise<void> {
+  private async ensureProxyAndRedirectDirs(entries: any[]): Promise<void> {
     this.logger.log(
       'Parsing proxy/redirect configs for required directories...',
     );
-    const entries = await this.prisma.proxyEntry.findMany();
     const dirs = new Set<string>();
 
     for (const entry of entries) {
@@ -377,20 +382,333 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private execShell(cmd: string): Promise<void> {
-    this.logger.log(`Executing shell command: ${cmd}`);
+  private async ensureRuntimeLayout(): Promise<void> {
+    await mkdir(NGINX_RELEASES_DIR, { recursive: true });
+
+    let currentReleasePath = await this.getSymlinkTarget(NGINX_CURRENT_RELEASE_LINK);
+    if (!currentReleasePath) {
+      currentReleasePath = await this.createBootstrapRelease();
+      await this.updateSymlinkAtomically(
+        NGINX_CURRENT_RELEASE_LINK,
+        currentReleasePath,
+      );
+    }
+
+    const lastKnownGoodPath = await this.getSymlinkTarget(
+      NGINX_LAST_KNOWN_GOOD_LINK,
+    );
+    if (!lastKnownGoodPath) {
+      await this.updateSymlinkAtomically(
+        NGINX_LAST_KNOWN_GOOD_LINK,
+        currentReleasePath,
+      );
+    }
+  }
+
+  private async createBootstrapRelease(): Promise<string> {
+    const bootstrapReleasePath = join(NGINX_RELEASES_DIR, 'bootstrap');
+    await rm(bootstrapReleasePath, { recursive: true, force: true });
+    await this.copyDirectoryRecursive(NGINX_SOURCE_DIR, bootstrapReleasePath);
+    await this.rewriteBundledDefaultConfig(bootstrapReleasePath);
+    await this.writeReleaseMetadata(bootstrapReleasePath, {
+      releaseId: 'bootstrap',
+      phase: 'bootstrap',
+      status: 'bootstrap',
+      createdAt: new Date().toISOString(),
+      sourceDirectory: NGINX_SOURCE_DIR,
+      appliedNode: process.env['HOSTNAME'] ?? 'unknown',
+      details: 'bootstrap runtime release created for nginx startup',
+    });
+    return bootstrapReleasePath;
+  }
+
+  private async deployConfigSnapshot(
+    entries: any[],
+    options: {
+      phase: string;
+      details: string;
+    },
+  ): Promise<ActivatedRelease> {
+    const releaseId = this.createReleaseId(options.phase);
+    const releasePath = join(NGINX_RELEASES_DIR, releaseId);
+    const createdAt = new Date().toISOString();
+    const previousReleasePath = await this.getSymlinkTarget(
+      NGINX_CURRENT_RELEASE_LINK,
+    );
+    const previousReleaseId = previousReleasePath
+      ? basename(previousReleasePath)
+      : null;
+
+    this.logger.log(
+      `Creating staged nginx release ${releaseId} at ${releasePath}`,
+    );
+    await this.copyDirectoryRecursive(NGINX_SOURCE_DIR, releasePath);
+    await this.generateNginxConfs(entries, releasePath);
+
+    const validationConfigPath = await this.writeValidationConfig(releasePath);
+    const validationCommand = [
+      'nginx',
+      '-t',
+      '-c',
+      validationConfigPath,
+    ] as const;
+    const validationOutput = await this.execCommand(
+      validationCommand[0],
+      validationCommand.slice(1),
+    );
+
+    await this.writeReleaseMetadata(releasePath, {
+      releaseId,
+      phase: options.phase,
+      status: 'validated',
+      createdAt,
+      sourceDirectory: NGINX_SOURCE_DIR,
+      appliedNode: process.env['HOSTNAME'] ?? 'unknown',
+      details: options.details,
+      previousReleaseId,
+      validation: {
+        command: validationCommand.join(' '),
+        output: validationOutput,
+        validatedAt: new Date().toISOString(),
+      },
+    });
+
+    await this.updateSymlinkAtomically(NGINX_CURRENT_RELEASE_LINK, releasePath);
+
+    try {
+      await this.execCommand('nginx', ['-s', 'reload']);
+    } catch (error) {
+      await this.rollbackActivation({
+        previousReleasePath,
+        failedReleasePath: releasePath,
+        validationOutput,
+        activationError:
+          error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    await this.updateSymlinkAtomically(NGINX_LAST_KNOWN_GOOD_LINK, releasePath);
+    await this.writeReleaseMetadata(releasePath, {
+      releaseId,
+      phase: options.phase,
+      status: 'active',
+      createdAt,
+      activatedAt: new Date().toISOString(),
+      sourceDirectory: NGINX_SOURCE_DIR,
+      appliedNode: process.env['HOSTNAME'] ?? 'unknown',
+      details: options.details,
+      previousReleaseId,
+      validation: {
+        command: validationCommand.join(' '),
+        output: validationOutput,
+      },
+    });
+    await this.pruneOldReleases([releasePath, previousReleasePath]);
+
+    return {
+      releaseId,
+      releasePath,
+      previousReleaseId,
+      phase: options.phase,
+      validationOutput,
+    };
+  }
+
+  private async rollbackActivation(options: {
+    previousReleasePath: string | null;
+    failedReleasePath: string;
+    validationOutput: string;
+    activationError: string;
+  }): Promise<never> {
+    const failedReleaseId = basename(options.failedReleasePath);
+    const previousReleaseId = options.previousReleasePath
+      ? basename(options.previousReleasePath)
+      : null;
+
+    if (!options.previousReleasePath) {
+      throw new Error(
+        `Activation of release ${failedReleaseId} failed with no previous release to restore: ${options.activationError}`,
+      );
+    }
+
+    this.logger.warn(
+      `Activation of release ${failedReleaseId} failed; rolling back to ${previousReleaseId}`,
+    );
+    await this.updateSymlinkAtomically(
+      NGINX_CURRENT_RELEASE_LINK,
+      options.previousReleasePath,
+    );
+
+    try {
+      await this.execCommand('nginx', ['-s', 'reload']);
+    } catch (rollbackError) {
+      throw new Error(
+        `Activation of release ${failedReleaseId} failed (${options.activationError}) and rollback to ${previousReleaseId} also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      );
+    }
+
+    await this.writeReleaseMetadata(options.failedReleasePath, {
+      releaseId: failedReleaseId,
+      phase: 'rollback',
+      status: 'rolled_back',
+      createdAt: new Date().toISOString(),
+      sourceDirectory: NGINX_SOURCE_DIR,
+      appliedNode: process.env['HOSTNAME'] ?? 'unknown',
+      previousReleaseId,
+      validation: {
+        output: options.validationOutput,
+      },
+      rollback: {
+        rolledBackToReleaseId: previousReleaseId,
+        rolledBackAt: new Date().toISOString(),
+        activationError: options.activationError,
+      },
+    });
+
+    throw new Error(
+      `Activation of release ${failedReleaseId} failed and was rolled back to ${previousReleaseId}: ${options.activationError}`,
+    );
+  }
+
+  private async writeValidationConfig(releasePath: string): Promise<string> {
+    const validationConfigPath = join(releasePath, '.validation-nginx.conf');
+    const bundledConfig = await readFile(join(releasePath, 'nginx.conf'), 'utf8');
+    const validationConfig = bundledConfig
+      .replace(/^pid\s+.*;$/m, `pid ${join(releasePath, '.validation-nginx.pid')};`)
+      .replaceAll('/etc/nginx/mime.types', join(releasePath, 'mime.types'))
+      .replaceAll(
+        '/etc/nginx/runtime/current/conf.d/*.conf',
+        `${join(releasePath, 'conf.d')}/*.conf`,
+      )
+      .replaceAll('/etc/nginx/html', join(releasePath, 'html'));
+
+    await writeFile(validationConfigPath, validationConfig, 'utf8');
+    return validationConfigPath;
+  }
+
+  private async rewriteBundledDefaultConfig(releasePath: string): Promise<void> {
+    const defaultConfPath = join(releasePath, 'conf.d', 'default.conf');
+    if (!(await this.pathExists(defaultConfPath))) {
+      return;
+    }
+
+    const rewritten = (await readFile(defaultConfPath, 'utf8'))
+      .replaceAll('/etc/nginx/html', join(releasePath, 'html'))
+      .replaceAll('/errors/50x.html', '/errors/5xx.html');
+    await writeFile(defaultConfPath, rewritten, 'utf8');
+  }
+
+  private async writeReleaseMetadata(
+    releasePath: string,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    await writeFile(
+      join(releasePath, NGINX_RELEASE_METADATA_FILE),
+      `${JSON.stringify(metadata, null, 2)}\n`,
+      'utf8',
+    );
+  }
+
+  private async updateSymlinkAtomically(
+    linkPath: string,
+    targetPath: string,
+  ): Promise<void> {
+    await mkdir(dirname(linkPath), { recursive: true });
+    const tempLinkPath = `${linkPath}.tmp-${Date.now()}`;
+    await rm(tempLinkPath, { force: true });
+    await symlink(targetPath, tempLinkPath);
+    await rename(tempLinkPath, linkPath);
+  }
+
+  private async getSymlinkTarget(linkPath: string): Promise<string | null> {
+    try {
+      return await readlink(linkPath);
+    } catch (error) {
+      if (['ENOENT', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private createReleaseId(phase: string): string {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const normalizedPhase = phase.replace(/[^a-z0-9-]+/gi, '-').toLowerCase();
+    return `${timestamp}-${normalizedPhase}`;
+  }
+
+  private async pruneOldReleases(
+    retainedReleasePaths: Array<string | null>,
+  ): Promise<void> {
+    const lastKnownGoodPath = await this.getSymlinkTarget(NGINX_LAST_KNOWN_GOOD_LINK);
+    const protectedPaths = new Set(
+      [...retainedReleasePaths, lastKnownGoodPath]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => value),
+    );
+
+    const releaseNames = await readdir(NGINX_RELEASES_DIR);
+    const releases = await Promise.all(
+      releaseNames.map(async (releaseName) => {
+        const releasePath = join(NGINX_RELEASES_DIR, releaseName);
+        const releaseStat = await stat(releasePath);
+        return {
+          releaseName,
+          releasePath,
+          modifiedAt: releaseStat.mtimeMs,
+        };
+      }),
+    );
+
+    const staleReleases = releases
+      .filter(
+        (release) =>
+          release.releaseName !== 'bootstrap' &&
+          !protectedPaths.has(release.releasePath),
+      )
+      .sort((left, right) => right.modifiedAt - left.modifiedAt)
+      .slice(RELEASE_RETENTION_COUNT);
+
+    await Promise.all(
+      staleReleases.map(async (release) => {
+        this.logger.log(`Pruning stale nginx release ${release.releaseName}`);
+        await rm(release.releasePath, { recursive: true, force: true });
+      }),
+    );
+  }
+
+  private async pathExists(path: string): Promise<boolean> {
+    try {
+      await access(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private execCommand(command: string, args: string[]): Promise<string> {
+    this.logger.log(`Executing command: ${command} ${args.join(' ')}`);
     return new Promise((resolve, reject) => {
-      exec(cmd, (err, stdout, stderr) => {
+      execFile(command, args, (err, stdout, stderr) => {
         if (err) {
           this.logger.error(
-            `Command failed: ${cmd}\nSTDOUT: ${stdout}\nSTDERR: ${stderr}`,
+            `Command failed: ${command} ${args.join(' ')}\nSTDOUT: ${stdout}\nSTDERR: ${stderr}`,
           );
           return reject(new Error(stderr || stdout || err.message));
         }
         if (stdout) this.logger.log(`Command stdout: ${stdout}`);
         if (stderr) this.logger.log(`Command stderr: ${stderr}`);
-        resolve();
+        resolve([stdout, stderr].filter(Boolean).join('\n').trim());
       });
     });
   }
 }
+
+type ActivatedRelease = {
+  releaseId: string;
+  releasePath: string;
+  previousReleaseId: string | null;
+  phase: string;
+  validationOutput: string;
+};
+

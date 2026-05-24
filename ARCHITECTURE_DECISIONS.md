@@ -31,6 +31,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-013 | Lease-based leader coordination with generation fencing tokens                            | accepted | Session 10 | 2026-05-24 |
 | ADR-014 | Lease-backed heartbeat and leader reconciliation                                          | accepted | Session 11 | 2026-05-24 |
 | ADR-015 | Durable cluster operation journal with per-node acknowledgements                          | accepted | Session 12 | 2026-05-24 |
+| ADR-016 | Staged NGINX runtime releases with atomic activation and rollback                         | accepted | Session 13 | 2026-05-24 |
 
 ---
 
@@ -528,4 +529,35 @@ Represent cluster-wide mutations as durable operations with explicit per-node ac
 - operators can inspect which nodes succeeded or failed for a given operation before later Session 22 API expansion work lands
 - future sessions can layer desired-state versions, certificate activation ACK policies, and richer operational metrics onto the shared operation journal instead of inventing separate tracking paths
 - operation execution is still initiated in-process on the requesting node, so restart-resume durability and stronger internal transport guarantees remain future work
+
+---
+
+## ADR-016 — Staged NGINX runtime releases with atomic activation and rollback
+
+- Status: accepted
+- Session: Session 13 — Implement staged NGINX config generation and atomic activation
+- Date: 2026-05-24
+
+### Context
+
+The previous NGINX reload flow cleared `/etc/nginx` in place, recopied repository assets directly into the live directory, regenerated configs there, and only then ran `nginx -t`. That meant a failed copy, partial write, or invalid generated config could leave a node with a broken or incomplete live NGINX tree before validation had even occurred.
+
+### Decision
+
+Adopt a staged runtime-release model for NGINX virtual-host configuration:
+
+1. keep `/etc/nginx/nginx.conf` as a stable loader that includes `/etc/nginx/runtime/current/conf.d/*.conf`
+2. create a full staged release under `/etc/nginx/runtime/releases/<release-id>` for every reload attempt
+3. validate the staged release with a release-specific `nginx -t -c <release>/.validation-nginx.conf` before activation
+4. activate a validated release by atomically swapping the `current` symlink to the new release
+5. preserve a `last-known-good` symlink and automatically roll back to the prior release if `nginx -s reload` fails after activation
+6. record release metadata on disk in `lyttle-nginx-release.json`, including release phase, apply node, validation output, and rollback context when applicable
+7. bootstrap a runtime `current` and `last-known-good` release at container startup so the stable loader is usable before the first dynamic reload occurs
+
+### Consequences
+
+- invalid generated configs are rejected before they become the active NGINX release
+- live config activation no longer depends on destructive in-place mutation of `/etc/nginx`
+- operators have a filesystem-local rollback point and release metadata trail even before later sessions add richer config-version APIs or database-backed apply history
+- later sessions should build on this model for metrics, operator inspection APIs, certificate artifact activation, and stronger controls around advanced custom NGINX fragments
 

@@ -17,6 +17,11 @@ NODE_SHUTDOWN_TIMEOUT_SECONDS="${NODE_SHUTDOWN_TIMEOUT_SECONDS:-30}"
 NGINX_SHUTDOWN_TIMEOUT_SECONDS="${NGINX_SHUTDOWN_TIMEOUT_SECONDS:-10}"
 DB_CONNECT_RETRY_DELAY_SECONDS="${DB_CONNECT_RETRY_DELAY_SECONDS:-5}"
 MIGRATION_RETRY_DELAY_SECONDS="${MIGRATION_RETRY_DELAY_SECONDS:-5}"
+NGINX_RUNTIME_DIR="${NGINX_RUNTIME_DIR:-/etc/nginx/runtime}"
+NGINX_RUNTIME_RELEASES_DIR="${NGINX_RUNTIME_RELEASES_DIR:-${NGINX_RUNTIME_DIR}/releases}"
+NGINX_RUNTIME_CURRENT_LINK="${NGINX_RUNTIME_CURRENT_LINK:-${NGINX_RUNTIME_DIR}/current}"
+NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK="${NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK:-${NGINX_RUNTIME_DIR}/last-known-good}"
+NGINX_BUNDLED_SOURCE_DIR="${NGINX_BUNDLED_SOURCE_DIR:-/app/nginx}"
 
 log_info() {
     echo -e "${BLUE}[ENTRYPOINT] INFO: $1${NC}"
@@ -220,6 +225,53 @@ verify_prerequisites() {
 }
 
 # Start NGINX
+bootstrap_nginx_runtime_layout() {
+    local bootstrap_release="${NGINX_RUNTIME_RELEASES_DIR}/bootstrap"
+
+    log_info "Ensuring managed NGINX runtime layout exists..."
+    if ! mkdir -p "$NGINX_RUNTIME_RELEASES_DIR"; then
+        log_warn "Cannot create NGINX runtime directory $NGINX_RUNTIME_RELEASES_DIR; continuing without bootstrap layout"
+        return 0
+    fi
+
+    if [ ! -d "$bootstrap_release" ]; then
+        log_info "Creating bootstrap NGINX release at $bootstrap_release"
+        mkdir -p "$bootstrap_release"
+
+        if [ -d "$NGINX_BUNDLED_SOURCE_DIR" ]; then
+            cp -a "$NGINX_BUNDLED_SOURCE_DIR/." "$bootstrap_release/"
+        elif [ -d /etc/nginx/conf.d ]; then
+            log_warn "Bundled NGINX source directory $NGINX_BUNDLED_SOURCE_DIR is missing; falling back to existing /etc/nginx contents"
+            mkdir -p "$bootstrap_release/conf.d"
+            cp -a /etc/nginx/conf.d/. "$bootstrap_release/conf.d/" 2>/dev/null || true
+            if [ -d /etc/nginx/html ]; then
+                mkdir -p "$bootstrap_release/html"
+                cp -a /etc/nginx/html/. "$bootstrap_release/html/" 2>/dev/null || true
+            fi
+            if [ -f /etc/nginx/mime.types ]; then
+                cp -a /etc/nginx/mime.types "$bootstrap_release/mime.types" 2>/dev/null || true
+            fi
+        else
+            log_warn "Bundled NGINX source directory $NGINX_BUNDLED_SOURCE_DIR is missing; creating an empty bootstrap release"
+            mkdir -p "$bootstrap_release/conf.d" "$bootstrap_release/html/errors"
+        fi
+    fi
+
+    if [ ! -L "$NGINX_RUNTIME_CURRENT_LINK" ]; then
+        log_info "Initializing current NGINX release symlink"
+        if ! ln -sfn "$bootstrap_release" "$NGINX_RUNTIME_CURRENT_LINK"; then
+            log_warn "Failed to initialize current NGINX release symlink at $NGINX_RUNTIME_CURRENT_LINK"
+        fi
+    fi
+
+    if [ ! -L "$NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK" ]; then
+        log_info "Initializing last-known-good NGINX release symlink"
+        if ! ln -sfn "$bootstrap_release" "$NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK"; then
+            log_warn "Failed to initialize last-known-good NGINX release symlink at $NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK"
+        fi
+    fi
+}
+
 start_nginx() {
     log_info "Starting NGINX..."
 
@@ -332,6 +384,9 @@ fi
 
 # Verify prerequisites
 verify_prerequisites
+
+# Ensure the runtime-managed NGINX release layout exists before validation/startup
+bootstrap_nginx_runtime_layout
 
 # Start services
 start_nginx
