@@ -32,6 +32,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-014 | Lease-backed heartbeat and leader reconciliation                                          | accepted | Session 11 | 2026-05-24 |
 | ADR-015 | Durable cluster operation journal with per-node acknowledgements                          | accepted | Session 12 | 2026-05-24 |
 | ADR-016 | Staged NGINX runtime releases with atomic activation and rollback                         | accepted | Session 13 | 2026-05-24 |
+| ADR-017 | Validated allowlisted `nginx_custom_code` fragments                                       | accepted | Session 14 | 2026-05-24 |
 
 ---
 
@@ -560,4 +561,33 @@ Adopt a staged runtime-release model for NGINX virtual-host configuration:
 - live config activation no longer depends on destructive in-place mutation of `/etc/nginx`
 - operators have a filesystem-local rollback point and release metadata trail even before later sessions add richer config-version APIs or database-backed apply history
 - later sessions should build on this model for metrics, operator inspection APIs, certificate artifact activation, and stronger controls around advanced custom NGINX fragments
+
+---
+
+## ADR-017 — Validated allowlisted `nginx_custom_code` fragments
+
+- Status: accepted
+- Session: Session 14 — Restrict or redesign `nginx_custom_code`
+- Date: 2026-05-24
+
+### Context
+
+Even after Session 13 made NGINX rollout transactional, `ProxyEntry.nginx_custom_code` still flowed straight into generated server blocks as raw text. That left the system open to arbitrary directive injection, unsafe filesystem path materialization through `root` and `alias`, and accidental or malicious syntax that could bypass the intent of the managed proxy template.
+
+### Decision
+
+Keep `nginx_custom_code` as a narrow extensibility surface for now, but replace raw injection with a validated fragment model:
+
+1. parse custom fragments before rollout instead of copying them verbatim into generated config
+2. allow only a small server-level directive set (`add_header`, `client_max_body_size`, `expires`) plus `location` blocks
+3. allow only reviewed static-content and response-shaping directives inside custom `location` blocks (`root`, `alias`, `try_files`, `index`, `return`, `default_type`, `autoindex`, `add_header`, `expires`, `client_max_body_size`)
+4. reject dangerous directives and structures such as nested `server`/`if` blocks, regex locations, `proxy_pass`, `include`, and other arbitrary config escapes
+5. require `root` and `alias` paths to stay under an operator-configured allowlist via `NGINX_CUSTOM_CODE_ALLOWED_PATH_PREFIXES`
+6. fail the staged reload immediately when a fragment is invalid so unsafe config never reaches `nginx -t`, activation, or directory creation side effects
+
+### Consequences
+
+- advanced per-proxy static-file and response-header customization remains possible without preserving arbitrary server-block injection
+- the reloader now treats invalid custom fragments as rollout failures instead of silently ignoring or partially applying them
+- future proxy-management APIs in Session 21 should keep building on this validated fragment contract, or replace it with a stricter structured model if operators need richer NGINX extensibility later
 

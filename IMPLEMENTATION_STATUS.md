@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 4 — Configuration rollout and rollback safety
-- Most recently completed session: Session 13 — Implement staged NGINX config generation and atomic activation
-- Next recommended session from the roadmap: Session 14 — Restrict or redesign `nginx_custom_code`
+- Most recently completed session: Session 14 — Restrict or redesign `nginx_custom_code`
+- Next recommended session from the roadmap: Session 15 — Add strict domain validation and safe process execution
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -497,13 +497,31 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 14 — Restrict or redesign `nginx_custom_code`
 
-- Status: not started
+- Status: done
 - Objective: remove arbitrary config injection risk while preserving advanced extensibility
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: raw config injection remains unsafe
-- Follow-up sessions: Session 21, Session 29
-- Notes: should introduce validation and tighter authorization
+- Files touched:
+  - `src/nginx/nginx-custom-code.ts`
+  - `src/nginx/nginx.service.ts`
+  - `src/reloader/reloader.service.ts`
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session14/nginx-custom-code-guardrails.test.js`
+- Tests added/updated:
+  - added `test/session14/nginx-custom-code-guardrails.test.js` to verify allowlisted custom fragments render successfully, dangerous directives are rejected, path-prefix enforcement works, and invalid fragments fail reloads before activation
+  - re-ran `npm test`, `npm run typecheck`, and `npm run build` after landing the guarded fragment parser so Sessions 3-14 continue to pass together
+- Risks:
+  - `nginx_custom_code` is now constrained to a narrow allowlist, so operators who relied on arbitrary directives will need to move to the reviewed fragment subset or wait for a future structured extensibility model
+  - proxy management still occurs outside a dedicated API surface today; Session 21 remains responsible for shipping authenticated CRUD and validation workflows around proxy state instead of direct database mutation
+- Follow-up sessions:
+  - Session 15 — add strict domain validation and safe process execution
+  - Session 21 — add proxy management API
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+- Notes:
+  - raw `nginx_custom_code` injection has been replaced with a validated fragment parser that only accepts reviewed server-level directives and `location` blocks
+  - `root` and `alias` paths now must stay within `NGINX_CUSTOM_CODE_ALLOWED_PATH_PREFIXES`, and directory creation derives from the validated fragment AST instead of regex extraction from raw text
+  - invalid custom fragments now fail the staged reload immediately, preventing unsafe or unsupported config from reaching `nginx -t`, activation, or side-effectful directory creation
 
 ---
 

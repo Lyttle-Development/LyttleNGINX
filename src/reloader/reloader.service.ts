@@ -27,6 +27,7 @@ import { CertificateService } from '../certificate/certificate.service';
 import { TlsConfigService } from '../certificate/tls-config.service';
 import { lookup } from 'dns/promises'; // <-- Added
 import { HealthService } from '../health/health.service';
+import { extractManagedPathsFromCustomCode } from '../nginx/nginx-custom-code';
 
 const NGINX_ETC_DIR = process.env['NGINX_ETC_DIR'] ?? '/etc/nginx';
 const NGINX_SOURCE_DIR =
@@ -238,6 +239,7 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
             time: new Date().toISOString(),
           }),
         );
+        throw error;
       }
     }
   }
@@ -332,32 +334,13 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
     for (const entry of entries) {
       try {
         if (entry.nginx_custom_code) {
-          const rootMatches = entry.nginx_custom_code.match(/root\s+([^;]+);/g);
-          const aliasMatches =
-            entry.nginx_custom_code.match(/alias\s+([^;]+);/g);
-          if (rootMatches) {
-            rootMatches.forEach((m) => {
-              const path = m
-                .replace(/root\s+/, '')
-                .replace(/;/, '')
-                .trim();
-              this.logger.log(
-                `Found root directive, will ensure directory: ${path}`,
-              );
-              dirs.add(path);
-            });
-          }
-          if (aliasMatches) {
-            aliasMatches.forEach((m) => {
-              const path = m
-                .replace(/alias\s+/, '')
-                .replace(/;/, '')
-                .trim();
-              this.logger.log(
-                `Found alias directive, will ensure directory: ${path}`,
-              );
-              dirs.add(path);
-            });
+          for (const path of extractManagedPathsFromCustomCode(
+            entry.nginx_custom_code,
+          )) {
+            this.logger.log(
+              `Found validated managed-path directive, will ensure directory: ${path}`,
+            );
+            dirs.add(path);
           }
         }
       } catch (error: any) {
@@ -369,6 +352,7 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
             time: new Date().toISOString(),
           }),
         );
+        throw error;
       }
     }
 

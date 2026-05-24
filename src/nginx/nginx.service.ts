@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ProxyEntry, ProxyType } from '@prisma/client';
 import * as fs from 'fs';
+import { sanitizeNginxCustomCode } from './nginx-custom-code';
 
 type GenerateNginxConfigOptions = {
   resolved?: boolean;
@@ -31,10 +32,13 @@ export class NginxService {
           .filter(Boolean);
         if (domains.length === 0) continue;
         const primaryDomain = domains[0];
+        const { proxy_pass_host: proxyPassHost, nginx_custom_code: customCodeSource } =
+          entry;
 
         const certPath = `${letsEncryptLiveRoot}/${primaryDomain}/fullchain.pem`;
         const keyPath = `${letsEncryptLiveRoot}/${primaryDomain}/privkey.pem`;
         const hasCert = fs.existsSync(certPath) && fs.existsSync(keyPath);
+        const customCode = sanitizeNginxCustomCode(customCodeSource);
 
         // Use single server block for all entry types (matches pre-TLS behavior)
         {
@@ -49,31 +53,15 @@ export class NginxService {
       `
               : '';
 
-          const server_block = `
-server {
-  listen 80;
-  listen [::]:80;
-  ${sslLines}
-  server_name ${domains.join(' ')};
-
-  # Allow ACME challenges - proxy to Node.js app (applies to all entry types)
-  location /.well-known/acme-challenge/ {
-    proxy_pass ${acmeProxyPass};
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  ${
-    entry.type === ProxyType.REDIRECT
-      ? `# Redirect all other traffic
+          const upstreamBlock =
+            entry.type === ProxyType.REDIRECT
+              ? `# Redirect all other traffic
   location / {
-    return 301 ${entry.proxy_pass_host};
+    return 301 ${proxyPassHost};
   }`
-      : `# Proxy traffic to upstream
+              : `# Proxy traffic to upstream
   location / {
-    ${resolved ? `proxy_pass ${entry.proxy_pass_host};` : 'return 503;'}
+    ${resolved ? `proxy_pass ${proxyPassHost};` : 'return 503;'}
     proxy_ssl_verify off;
 
     proxy_pass_request_headers on;
@@ -96,8 +84,25 @@ server {
     proxy_set_header Connection        $connection_upgrade;
 
     proxy_read_timeout 86400;
-  }`
+  }`;
+
+          const serverBlock = `
+server {
+  listen 80;
+  listen [::]:80;
+  ${sslLines}
+  server_name ${domains.join(' ')};
+
+  # Allow ACME challenges - proxy to Node.js app (applies to all entry types)
+  location /.well-known/acme-challenge/ {
+    proxy_pass ${acmeProxyPass};
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
   }
+
+  ${upstreamBlock}
 
   # Ensure upstream 5xx are intercepted so error_page is used
   proxy_intercept_errors on;
@@ -123,11 +128,11 @@ server {
       root ${htmlRoot}/errors;
       try_files /loading.html =200;
   }
-  
-  ${entry.nginx_custom_code || ''}
+
+${customCode}
 }
 `;
-          config += server_block;
+          config += serverBlock;
         }
       } catch (error) {
         console.error(`Error generating config for entry ${entry.id}:`, error);

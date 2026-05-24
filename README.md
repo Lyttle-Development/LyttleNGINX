@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/session%2011-complete-blue" alt="Session 11" />
   <img src="https://img.shields.io/badge/session%2012-complete-blue" alt="Session 12" />
   <img src="https://img.shields.io/badge/session%2013-complete-blue" alt="Session 13" />
+  <img src="https://img.shields.io/badge/session%2014-complete-blue" alt="Session 14" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -30,8 +31,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 4 in progress
-- **Completed in Sessions 1-13 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, and staged NGINX release activation with rollback-safe config deployment
-- **Next recommended implementation session:** Session 14 — restrict or redesign `nginx_custom_code`
+- **Completed in Sessions 1-14 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, and validated allowlisted custom NGINX fragments
+- **Next recommended implementation session:** Session 15 — add strict domain validation and safe process execution
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -64,7 +65,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-13 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, and transactional NGINX rollout behavior. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-14 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, and guarded `nginx_custom_code` validation. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -85,7 +86,7 @@ npm -v    # expected: 11.15.0
 - **HTTP to HTTPS Redirect** - Automatic when SSL is enabled
 - **Reverse Proxy** - Full reverse proxy support
 - **URL Redirects** - 301/302 redirect support
-- **Custom NGINX Config** - Inject custom configuration per proxy
+- **Guarded Custom NGINX Fragments** - Allowlisted server/location directives validated before rollout
 - **WebSocket Support** - Full WebSocket proxying capability
 
 ### 📊 Monitoring & Observability
@@ -199,6 +200,23 @@ NODE_ENV=production
 ```
 
 > **Note:** Connection pooling limits are automatically applied (10 connections per instance). Until dedicated database-operations docs are added, use `PRODUCTION_READINESS_ASSESSMENT.md` and `IMPLEMENTATION_PLAN_BY_SESSION.md` as the current references for production-hardening work.
+
+### Custom NGINX fragment guardrails
+
+Session 14 narrows `ProxyEntry.nginx_custom_code` from raw server-block injection to a validated fragment model:
+
+- only reviewed server-level directives (`add_header`, `client_max_body_size`, `expires`) and `location` blocks are accepted
+- inside custom `location` blocks, only a small allowlist of static-content and response-shaping directives is accepted
+- dangerous directives such as `proxy_pass`, `include`, nested `server`/`if` blocks, certificate directives, and regex locations are rejected before rollout
+- `root` and `alias` paths must stay under operator-approved prefixes configured with `NGINX_CUSTOM_CODE_ALLOWED_PATH_PREFIXES`
+
+Example:
+
+```bash
+NGINX_CUSTOM_CODE_ALLOWED_PATH_PREFIXES="/var/www,/srv/www,/etc/nginx/custom"
+```
+
+If a fragment violates these rules, the staged reload fails before `nginx -t` or activation. This keeps advanced per-proxy static-file behavior available without preserving arbitrary config injection as a casual escape hatch.
 
 ### 3. Setup Database
 
