@@ -6,6 +6,8 @@
   <img src="https://img.shields.io/badge/session%201-complete-blue" alt="Session 1" />
   <img src="https://img.shields.io/badge/session%202-complete-blue" alt="Session 2" />
   <img src="https://img.shields.io/badge/session%203-complete-blue" alt="Session 3" />
+  <img src="https://img.shields.io/badge/session%204-complete-blue" alt="Session 4" />
+  <img src="https://img.shields.io/badge/session%205-complete-blue" alt="Session 5" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -20,8 +22,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 1 in progress
-- **Completed in Sessions 1-3 plus follow-up maintenance:** delivery scaffolding, status tracking, dependency hygiene for known direct CVEs, secret-handling cleanup for publishable env examples, a full npm/toolchain refresh to the latest available package set on 2026-05-24, and Session 3 endpoint lockdown with authenticated-by-default admin APIs plus a targeted regression test pass
-- **Next recommended implementation session:** Session 4 — fix health, readiness, liveness, and startup semantics
+- **Completed in Sessions 1-5 plus follow-up maintenance:** delivery scaffolding, status tracking, dependency hygiene for known direct CVEs, secret-handling cleanup for publishable env examples, a full npm/toolchain refresh to the latest available package set on 2026-05-24, authenticated-by-default admin APIs, dependency-aware health semantics, and fail-fast container supervision with restart-friendly Docker manifests
+- **Next recommended implementation session:** Session 6 — fix inter-node addressing and Swarm communication model
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -54,7 +56,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3 regression tests for API access control. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-5 regression tests for API access control, health semantics, and container-supervision behavior. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -670,8 +672,10 @@ docker stack deploy -c docker-compose.swarm.yml lyttlenginx
 **Current caveats:**
 
 - global mode is the intended target architecture
-- the current assessment still identifies P0/P1 blockers in auth, health semantics, recovery behavior, cluster comms, and config rollout
+- the current assessment still identifies P0/P1 blockers in auth depth, cluster comms, certificate lifecycle hardening, and transactional config rollout even after the completed health and auto-recovery sessions
 - use the swarm manifest for evaluation and development feedback, not as a final production deployment contract yet
+
+The current container model is intentionally **fail-fast**: if either the NestJS control-plane process or the foreground NGINX master exits unexpectedly, the container exits non-zero so Docker or Swarm can restart it instead of leaving the node wedged.
 
 **View cluster status:**
 
@@ -721,8 +725,12 @@ services:
       - letsencrypt-data:/etc/letsencrypt
       - certbot-webroot:/var/www/certbot
       - nginx-ssl:/etc/nginx/ssl
-    network_mode: host
+    ports:
+      - 80:80
+      - 443:443
+      - 3003:3000
     restart: unless-stopped
+    stop_grace_period: 45s
 
 volumes:
   postgres-data:
@@ -789,7 +797,7 @@ npm run lint:fix           # Run ESLint and apply safe fixes
 npm run typecheck          # Run TypeScript type-checking
 npm run build              # Build application
 npm run verify             # Lint + typecheck + build
-npm run test               # Placeholder until Session 26 adds the test harness
+npm run test               # Focused regression suites for shipped sessions (Session 26 will expand the harness)
 
 # Development
 npm run start:dev          # Start with hot reload

@@ -23,6 +23,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-005 | Secret material stays out of git | accepted | Session 2 | 2026-05-24 |
 | ADR-006 | Authenticated-by-default control-plane API | accepted | Session 3 | 2026-05-24 |
 | ADR-007 | Explicit probe endpoints with dependency-aware readiness | accepted | Session 4 | 2026-05-24 |
+| ADR-008 | Fail-fast container supervision and restart-friendly deployment policies | accepted | Session 5 | 2026-05-24 |
 
 ---
 
@@ -237,4 +238,41 @@ Adopt explicit probe semantics for the NestJS control plane:
 - orchestrators can now distinguish “process alive” from “safe to receive traffic”
 - the service stays unready after restart until config apply and certificate sync have completed successfully at least once
 - later sessions should persist and broaden health signals beyond the current in-memory freshness tracking, especially for cluster-wide convergence and richer observability
+
+---
+
+## ADR-008 — Fail-fast container supervision and restart-friendly deployment policies
+
+- Status: accepted
+- Session: Session 5 — Fix container and process auto-recovery behavior
+- Date: 2026-05-24
+
+### Context
+
+The previous container startup flow tried to recover crashes inside `docker-entrypoint.sh`, but it did so unsafely:
+
+- failure paths ended with `exit 0`, which could suppress orchestrator restarts
+- repeated failures eventually triggered `sleep infinity`, leaving the service permanently wedged
+- `nginx` daemonized away from the supervising shell, which made process-state tracking fragile
+- the Swarm manifest limited restart attempts to three failures, which was too aggressive for the intended self-healing edge runtime
+
+### Decision
+
+Adopt a fail-fast supervision model for the current single-container runtime:
+
+1. run the NestJS process and the NGINX master as directly supervised child processes
+2. start NGINX in foreground mode (`daemon off;`) so the entrypoint can track its actual lifecycle
+3. treat any unexpected child-process exit as a container failure and exit non-zero so Docker or Swarm can restart the container
+4. reserve exit code `0` for intentional shutdowns initiated by container stop signals
+5. remove restart-state bookkeeping, in-container retry suppression, and all `sleep infinity` wedged states
+6. configure deployment manifests to prefer continued recovery:
+   - Compose uses `restart: unless-stopped`
+   - Swarm uses `restart_policy.condition: any` without a hard `max_attempts` cap
+   - both manifests allow a grace window for orderly child-process shutdown
+
+### Consequences
+
+- Node or NGINX crashes now translate into observable container failures instead of hidden partial outages
+- graceful container stops still terminate both supervised processes cleanly without turning normal shutdown into a failure
+- the current architecture still relies on a shell-based two-process container, so later sessions may still choose to split the control plane from the edge runtime or adopt a dedicated supervisor
 

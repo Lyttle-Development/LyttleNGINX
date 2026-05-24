@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 1 — Emergency hardening and correctness fixes
-- Most recently completed session: Session 4 — Fix health, readiness, liveness, and startup semantics
-- Next recommended session from the roadmap: Session 5 — Fix container and process auto-recovery behavior
+- Most recently completed session: Session 5 — Fix container and process auto-recovery behavior
+- Next recommended session from the roadmap: Session 6 — Fix inter-node address/port model
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -146,13 +146,31 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - `healthcheck.sh` now inspects both the readiness HTTP status and the JSON body instead of trusting status code alone
 
 ## Session 5 — Fix container and process auto-recovery behavior
-- Status: not started
+- Status: done
 - Objective: ensure process failure leads to correct container recovery
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: current recovery behavior can wedge the service instead of restarting it
-- Follow-up sessions: Session 27
-- Notes: entrypoint supervision and restart policies remain open
+- Files touched:
+  - `docker-entrypoint.sh`
+  - `docker-compose.yml`
+  - `docker-compose.swarm.yml`
+  - `README.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `test/session5/entrypoint-recovery.test.js`
+- Tests added/updated:
+  - added `test/session5/entrypoint-recovery.test.js` to verify fail-fast supervision for Node and NGINX crashes, graceful signal handling, and restart-policy regressions in the deployment manifests
+  - validated the focused Session 5 recovery suite locally with the repository test runner
+- Risks:
+  - Node and NGINX still share a single container, so this remains shell-based supervision rather than a split control-plane/dataplane architecture or a dedicated supervisor
+  - restart behavior now depends on Docker or Swarm policy after container exit; deeper fault-injection proof remains planned for Session 27
+- Follow-up sessions:
+  - Session 6 — fix inter-node addressing and Swarm communication model
+  - Session 13 — implement staged NGINX config generation and atomic activation
+  - Session 27 — add chaos and fault-injection validation
+- Notes:
+  - removed restart-state tracking, `sleep infinity`, and all failure paths that masked crashes with `exit 0`
+  - NGINX now runs as a supervised foreground child, and the entrypoint exits non-zero when either supervised process dies unexpectedly
+  - the single-node Compose manifest now uses a valid port-mapping configuration instead of the previous conflicting host-network example
+  - the Swarm manifest now favors continued recovery by restarting on any exit without a hard `max_attempts` cap and by allowing a graceful stop window
 
 ## Session 6 — Fix inter-node addressing and Swarm communication model
 - Status: not started

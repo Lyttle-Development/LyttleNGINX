@@ -22,14 +22,12 @@ services:
       RATE_LIMIT_TTL: ${RATE_LIMIT_TTL:-60}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
 
-    # USE
-    network_mode: host
-    # OR
     ports:
       - 80:80
       - 443:443
       - 3003:3000
-    # NOT BOTH
+    restart: unless-stopped
+    stop_grace_period: 45s
 
     healthcheck:
       test: [ "CMD-SHELL", "/healthcheck.sh" ]
