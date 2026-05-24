@@ -775,6 +775,7 @@ docker stack deploy -c docker-compose.swarm.yml lyttlenginx
 - global mode is the intended target architecture
 - Session 6 replaces public-IP autodiscovery with explicit `CLUSTER_CONTROL_ADDRESS` / `CLUSTER_CONTROL_PORT` registration
 - Session 10 replaces leader advisory-lock ownership with a durable `ClusterLease` record and generation-based fencing token
+- Session 12 adds durable `ClusterOperation` and `ClusterOperationAck` tracking so cluster-wide reload/sync flows return operation IDs and per-node convergence state
 - Sessions 7-8 add request identity plus explicit RBAC, but internal-node traffic is still plain HTTP and mTLS remains future work
 - the current assessment still identifies remaining P0/P1 blockers in full lease-backed heartbeat reconciliation, cluster ACK tracking, certificate lifecycle hardening, internal-traffic security, and transactional config rollout even after the completed health, auto-recovery, inter-node addressing, auth/RBAC, audit logging, and lease-foundation sessions
 - use the swarm manifest for evaluation and development feedback, not as a final production deployment contract yet
@@ -794,6 +795,13 @@ Leader election now uses a durable database lease:
 - `CLUSTER_LEASE_RENEW_INTERVAL_MS` controls how frequently the local leader renews that lease (default: one third of the TTL, minimum `1000ms`)
 - the active lease carries a monotonically increasing generation number that acts as the leader fencing token for later cluster operations
 
+Cluster-wide mutations now use a durable operation journal:
+
+- `POST /cluster/reload` now returns `202 Accepted` with an operation ID instead of only reporting local-node success
+- `GET /cluster/operations` returns recent cluster operations and summary counts
+- `GET /cluster/operations/:operationId` returns per-node acknowledgement state for a specific operation
+- internal certificate-sync broadcasts also use the same operation journal so later certificate activation work can build on a shared ACK model
+
 If your Swarm nodes are not mutually reachable by node hostname, override `CLUSTER_CONTROL_ADDRESS` with a routable internal DNS name or address per node before treating cluster operations as healthy.
 
 **View cluster status:**
@@ -804,6 +812,15 @@ curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/nodes
 
 # Inspect the current leader lease and fencing token
 curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/lease
+
+# Queue a cluster-wide reload and capture the returned operation id
+curl -X POST -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/reload
+
+# Inspect recent cluster operations
+curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/operations
+
+# Inspect one operation and its per-node acknowledgements
+curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/operations/<operation-id>
 
 # View leader
 docker service logs lyttlenginx_lyttlenginx 2>&1 | grep "LEADER"

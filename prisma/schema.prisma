@@ -80,6 +80,56 @@ model ClusterLease {
   @@index([ownerNodeId, expiresAt])
 }
 
+model ClusterOperation {
+  id                        String                @id @default(uuid())
+  operationType             String
+  scope                     String                @default("cluster")
+  status                    String                @default("pending")
+  initiatorNodeId           String?
+  initiatorHostname         String?
+  initiatorActorId          String?
+  initiatorActorType        String?
+  initiatorActorDisplayName String?
+  correlationId             String?
+  requestPath               String?
+  targetNodeCount           Int                   @default(0)
+  completedNodeCount        Int                   @default(0)
+  successfulNodeCount       Int                   @default(0)
+  failedNodeCount           Int                   @default(0)
+  startedAt                 DateTime?
+  completedAt               DateTime?
+  lastError                 String?
+  metadata                  Json?
+  acknowledgements          ClusterOperationAck[]
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+
+  @@index([status, createdAt])
+  @@index([operationType, createdAt])
+  @@index([correlationId])
+}
+
+model ClusterOperationAck {
+  id            String           @id @default(uuid())
+  operationId   String
+  nodeInstanceId String
+  nodeHostname  String?
+  endpointUrl   String?
+  status        String           @default("pending")
+  responseStatus Int?
+  errorMessage  String?
+  startedAt     DateTime?
+  ackedAt       DateTime?
+  details       Json?
+  operation     ClusterOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([operationId, nodeInstanceId])
+  @@index([status, ackedAt])
+  @@index([nodeInstanceId, status])
+}
+
 model AcmeChallenge {
   id        String   @id @default(uuid())
   token     String   @unique // The challenge token (filename)

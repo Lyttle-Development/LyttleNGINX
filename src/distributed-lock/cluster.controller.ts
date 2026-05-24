@@ -1,21 +1,31 @@
 import {
   Controller,
   Get,
+  HttpStatus,
   Logger,
+  Param,
   Post,
   Query,
+  Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import * as os from 'os';
+import { Response } from 'express';
 import { ClusterHeartbeatService } from './cluster-heartbeat.service';
+import { ClusterOperationsService } from './cluster-operations.service';
 import { DistributedLockService } from './distributed-lock.service';
 import { ReloaderService } from '../reloader/reloader.service';
-import { AuthorizeAdmin } from '../auth/decorators/authorize.decorator';
+import {
+  AuthorizeAdmin,
+  AuthorizeInternalNodeOrAdmin,
+} from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import {
-  buildClusterNodeUrl,
   getClusterNodeControlPlaneEndpoint,
 } from '../utils/network-utils';
 import { Audit } from '../audit/decorators/audit.decorator';
+import { AuthenticatedRequest } from '../auth/interfaces/authenticated-request.interface';
 
 @Controller('cluster')
 @UseGuards(ApiKeyGuard)
@@ -25,6 +35,7 @@ export class ClusterController {
 
   constructor(
     private readonly clusterHeartbeat: ClusterHeartbeatService,
+    private readonly clusterOperations: ClusterOperationsService,
     private readonly distributedLock: DistributedLockService,
     private readonly reloader: ReloaderService,
   ) {}
@@ -33,92 +44,84 @@ export class ClusterController {
    * Trigger a reload on this node and optionally broadcast to others
    */
   @Post('reload')
-  @AuthorizeAdmin('operator')
+  @AuthorizeInternalNodeOrAdmin('operator')
   @Audit({ action: 'cluster.reload' })
-  async reload(@Query('broadcast') broadcast: string) {
-    const shouldBroadcast = broadcast !== 'false';
-    const broadcastSummary = {
-      requested: shouldBroadcast,
-      attemptedNodes: 0,
-      skippedNodes: [] as string[],
-      authenticated: false,
-    };
+  async reload(
+    @Query('broadcast') broadcast: string,
+    @Query('operationId') operationId: string | undefined,
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    if (operationId) {
+      const localResult = await this.reloader.reloadConfig();
 
-    this.logger.log(`[Reload] Triggered. Broadcast: ${shouldBroadcast}`);
-
-    // Reload local
-    const result = await this.reloader.reloadConfig();
-
-    if (shouldBroadcast) {
-      // Get other active nodes
-      const nodes = await this.clusterHeartbeat.getActiveNodes();
-      const thisInstanceId = this.distributedLock.getInstanceId();
-
-      const otherNodes = nodes.filter((n) => n.instanceId !== thisInstanceId);
-
-      this.logger.log(
-        `[Reload] Broadcasting to ${otherNodes.length} other nodes...`,
-      );
-
-      // Get API key from environment for inter-node communication
-      const apiKey = process.env.API_KEY?.split(',')[0]?.trim();
-
-      if (!apiKey) {
-        this.logger.warn(
-          '[Reload] Skipping inter-node broadcast because no API key is configured for authenticated peer requests',
-        );
-        broadcastSummary.skippedNodes = otherNodes.map(
-          (node) => node.hostname ?? node.instanceId,
-        );
-      } else {
-        broadcastSummary.authenticated = true;
-
-        await Promise.allSettled(
-          otherNodes.map(async (node) => {
-            const url = buildClusterNodeUrl(node, '/cluster/reload', {
-              broadcast: 'false',
-            });
-
-            if (!url) {
-              const nodeLabel = node.hostname ?? node.instanceId;
-              broadcastSummary.skippedNodes.push(nodeLabel);
-              this.logger.warn(
-                `[Reload] Skipping ${nodeLabel} because it does not have a valid registered control-plane endpoint`,
-              );
-              return;
-            }
-
-            try {
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-              broadcastSummary.attemptedNodes += 1;
-              this.logger.debug(`[Reload] Calling ${url}`);
-
-              try {
-                await fetch(url, {
-                  method: 'POST',
-                  headers: {
-                    'X-API-Key': apiKey,
-                  },
-                  signal: controller.signal,
-                });
-              } finally {
-                clearTimeout(timeoutId);
-              }
-            } catch (error) {
-              this.logger.error(
-                `[Reload] Failed to broadcast to ${node.hostname} (${node.instanceId}): ${error instanceof Error ? error.message : String(error)}`,
-              );
-            }
-          }),
-        );
+      if (!localResult.ok) {
+        response.status(HttpStatus.INTERNAL_SERVER_ERROR);
+        return {
+          operationId,
+          status: 'failed',
+          node: this.getLocalNodeInfo(),
+          error: localResult.error ?? 'Reload failed',
+        };
       }
+
+      return {
+        operationId,
+        status: 'succeeded',
+        node: this.getLocalNodeInfo(),
+      };
+    }
+
+    const shouldBroadcast = broadcast !== 'false';
+    this.logger.log(`[Reload] Queued. Broadcast: ${shouldBroadcast}`);
+
+    const operation = await this.clusterOperations.enqueueBroadcastOperation({
+      operationType: 'cluster.reload',
+      broadcast: shouldBroadcast,
+      remotePath: '/cluster/reload',
+      remoteQuery: { broadcast: 'false' },
+      initiatedBy: {
+        auth: request.auth,
+        correlationId: request.auditContext?.correlationId,
+        requestPath: request.originalUrl ?? request.url ?? '/cluster/reload',
+      },
+      metadata: {
+        broadcast: shouldBroadcast,
+      },
+      localAction: async () => {
+        const localResult = await this.reloader.reloadConfig();
+        if (!localResult.ok) {
+          throw new Error(localResult.error ?? 'Reload failed');
+        }
+        return localResult;
+      },
+    });
+
+    response.status(HttpStatus.ACCEPTED);
+    return operation;
+  }
+
+  @Get('operations')
+  async getOperations(@Query('limit') limit?: string) {
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
+    return this.clusterOperations.listOperations(parsedLimit);
+  }
+
+  @Get('operations/:operationId')
+  async getOperation(@Param('operationId') operationId: string) {
+    const operation = await this.clusterOperations.getOperation(operationId);
+
+    if (!operation) {
+      return {
+        operationId,
+        found: false,
+        message: 'Cluster operation not found',
+      };
     }
 
     return {
-      local: result,
-      broadcast: broadcastSummary,
+      found: true,
+      ...operation,
     };
   }
 
@@ -356,5 +359,12 @@ export class ClusterController {
         message: `Error: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
+  }
+
+  private getLocalNodeInfo() {
+    return {
+      instanceId: this.distributedLock.getInstanceId(),
+      hostname: os.hostname(),
+    };
   }
 }

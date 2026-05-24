@@ -8,8 +8,11 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { CertificateService } from './certificate.service';
 import { UploadCertificateDto } from './dto/upload-certificate.dto';
 import { GenerateSelfSignedDto } from './dto/generate-self-signed.dto';
@@ -151,7 +154,23 @@ export class CertificateController {
   @HttpCode(HttpStatus.OK)
   @AuthorizeInternalNodeOrAdmin('platform-admin')
   @Audit({ action: 'certificate.sync' })
-  async syncCertificates() {
-    return this.certificateService.syncCertificates();
+  async syncCertificates(
+    @Query('operationId') operationId: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.certificateService.syncCertificates();
+
+    if (operationId && !result.success) {
+      response.status(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    return operationId
+      ? {
+          operationId,
+          status: result.success ? 'succeeded' : 'failed',
+          syncedCount: result.syncedCount,
+          errors: result.errors,
+        }
+      : result;
   }
 }

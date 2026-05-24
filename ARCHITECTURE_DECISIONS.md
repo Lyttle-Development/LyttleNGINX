@@ -30,6 +30,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-012 | Durable audit events for privileged and mutating operations                               | accepted | Session 9 | 2026-05-24 |
 | ADR-013 | Lease-based leader coordination with generation fencing tokens                            | accepted | Session 10 | 2026-05-24 |
 | ADR-014 | Lease-backed heartbeat and leader reconciliation                                          | accepted | Session 11 | 2026-05-24 |
+| ADR-015 | Durable cluster operation journal with per-node acknowledgements                          | accepted | Session 12 | 2026-05-24 |
 
 ---
 
@@ -498,4 +499,33 @@ Adopt the leader lease as the authoritative source of truth for cluster leadersh
 - stale-node cleanup no longer performs risky split-brain arbitration; it marks nodes stale and lets lease expiry govern failover timing
 - operator-facing leader status can explicitly report lease-owner-missing or lease-owner-not-active states, which were previously hidden behind generic “multiple leaders” logic
 - later sessions can layer cluster operations and per-node ACKs onto a cleaner lease-backed control-plane model without preserving the old DB-leader election semantics
+
+---
+
+## ADR-015 — Durable cluster operation journal with per-node acknowledgements
+
+- Status: accepted
+- Session: Session 12 — Add cluster operations and per-node ACK tracking
+- Date: 2026-05-24
+
+### Context
+
+Sessions 10 and 11 established lease-backed leader coordination, but cluster-wide mutations still returned local-only success. That meant operators could not tell whether a reload or sync had actually converged across the cluster, and later certificate/config rollout work had no durable operation record to build on.
+
+### Decision
+
+Represent cluster-wide mutations as durable operations with explicit per-node acknowledgement state:
+
+1. add new Prisma-backed `ClusterOperation` and `ClusterOperationAck` tables to persist operation intent, status, and per-node outcomes
+2. introduce a `ClusterOperationsService` that creates operation records before execution, seeds ACK rows for all targeted nodes, runs local work, and issues authenticated peer calls to collect ACKs
+3. change cluster-wide reload requests to return `202 Accepted` with an operation ID instead of a best-effort synchronous broadcast result
+4. expose operation inspection endpoints so operators can query current status and per-node ACK details
+5. route cluster-triggered certificate sync broadcasts through the same operation journal so later certificate activation work can reuse a consistent contract
+
+### Consequences
+
+- cluster-wide mutations now have durable, queryable status instead of collapsing into local-node success responses
+- operators can inspect which nodes succeeded or failed for a given operation before later Session 22 API expansion work lands
+- future sessions can layer desired-state versions, certificate activation ACK policies, and richer operational metrics onto the shared operation journal instead of inventing separate tracking paths
+- operation execution is still initiated in-process on the requesting node, so restart-resume durability and stronger internal transport guarantees remain future work
 

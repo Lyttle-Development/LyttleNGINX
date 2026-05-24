@@ -19,6 +19,7 @@ class CertificateService {}
 class TlsConfigService {}
 class CertificateBackupService {}
 class ClusterHeartbeatService {}
+class ClusterOperationsService {}
 class DistributedLockService {}
 class ReloaderService {}
 class LogsService {}
@@ -29,6 +30,7 @@ const moduleStubs = new Map([
   ['./certificate-backup.service', { CertificateBackupService }],
   ['./tls-config.service', { TlsConfigService }],
   ['./cluster-heartbeat.service', { ClusterHeartbeatService }],
+  ['./cluster-operations.service', { ClusterOperationsService }],
   ['./distributed-lock.service', { DistributedLockService }],
   ['./reloader/reloader.service', { ReloaderService }],
   ['../reloader/reloader.service', { ReloaderService }],
@@ -207,6 +209,27 @@ describe('Session 8 RBAC authorization policies', () => {
     }),
   };
 
+   const clusterOperationsServiceMock = {
+    enqueueBroadcastOperation: async () => ({
+      operationId: 'operation-1',
+      status: 'pending',
+      scope: 'cluster',
+      operationType: 'cluster.reload',
+      targetNodeCount: 1,
+      completedNodeCount: 0,
+      successfulNodeCount: 0,
+      failedNodeCount: 0,
+      createdAt: new Date('2026-05-24T00:00:00Z').toISOString(),
+      startedAt: null,
+      completedAt: null,
+      correlationId: null,
+      requestPath: '/cluster/reload',
+      operationStatusPath: '/cluster/operations/operation-1',
+    }),
+    listOperations: async () => ({ count: 0, operations: [] }),
+    getOperation: async () => null,
+  };
+
   const reloaderServiceMock = {
     reloadConfig: async () => ({ ok: true }),
   };
@@ -258,6 +281,10 @@ describe('Session 8 RBAC authorization policies', () => {
         {
           provide: ClusterHeartbeatService,
           useValue: clusterHeartbeatServiceMock,
+        },
+        {
+          provide: ClusterOperationsService,
+          useValue: clusterOperationsServiceMock,
         },
         {
           provide: DistributedLockService,

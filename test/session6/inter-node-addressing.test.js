@@ -103,8 +103,8 @@ describe('Session 6 source and manifest regressions', () => {
       path.join(repoRoot, 'src/utils/network-utils.ts'),
       'utf8',
     );
-    const clusterController = await fs.readFile(
-      path.join(repoRoot, 'src/distributed-lock/cluster.controller.ts'),
+    const clusterOperationsService = await fs.readFile(
+      path.join(repoRoot, 'src/distributed-lock/cluster-operations.service.ts'),
       'utf8',
     );
     const certificateService = await fs.readFile(
@@ -113,11 +113,10 @@ describe('Session 6 source and manifest regressions', () => {
     );
 
     assert.doesNotMatch(networkUtils, /ipify|icanhazip|ifconfig\.me/i);
-    assert.match(clusterController, /buildClusterNodeUrl/);
-    assert.match(certificateService, /buildClusterNodeUrl/);
-    assert.doesNotMatch(clusterController, /process\.env\.PORT\s*\|\|\s*3000/);
+    assert.match(clusterOperationsService, /buildClusterNodeUrl/);
+    assert.doesNotMatch(clusterOperationsService, /process\.env\.PORT\s*\|\|\s*3000/);
     assert.doesNotMatch(certificateService, /process\.env\.PORT\s*\|\|\s*3000/);
-    assert.doesNotMatch(clusterController, /http:\/\/\$\{node\.ipAddress\}/);
+    assert.doesNotMatch(clusterOperationsService, /http:\/\/\$\{node\.ipAddress\}/);
     assert.doesNotMatch(certificateService, /http:\/\/\$\{node\.ipAddress\}/);
   });
 

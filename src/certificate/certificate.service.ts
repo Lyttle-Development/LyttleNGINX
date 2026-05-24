@@ -14,8 +14,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { addDays } from 'date-fns';
 import { hashDomains, joinDomains, parseDomains } from '../utils/domain-utils';
-import { buildClusterNodeUrl } from '../utils/network-utils';
 import { AlertService } from '../alert/alert.service';
+import { ClusterOperationsService } from '../distributed-lock/cluster-operations.service';
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
 import { HealthService } from '../health/health.service';
 
@@ -43,6 +43,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   constructor(
     private prisma: PrismaService,
     private alertService: AlertService,
+    private clusterOperations: ClusterOperationsService,
     private distributedLock: DistributedLockService,
     private healthService: HealthService,
     @Inject(
@@ -1707,91 +1708,34 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
    */
   private async triggerClusterReload() {
     try {
-      if (!this.clusterHeartbeat) {
-        this.logger.warn(
-          '[Reload] ClusterHeartbeatService not available, skipping broadcast',
-        );
-        return;
-      }
+      const operation = await this.clusterOperations.enqueueBroadcastOperation({
+        operationType: 'certificate.sync',
+        broadcast: true,
+        remotePath: '/certificates/sync',
+        initiatedBy: {
+          requestPath: '/certificates/sync',
+        },
+        metadata: {
+          source: 'certificate-renewal',
+        },
+        localAction: async () => {
+          const result = await this.syncCertificates();
 
-      const nodes = await this.clusterHeartbeat.getActiveNodes();
-      const thisInstanceId = this.distributedLock.getInstanceId();
+          if (!result.success) {
+            const errorSummary = result.errors
+              .map((entry) => `${entry.domain}: ${entry.error}`)
+              .join('; ');
+            throw new Error(
+              errorSummary || 'Certificate synchronization failed',
+            );
+          }
 
-      const otherNodes = nodes.filter((n) => n.instanceId !== thisInstanceId);
-
-      if (otherNodes.length === 0) {
-        this.logger.log('[Reload] No other nodes to notify');
-        return;
-      }
+          return result;
+        },
+      });
 
       this.logger.log(
-        `[Reload] Broadcasting certificate sync to ${otherNodes.length} other nodes...`,
-      );
-
-      const apiKey = process.env.API_KEY?.split(',')[0]?.trim();
-      if (!apiKey) {
-        this.logger.warn(
-          '[Reload] Skipping remote certificate sync because no API key is configured for authenticated peer requests',
-        );
-        this.syncCertificates().catch((err) =>
-          this.logger.error(`[Reload] Local sync failed: ${err.message}`),
-        );
-        return;
-      }
-
-      // Trigger sync on other nodes using the dedicated sync endpoint
-      // Fire and forget - don't wait for responses
-      await Promise.allSettled(
-        otherNodes.map(async (node) => {
-          const url = buildClusterNodeUrl(node, '/certificates/sync');
-
-          if (!url) {
-            this.logger.warn(
-              `[Reload] Skipping ${node.hostname} (${node.instanceId}) because it does not have a valid registered control-plane endpoint`,
-            );
-            return;
-          }
-
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-            const response = await (async () => {
-              try {
-                return await fetch(url, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'X-API-Key': apiKey,
-                  },
-                  signal: controller.signal,
-                });
-              } finally {
-                clearTimeout(timeoutId);
-              }
-            })();
-
-            if (response.ok) {
-              const result = await response.json();
-              this.logger.debug(
-                `[Reload] Synced ${result.syncedCount || 0} cert(s) on ${node.hostname} (${node.instanceId})`,
-              );
-            } else {
-              this.logger.warn(
-                `[Reload] Sync failed on ${node.hostname}: ${response.statusText}`,
-              );
-            }
-          } catch (e) {
-            this.logger.debug(
-              `[Reload] Failed to notify ${node.hostname}: ${e instanceof Error ? e.message : String(e)}`,
-            );
-          }
-        }),
-      );
-
-      // Also trigger immediate sync on this node
-      this.syncCertificates().catch((err) =>
-        this.logger.error(`[Reload] Local sync failed: ${err.message}`),
+        `[Reload] Queued certificate sync cluster operation ${operation.operationId}`,
       );
     } catch (error) {
       this.logger.warn(

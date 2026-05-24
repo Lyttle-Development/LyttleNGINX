@@ -19,6 +19,7 @@ const { AuditService } = require('../../src/audit/audit.service');
 
 class CertificateService {}
 class ClusterHeartbeatService {}
+class ClusterOperationsService {}
 class DistributedLockService {}
 class ReloaderService {}
 
@@ -26,6 +27,7 @@ const originalLoad = Module._load;
 const moduleStubs = new Map([
   ['./certificate.service', { CertificateService }],
   ['./cluster-heartbeat.service', { ClusterHeartbeatService }],
+  ['./cluster-operations.service', { ClusterOperationsService }],
   ['./distributed-lock.service', { DistributedLockService }],
   ['./reloader/reloader.service', { ReloaderService }],
   ['../reloader/reloader.service', { ReloaderService }],
@@ -218,6 +220,33 @@ describe('Session 9 audit logging', () => {
     },
   };
 
+  const clusterOperationsServiceMock = {
+    async enqueueBroadcastOperation() {
+      return {
+        operationId: 'operation-1',
+        status: 'pending',
+        scope: 'cluster',
+        operationType: 'cluster.reload',
+        targetNodeCount: 1,
+        completedNodeCount: 0,
+        successfulNodeCount: 0,
+        failedNodeCount: 0,
+        createdAt: new Date('2026-05-24T00:00:00Z').toISOString(),
+        startedAt: null,
+        completedAt: null,
+        correlationId: null,
+        requestPath: '/cluster/reload',
+        operationStatusPath: '/cluster/operations/operation-1',
+      };
+    },
+    async listOperations() {
+      return { count: 0, operations: [] };
+    },
+    async getOperation() {
+      return null;
+    },
+  };
+
   const reloaderServiceMock = {
     async reloadConfig() {
       return { ok: true };
@@ -261,6 +290,10 @@ describe('Session 9 audit logging', () => {
         {
           provide: ClusterHeartbeatService,
           useValue: clusterHeartbeatServiceMock,
+        },
+        {
+          provide: ClusterOperationsService,
+          useValue: clusterOperationsServiceMock,
         },
         {
           provide: DistributedLockService,

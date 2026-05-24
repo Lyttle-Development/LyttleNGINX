@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 3 — Cluster coordination redesign
-- Most recently completed session: Session 11 — Move heartbeat and leader flows onto leases
-- Next recommended session from the roadmap: Session 12 — Add cluster operations and per-node ACK tracking
+- Most recently completed session: Session 12 — Add cluster operations and per-node ACK tracking
+- Next recommended session from the roadmap: Session 13 — Implement staged NGINX config generation and atomic activation
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -422,13 +422,42 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 12 — Add cluster operations and per-node ACK tracking
 
-- Status: not started
+- Status: done
 - Objective: represent cluster-wide mutations as tracked async operations
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: cluster-wide actions still return local-only success today
-- Follow-up sessions: Session 17, Session 22, Session 25
-- Notes: operation IDs and node ACK state remain open
+- Files touched:
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20260524182000_session12_cluster_operations/migration.sql`
+  - `src/distributed-lock/cluster-operations.service.ts`
+  - `src/distributed-lock/cluster.controller.ts`
+  - `src/distributed-lock/distributed-lock.module.ts`
+  - `src/certificate/certificate.controller.ts`
+  - `src/certificate/certificate.service.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session6/inter-node-addressing.test.js`
+  - `test/session8/rbac-authorization.test.js`
+  - `test/session9/audit-logging.test.js`
+  - `test/session12/cluster-operations.test.js`
+- Tests added/updated:
+  - added `test/session12/cluster-operations.test.js` to verify successful cluster-wide operation tracking and remote ACK failure handling when peer auth is unavailable
+  - updated the Session 6 regression to assert peer URL construction now lives in the new cluster-operations layer instead of the controller directly
+  - updated Session 8 and Session 9 controller harnesses so `ClusterController` still instantiates with the new cluster-operations dependency
+  - re-ran `npm test`, `npm run typecheck`, and `npm run build` after regenerating the Prisma client for the new operation models
+- Risks:
+  - cluster operations are now durable and queryable, but execution is still process-local in-memory orchestration, so restart-resume semantics remain future work
+  - remote node ACKs still rely on authenticated HTTP responses rather than mTLS-backed service identity or a separate ACK callback channel
+  - only the current reload and certificate-sync workflows use the operation journal so far; additional cluster-wide mutations still need to adopt the same contract in later sessions
+- Follow-up sessions:
+  - Session 13 — implement staged NGINX config generation and atomic activation
+  - Session 17 — rework cluster certificate distribution and activation
+  - Session 22 — add cluster operations and node-status admin APIs
+  - Session 25 — expand metrics and alerting
+- Notes:
+  - added durable `ClusterOperation` and `ClusterOperationAck` tables so cluster-wide mutations can be tracked independently from lease state
+  - introduced `ClusterOperationsService` to create operation records, pre-register per-node ACK rows, execute local and remote work, and summarize final success/partial-failure state
+  - changed `POST /cluster/reload` to return `202 Accepted` with an operation ID and added `GET /cluster/operations` plus `GET /cluster/operations/:operationId` for inspection
+  - updated cluster-triggered certificate sync broadcasts to use the same operation journal, and the per-node sync endpoint now returns HTTP 500 for tracked failures so remote ACK state is accurate
 
 ---
 
