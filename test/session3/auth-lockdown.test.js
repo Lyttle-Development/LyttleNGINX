@@ -11,6 +11,9 @@ const { Test } = require('@nestjs/testing');
 const { AuthController } = require('../../src/auth/auth.controller');
 const { AuthService } = require('../../src/auth/auth.service');
 const { ApiKeyGuard } = require('../../src/auth/guards/api-key.guard');
+const {
+  AuthorizationGuard,
+} = require('../../src/auth/guards/authorization.guard');
 
 class CertificateService {}
 class TlsConfigService {}
@@ -148,6 +151,10 @@ describe('Session 3 endpoint lockdown', () => {
         {
           provide: APP_GUARD,
           useClass: ApiKeyGuard,
+        },
+        {
+          provide: APP_GUARD,
+          useClass: AuthorizationGuard,
         },
         {
           provide: CertificateService,

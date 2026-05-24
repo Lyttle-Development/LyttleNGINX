@@ -12,6 +12,7 @@ import {
   verify,
 } from 'crypto';
 import { AuthCapabilities, AuthIdentity, ActorType } from './types/auth-identity';
+import { AUTH_ROLES, AUTH_ROLE_HIERARCHY } from './types/auth-role';
 
 @Injectable()
 export class AuthService {
@@ -121,6 +122,10 @@ export class AuthService {
       issuer: this.jwtIssuer,
       audience: this.jwtAudience,
       supportedBearerAlgorithms: this.getSupportedBearerAlgorithms(),
+      supportedRoles: [...AUTH_ROLES],
+      roleHierarchy: { ...AUTH_ROLE_HIERARCHY },
+      defaultAdminRoles: [...this.defaultAdminRoles],
+      defaultAdminScopes: [...this.defaultAdminScopes],
     };
   }
 

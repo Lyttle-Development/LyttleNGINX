@@ -1,6 +1,9 @@
+import { AuthRole } from './auth-role';
+
 export type AuthMethod = 'api-key' | 'bearer-token';
 
 export type ActorType = 'admin' | 'internal-node';
+
 
 export interface AuthIdentity {
   id: string;
@@ -29,4 +32,8 @@ export interface AuthCapabilities {
   issuer?: string;
   audience?: string;
   supportedBearerAlgorithms: string[];
+  supportedRoles: AuthRole[];
+  roleHierarchy: Record<AuthRole, AuthRole[]>;
+  defaultAdminRoles: string[];
+  defaultAdminScopes: string[];
 }

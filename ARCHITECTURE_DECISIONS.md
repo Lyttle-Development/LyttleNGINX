@@ -26,6 +26,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-008 | Fail-fast container supervision and restart-friendly deployment policies | accepted | Session 5 | 2026-05-24 |
 | ADR-009 | Explicit advertised control-plane endpoints for cluster communication | accepted | Session 6 | 2026-05-24 |
 | ADR-010 | Identity-aware auth foundation with bearer-token support and legacy API-key compatibility | accepted | Session 7 | 2026-05-24 |
+| ADR-011 | Explicit RBAC policies with a global authorization guard | accepted | Session 8 | 2026-05-24 |
 
 ---
 
@@ -351,4 +352,50 @@ Adopt an identity-aware authentication foundation with the following properties:
 - the codebase now has a real request identity object that later sessions can use for RBAC decisions, audit logging, and internal-node policy separation
 - operators can begin migrating clients from raw API keys to short-lived bearer tokens without breaking existing integrations immediately
 - bearer-token support is intentionally a foundation, not a full security model: Session 8 still needs RBAC, Session 9 still needs audit logging, and later sessions still need stronger internal transport security such as mTLS
+
+---
+
+## ADR-011 — Explicit RBAC policies with a global authorization guard
+
+- Status: accepted
+- Session: Session 8 — Add RBAC and authorization policies
+- Date: 2026-05-24
+
+### Context
+
+Session 7 introduced stable request identity, but the API still treated most authenticated actors equivalently. The production-readiness assessment explicitly called for RBAC roles such as `viewer`, `operator`, `security-admin`, `platform-admin`, and `internal-node`, plus an explicit permission matrix for all endpoints.
+
+Without a second authorization layer, any authenticated caller with a valid credential could still reach sensitive backup, cluster-maintenance, certificate, and TLS-hardening routes.
+
+### Decision
+
+Adopt an explicit RBAC model enforced by a global authorization guard:
+
+1. keep the existing authenticated-by-default posture from Session 3 and identity resolution from Session 7
+2. add a second global guard that evaluates authorization metadata on every non-public route
+3. require protected routes to declare an explicit authorization policy; missing policy metadata is treated as a configuration error and denied
+4. define the initial RBAC catalog as:
+   - `viewer`
+   - `operator`
+   - `security-admin`
+   - `platform-admin`
+   - `internal-node`
+5. adopt the following initial hierarchy:
+   - `platform-admin` implies `security-admin`, `operator`, and `viewer`
+   - `security-admin` implies `viewer`
+   - `operator` implies `viewer`
+   - `internal-node` remains separate from admin roles
+6. map the current API surface explicitly, including:
+   - read-only inspection endpoints → `viewer`
+   - runtime operational actions such as reload and renew → `operator`
+   - certificate/key, backup, export/import, and TLS hardening actions → `security-admin`
+   - cluster leader-management and break-glass maintenance endpoints → `platform-admin`
+   - internal certificate sync → `internal-node` or `platform-admin` for operator fallback during migration
+7. preserve temporary legacy API-key compatibility by continuing to map configured API keys to default admin roles from env configuration
+
+### Consequences
+
+- the current endpoint permission matrix is now explicit in code, enforceable at runtime, and regression-tested
+- later sessions can add audit logging, service accounts, and finer-grained operational APIs without first reworking the basic authorization model again
+- legacy API keys remain a compatibility bridge rather than a destination state; future security work should continue pushing operators toward short-lived bearer identities and narrower role assignment
 

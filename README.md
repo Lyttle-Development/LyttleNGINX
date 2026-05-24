@@ -10,6 +10,7 @@
   <img src="https://img.shields.io/badge/session%205-complete-blue" alt="Session 5" />
   <img src="https://img.shields.io/badge/session%206-complete-blue" alt="Session 6" />
   <img src="https://img.shields.io/badge/session%207-complete-blue" alt="Session 7" />
+  <img src="https://img.shields.io/badge/session%208-complete-blue" alt="Session 8" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -24,8 +25,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 2 in progress
-- **Completed in Sessions 1-7 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, and an identity-aware auth foundation with JWT bearer-token support plus temporary legacy API-key compatibility
-- **Next recommended implementation session:** Session 8 — add RBAC and authorization policies
+- **Completed in Sessions 1-8 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, and explicit RBAC authorization policies across the current API surface
+- **Next recommended implementation session:** Session 9 — add audit logging for privileged and mutating operations
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -58,7 +59,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-7 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, and the new identity-aware auth foundation. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-8 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, and RBAC authorization policy enforcement. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -363,9 +364,9 @@ npm run prisma:migrate
 
 ## 📚 API Documentation
 
-### Session 3-7 access policy
+### Session 3-8 access policy
 
-As of Sessions 3-7, the control-plane API is **authenticated by default**, with a small public probe allowlist and an identity-aware authentication layer.
+As of Sessions 3-8, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, and explicit RBAC authorization policies on protected endpoints.
 
 The current explicit public allowlist is limited to:
 
@@ -387,12 +388,27 @@ All other endpoints should be treated as admin or internal control-plane endpoin
 - `X-API-Key: <key>`
 - `Authorization: ApiKey <key>`
 
-Session 7 introduces a JWT bearer-token foundation that attaches actor identity to each authenticated request. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
+Session 7 introduced a JWT bearer-token foundation that attaches actor identity to each authenticated request. Session 8 builds on that with explicit RBAC policies. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
 
 Current identity model:
 
 - `admin` actors for operator/API clients
 - `internal-node` actors for trusted inter-node calls
+
+Current RBAC roles:
+
+- `viewer` — read-only admin visibility into certificates, cluster state, TLS recommendations, and auth configuration
+- `operator` — operational actions such as config reloads, certificate renewals, and log access
+- `security-admin` — certificate/key lifecycle, backup, export/import, and TLS hardening actions
+- `platform-admin` — full administrative access, including cluster-leadership and break-glass maintenance flows
+- `internal-node` — reserved for trusted inter-node identities; currently used for internal certificate sync and future cluster control-plane policies
+
+Role hierarchy:
+
+- `platform-admin` ⟶ `security-admin`, `operator`, `viewer`
+- `security-admin` ⟶ `viewer`
+- `operator` ⟶ `viewer`
+- `internal-node` is separate and does not inherit admin roles
 
 The resolved identity now carries:
 
@@ -410,30 +426,42 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 - last successful config apply
 - last successful certificate sync
 
+### Current authorization matrix
+
+| Role / actor | Intended scope |
+| --- | --- |
+| Public | health probes, metrics, ACME challenge serving |
+| `viewer` | read-only admin inspection endpoints |
+| `operator` | runtime operations such as reload, renew, and log inspection |
+| `security-admin` | certificate/key management, backup/export/import, TLS hardening |
+| `platform-admin` | full admin access including cluster maintenance endpoints |
+| `internal-node` | internal certificate sync and future node-only control-plane actions |
+
 ### Certificate Endpoints
 
-| Method | Endpoint                             | Description                       | Auth     |
-|--------|--------------------------------------|-----------------------------------|----------|
-| GET    | `/certificates`                      | List all certificates with status | Required |
-| GET    | `/certificates/:id`                  | Get certificate details           | Required |
-| POST   | `/certificates/upload`               | Upload custom certificate         | Required |
-| POST   | `/certificates/generate-self-signed` | Generate self-signed cert         | Required |
-| POST   | `/certificates/renew/:id`            | Renew specific certificate        | Required |
-| POST   | `/certificates/renew-all`            | Renew all certificates            | Required |
-| DELETE | `/certificates/:id`                  | Delete certificate                | Required |
-| GET    | `/certificates/validate/:domain`     | Validate domain                   | Required |
-| POST   | `/certificates/sync`                 | Trigger certificate sync          | Required |
+| Method | Endpoint                             | Description                       | Required role / actor |
+|--------|--------------------------------------|-----------------------------------|-----------------------|
+| GET    | `/certificates`                      | List all certificates with status | `viewer` |
+| GET    | `/certificates/:id`                  | Get certificate details           | `viewer` |
+| POST   | `/certificates/upload`               | Upload custom certificate         | `security-admin` |
+| POST   | `/certificates/generate-self-signed` | Generate self-signed cert         | `security-admin` |
+| POST   | `/certificates/renew/:id`            | Renew specific certificate        | `operator` |
+| POST   | `/certificates/renew-all`            | Renew all certificates            | `operator` |
+| DELETE | `/certificates/:id`                  | Delete certificate                | `security-admin` |
+| GET    | `/certificates/validate/:domain`     | Validate domain                   | `viewer` |
+| GET    | `/certificates/health/ocsp-check`    | Inspect OCSP support status       | `viewer` |
+| POST   | `/certificates/sync`                 | Trigger certificate sync          | `internal-node` or `platform-admin` |
 
 ### Backup Endpoints
 
-| Method | Endpoint                          | Description         | Auth     |
-|--------|-----------------------------------|---------------------|----------|
-| POST   | `/certificates/backup`            | Create backup       | Required |
-| GET    | `/certificates/backup`            | List backups        | Required |
-| GET    | `/certificates/backup/:filename`  | Download backup     | Required |
-| DELETE | `/certificates/backup/:filename`  | Delete backup       | Required |
-| POST   | `/certificates/backup/import`     | Import certificates | Required |
-| GET    | `/certificates/backup/export/:id` | Export certificate  | Required |
+| Method | Endpoint                          | Description         | Required role |
+|--------|-----------------------------------|---------------------|---------------|
+| POST   | `/certificates/backup`            | Create backup       | `security-admin` |
+| GET    | `/certificates/backup`            | List backups        | `security-admin` |
+| GET    | `/certificates/backup/:filename`  | Download backup     | `security-admin` |
+| DELETE | `/certificates/backup/:filename`  | Delete backup       | `security-admin` |
+| POST   | `/certificates/backup/import`     | Import certificates | `security-admin` |
+| GET    | `/certificates/backup/export/:id` | Export certificate  | `security-admin` |
 
 ### Metrics Endpoints
 
@@ -444,34 +472,34 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 
 ### TLS Configuration Endpoints
 
-| Method | Endpoint                          | Description         | Auth     |
-|--------|-----------------------------------|---------------------|----------|
-| GET    | `/tls/config/:domain`             | Get TLS config      | Required |
-| GET    | `/tls/test/:domain`               | Test TLS connection | Required |
-| POST   | `/tls/dhparam`                    | Generate DH params  | Required |
-| GET    | `/tls/dhparam/status`             | Check DH params     | Required |
-| POST   | `/tls/certificate/info`           | Parse certificate   | Required |
-| POST   | `/tls/certificate/validate-chain` | Validate chain      | Required |
+| Method | Endpoint                          | Description         | Required role |
+|--------|-----------------------------------|---------------------|---------------|
+| GET    | `/tls/config/:domain`             | Get TLS config      | `viewer` |
+| GET    | `/tls/test/:domain`               | Test TLS connection | `viewer` |
+| POST   | `/tls/dhparam`                    | Generate DH params  | `security-admin` |
+| GET    | `/tls/dhparam/status`             | Check DH params     | `viewer` |
+| POST   | `/tls/certificate/info`           | Parse certificate   | `security-admin` |
+| POST   | `/tls/certificate/validate-chain` | Validate chain      | `security-admin` |
 
 ### Authentication Endpoints
 
-| Method | Endpoint       | Description                                                       | Auth     |
-|--------|----------------|-------------------------------------------------------------------|----------|
-| GET    | `/auth/status` | Check authentication status and return the resolved actor identity | Required |
-| GET    | `/auth/info`   | Get auth capability/configuration info                            | Required |
-| GET    | `/auth/me`     | Inspect the current request identity                              | Required |
-| POST   | `/auth/token`  | Exchange a legacy API-key-authenticated request for a bearer token | Required |
+| Method | Endpoint       | Description                                                       | Required role / actor |
+|--------|----------------|-------------------------------------------------------------------|-----------------------|
+| GET    | `/auth/status` | Check authentication status and return the resolved actor identity | any authenticated `admin` or `internal-node` |
+| GET    | `/auth/info`   | Get auth capability/configuration info                            | `viewer` |
+| GET    | `/auth/me`     | Inspect the current request identity                              | any authenticated `admin` or `internal-node` |
+| POST   | `/auth/token`  | Exchange a legacy API-key-authenticated request for a bearer token | any authenticated `admin` |
 
 ### Auth configuration
 
-Session 7 adds a JWT/OIDC-compatible claim foundation. The most relevant auth env vars are:
+Sessions 7-8 add a JWT/OIDC-compatible claim foundation plus RBAC. The most relevant auth env vars are:
 
 - `API_KEY` — temporary legacy compatibility credentials
 - `AUTH_JWT_SECRET` — enables locally signed HS256 bearer tokens and `/auth/token`
 - `AUTH_JWT_PUBLIC_KEY` — optional RS256 verification key for externally issued bearer tokens
 - `AUTH_JWT_ISSUER` — expected token issuer and local token issuer
 - `AUTH_JWT_AUDIENCE` — expected token audience and local token audience
-- `AUTH_DEFAULT_ADMIN_ROLES` / `AUTH_DEFAULT_ADMIN_SCOPES` — bridge claims applied to legacy API keys until Session 8 lands
+- `AUTH_DEFAULT_ADMIN_ROLES` / `AUTH_DEFAULT_ADMIN_SCOPES` — bridge claims applied to legacy API keys during the migration from shared keys to bearer-token identities
 
 Example migration flow:
 
@@ -495,7 +523,7 @@ curl http://localhost:3000/auth/me \
 | GET    | `/health/ready`   | Readiness probe; returns 503 when DB/NGINX/config/cert state is unhealthy | Public   |
 | GET    | `/health`         | Legacy alias for `/health/live`                              | Public   |
 | GET    | `/ready`          | Legacy alias for `/health/ready`                             | Public   |
-| POST   | `/reload`         | Reload NGINX config                                          | Required |
+| POST   | `/reload`         | Reload NGINX config                                          | `operator` |
 
 ### ACME Challenge Endpoint
 
@@ -727,8 +755,8 @@ docker stack deploy -c docker-compose.swarm.yml lyttlenginx
 
 - global mode is the intended target architecture
 - Session 6 replaces public-IP autodiscovery with explicit `CLUSTER_CONTROL_ADDRESS` / `CLUSTER_CONTROL_PORT` registration
-- Session 7 adds request identity plus bearer-token support, but internal-node traffic is still plain HTTP and mTLS remains future work
-- the current assessment still identifies remaining P0/P1 blockers in RBAC depth, certificate lifecycle hardening, internal-traffic security, and transactional config rollout even after the completed health, auto-recovery, inter-node addressing, and auth-foundation sessions
+- Sessions 7-8 add request identity plus explicit RBAC, but internal-node traffic is still plain HTTP and mTLS remains future work
+- the current assessment still identifies remaining P0/P1 blockers in audit logging, certificate lifecycle hardening, internal-traffic security, and transactional config rollout even after the completed health, auto-recovery, inter-node addressing, auth-foundation, and RBAC sessions
 - use the swarm manifest for evaluation and development feedback, not as a final production deployment contract yet
 
 The current container model is intentionally **fail-fast**: if either the NestJS control-plane process or the foreground NGINX master exits unexpectedly, the container exits non-zero so Docker or Swarm can restart it instead of leaving the node wedged.

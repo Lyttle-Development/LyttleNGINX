@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 2 — Security model foundation
-- Most recently completed session: Session 7 — Introduce a real auth foundation
-- Next recommended session from the roadmap: Session 8 — Add RBAC and authorization policies
+- Most recently completed session: Session 8 — Add RBAC and authorization policies
+- Next recommended session from the roadmap: Session 9 — Add audit logging for privileged and mutating operations
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -244,13 +244,49 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - `POST /auth/token` now provides a migration bridge from API-key clients to short-lived bearer tokens when `AUTH_JWT_SECRET` is configured
 
 ## Session 8 — Add RBAC and authorization policies
-- Status: not started
+- Status: done
 - Objective: make endpoint permissions explicit and enforceable
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: sensitive actions are not yet constrained by role
-- Follow-up sessions: Session 9, Session 21, Session 22, Session 23
-- Notes: permission matrix should become testable and documented
+- Files touched:
+  - `src/auth/auth.module.ts`
+  - `src/auth/auth.service.ts`
+  - `src/auth/auth.controller.ts`
+  - `src/auth/decorators/authorize.decorator.ts`
+  - `src/auth/guards/authorization.guard.ts`
+  - `src/auth/types/auth-identity.ts`
+  - `src/auth/types/auth-role.ts`
+  - `src/auth/types/authorization-policy.ts`
+  - `src/app.controller.ts`
+  - `src/logs/logs.controller.ts`
+  - `src/certificate/certificate.controller.ts`
+  - `src/certificate/backup.controller.ts`
+  - `src/certificate/tls.controller.ts`
+  - `src/certificate/certificate.module.ts`
+  - `src/distributed-lock/cluster.controller.ts`
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session3/auth-lockdown.test.js`
+  - `test/session7/auth-foundation.test.js`
+  - `test/session8/rbac-authorization.test.js`
+- Tests added/updated:
+  - added `test/session8/rbac-authorization.test.js` to verify viewer/operator/security-admin/platform-admin/internal-node authorization behavior and role hierarchy
+  - updated the Session 3 and Session 7 auth regression harnesses to include the new global authorization guard
+  - verified `npm test` passes with the full Session 3-8 regression suite after the RBAC changes landed
+- Risks:
+  - RBAC is now explicit for the current route surface, but it still relies on bearer-token/API-key claims rather than centralized user/service-account persistence
+  - legacy API keys still map to broad admin roles for migration compatibility; Session 23 should narrow rotation and break-glass workflows further
+  - internal-node traffic now has a distinct authorization path, but transport security remains HTTP until later mTLS work
+- Follow-up sessions:
+  - Session 9 — add audit logging for privileged and mutating operations
+  - Session 21 — add proxy management API
+  - Session 22 — add cluster operations and node-status admin APIs
+  - Session 23 — add security administration APIs
+- Notes:
+  - added a second global guard so protected endpoints must now have an explicit authorization policy in addition to authentication
+  - defined the initial role catalog and hierarchy: `viewer`, `operator`, `security-admin`, `platform-admin`, and `internal-node`
+  - mapped the current API surface to explicit role requirements and documented that matrix in `README.md`
+  - fixed controller registration order so `/certificates/backup` resolves to the intended backup controller instead of being shadowed by `/certificates/:id`
 
 ## Session 9 — Add audit logging for privileged and mutating operations
 - Status: not started

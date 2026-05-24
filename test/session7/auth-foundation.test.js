@@ -10,6 +10,9 @@ const { Test } = require('@nestjs/testing');
 const { AuthController } = require('../../src/auth/auth.controller');
 const { AuthService } = require('../../src/auth/auth.service');
 const { ApiKeyGuard } = require('../../src/auth/guards/api-key.guard');
+const {
+  AuthorizationGuard,
+} = require('../../src/auth/guards/authorization.guard');
 
 function signHs256Token(payload, secret) {
   const header = { alg: 'HS256', typ: 'JWT' };
@@ -52,6 +55,10 @@ describe('Session 7 auth foundation', () => {
         {
           provide: APP_GUARD,
           useClass: ApiKeyGuard,
+        },
+        {
+          provide: APP_GUARD,
+          useClass: AuthorizationGuard,
         },
       ],
     }).compile();

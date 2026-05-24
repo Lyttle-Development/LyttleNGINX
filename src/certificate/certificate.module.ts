@@ -17,9 +17,9 @@ import { HealthModule } from '../health/health.module';
 @Module({
   imports: [ScheduleModule.forRoot(), AlertModule, AuthModule, HealthModule],
   controllers: [
+    BackupController,
     CertificateController,
     TlsController,
-    BackupController,
     AcmeController,
   ],
   providers: [

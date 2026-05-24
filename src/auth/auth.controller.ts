@@ -8,11 +8,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { Authorize, AuthorizeAdmin } from './decorators/authorize.decorator';
 import { ApiKeyGuard } from './guards/api-key.guard';
 import { CurrentIdentity } from './decorators/current-identity.decorator';
 import { AuthIdentity } from './types/auth-identity';
 
 @Controller('auth')
+@AuthorizeAdmin('viewer')
 export class AuthController {
   private readonly authService: AuthService;
 
@@ -22,6 +24,7 @@ export class AuthController {
 
   @Get('status')
   @UseGuards(ApiKeyGuard)
+  @Authorize({ actorTypes: ['admin'] }, { actorTypes: ['internal-node'] })
   async getStatus(@CurrentIdentity() identity: AuthIdentity) {
     return {
       authenticated: true,
@@ -36,6 +39,7 @@ export class AuthController {
   }
 
   @Get('me')
+  @Authorize({ actorTypes: ['admin'] }, { actorTypes: ['internal-node'] })
   async getCurrentIdentity(@CurrentIdentity() identity: AuthIdentity) {
     return {
       authenticated: true,
@@ -45,6 +49,7 @@ export class AuthController {
 
   @Post('token')
   @HttpCode(HttpStatus.OK)
+  @Authorize({ actorTypes: ['admin'] })
   async exchangeLegacyApiKey(@CurrentIdentity() identity: AuthIdentity) {
     if (identity.authMethod !== 'api-key') {
       throw new BadRequestException(

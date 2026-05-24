@@ -14,9 +14,14 @@ import { CertificateService } from './certificate.service';
 import { UploadCertificateDto } from './dto/upload-certificate.dto';
 import { GenerateSelfSignedDto } from './dto/generate-self-signed.dto';
 import { CertificateInfoDto } from './dto/certificate-info.dto';
+import {
+  AuthorizeAdmin,
+  AuthorizeInternalNodeOrAdmin,
+} from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 
 @Controller('certificates')
+@AuthorizeAdmin('viewer')
 export class CertificateController {
   constructor(private readonly certificateService: CertificateService) {}
 
@@ -32,6 +37,7 @@ export class CertificateController {
 
   @Post('upload')
   @HttpCode(HttpStatus.CREATED)
+  @AuthorizeAdmin('security-admin')
   async uploadCertificate(@Body() dto: UploadCertificateDto) {
     try {
       return await this.certificateService.uploadCertificate(dto);
@@ -44,6 +50,7 @@ export class CertificateController {
 
   @Post('generate-self-signed')
   @HttpCode(HttpStatus.CREATED)
+  @AuthorizeAdmin('security-admin')
   async generateSelfSigned(@Body() dto: GenerateSelfSignedDto) {
     try {
       return await this.certificateService.generateSelfSignedCertificate(
@@ -61,6 +68,7 @@ export class CertificateController {
   @Post('renew/:id')
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
+  @AuthorizeAdmin('operator')
   async renewCertificate(@Param('id') id: string) {
     return this.certificateService.renewCertificateById(id);
   }
@@ -68,6 +76,7 @@ export class CertificateController {
   @Post('renew-all')
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
+  @AuthorizeAdmin('operator')
   async renewAllCertificates() {
     await this.certificateService.renewAllCertificates();
     return { message: 'Certificate renewal process initiated' };
@@ -76,6 +85,7 @@ export class CertificateController {
   @Delete(':id')
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @AuthorizeAdmin('security-admin')
   async deleteCertificate(@Param('id') id: string) {
     await this.certificateService.deleteCertificate(id);
   }
@@ -97,6 +107,7 @@ export class CertificateController {
    */
   @Post('sync')
   @HttpCode(HttpStatus.OK)
+  @AuthorizeInternalNodeOrAdmin('platform-admin')
   async syncCertificates() {
     return this.certificateService.syncCertificates();
   }

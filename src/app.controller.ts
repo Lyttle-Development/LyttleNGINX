@@ -1,6 +1,14 @@
-import { Controller, Post, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { ReloaderService } from './reloader/reloader.service';
+import { AuthorizeAdmin } from './auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from './auth/guards/api-key.guard';
 
 @Controller()
@@ -8,7 +16,9 @@ export class AppController {
   constructor(private reloader: ReloaderService) {}
 
   @Post('reload')
+  @HttpCode(HttpStatus.OK)
   @UseGuards(ApiKeyGuard)
+  @AuthorizeAdmin('operator')
   async reload(@Res() res: Response) {
     const result = await this.reloader.reloadConfig();
     if (result.ok) {

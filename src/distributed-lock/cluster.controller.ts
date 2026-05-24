@@ -9,6 +9,7 @@ import {
 import { ClusterHeartbeatService } from './cluster-heartbeat.service';
 import { DistributedLockService } from './distributed-lock.service';
 import { ReloaderService } from '../reloader/reloader.service';
+import { AuthorizeAdmin } from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import {
   buildClusterNodeUrl,
@@ -17,6 +18,7 @@ import {
 
 @Controller('cluster')
 @UseGuards(ApiKeyGuard)
+@AuthorizeAdmin('viewer')
 export class ClusterController {
   private readonly logger = new Logger(ClusterController.name);
 
@@ -30,6 +32,7 @@ export class ClusterController {
    * Trigger a reload on this node and optionally broadcast to others
    */
   @Post('reload')
+  @AuthorizeAdmin('operator')
   async reload(@Query('broadcast') broadcast: string) {
     const shouldBroadcast = broadcast !== 'false';
     const broadcastSummary = {
@@ -230,6 +233,7 @@ export class ClusterController {
    * Manually trigger cleanup of stale nodes
    */
   @Get('admin/cleanup')
+  @AuthorizeAdmin('platform-admin')
   async manualCleanup() {
     return this.clusterHeartbeat.manualCleanup();
   }
@@ -238,6 +242,7 @@ export class ClusterController {
    * Manually enforce single leader (fixes split-brain)
    */
   @Get('admin/enforce-leader')
+  @AuthorizeAdmin('platform-admin')
   async manualEnforceLeader() {
     return this.clusterHeartbeat.manualEnforceLeader();
   }
@@ -246,6 +251,7 @@ export class ClusterController {
    * Check and ensure leader exists (auto-elects if needed)
    */
   @Get('admin/ensure-leader')
+  @AuthorizeAdmin('platform-admin')
   async ensureLeader() {
     try {
       await this.clusterHeartbeat.ensureLeaderExists();
@@ -275,6 +281,7 @@ export class ClusterController {
    * Try to make this node the leader
    */
   @Get('admin/become-leader')
+  @AuthorizeAdmin('platform-admin')
   async tryBecomeLeader() {
     try {
       const success = await this.clusterHeartbeat.tryBecomeLeader();

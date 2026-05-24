@@ -13,9 +13,11 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { CertificateBackupService } from './certificate-backup.service';
+import { AuthorizeAdmin } from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 
 @Controller('certificates/backup')
+@AuthorizeAdmin('security-admin')
 export class BackupController {
   constructor(private readonly backupService: CertificateBackupService) {}
 

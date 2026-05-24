@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { ApiKeyGuard } from './guards/api-key.guard';
+import { AuthorizationGuard } from './guards/authorization.guard';
 
 @Module({
   imports: [],
@@ -12,6 +13,10 @@ import { ApiKeyGuard } from './guards/api-key.guard';
     {
       provide: APP_GUARD,
       useClass: ApiKeyGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: AuthorizationGuard,
     },
   ],
   exports: [AuthService],
