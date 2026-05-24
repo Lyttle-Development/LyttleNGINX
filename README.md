@@ -19,6 +19,7 @@
   <img src="https://img.shields.io/badge/session%2014-complete-blue" alt="Session 14" />
   <img src="https://img.shields.io/badge/session%2015-complete-blue" alt="Session 15" />
   <img src="https://img.shields.io/badge/session%2016-complete-blue" alt="Session 16" />
+  <img src="https://img.shields.io/badge/session%2017-complete-blue" alt="Session 17" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -33,8 +34,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 5 in progress
-- **Completed in Sessions 1-16 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, and durable certificate-order state tracking with artifact history and retryable workflows
-- **Next recommended implementation session:** Session 17 — rework cluster certificate distribution and activation
+- **Completed in Sessions 1-17 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, and ACK-backed cluster certificate activation with rollback to prior artifact versions
+- **Next recommended implementation session:** Session 18 — harden the ACME strategy for clustered production
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -67,7 +68,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-16 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, guarded `nginx_custom_code` validation, strict domain/process safety, and durable certificate-order lifecycle tracking. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-17 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, guarded `nginx_custom_code` validation, strict domain/process safety, durable certificate-order lifecycle tracking, and ACK-backed certificate distribution plus rollback behavior. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -80,6 +81,8 @@ npm -v    # expected: 11.15.0
 - **Self-Signed Certificates** - One-click generation for development
 - **Certificate Validation** - Automatic cert/key pair validation
 - **Multi-Domain Support** - SAN (Subject Alternative Names) support
+- **Cluster-Aware Certificate Activation** - Issuance now rolls out a specific artifact across nodes and waits for tracked ACKs before marking it active
+- **Certificate Rollback** - Operators can roll back to the prior activated artifact version when a rollout must be reverted
 - **Certificate Backup/Restore** - Complete backup and recovery solution
 
 ### 🚀 NGINX Proxy Management

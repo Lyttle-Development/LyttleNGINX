@@ -153,6 +153,20 @@ export class CertificateController {
     }
   }
 
+  @Post(':id/rollback')
+  @HttpCode(HttpStatus.OK)
+  @AuthorizeAdmin('security-admin')
+  @Audit({ action: 'certificate.rollback' })
+  async rollbackCertificate(@Param('id') id: string) {
+    try {
+      return await this.certificateService.rollbackCertificate(id);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Failed to roll back certificate',
+      );
+    }
+  }
+
   @Post('renew/:id')
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
@@ -191,6 +205,46 @@ export class CertificateController {
   @Get('health/ocsp-check')
   async checkOcspSupport() {
     return this.certificateService.checkAllCertificatesOcspSupport();
+  }
+
+  @Post('artifacts/:artifactId/activate')
+  @HttpCode(HttpStatus.OK)
+  @AuthorizeInternalNodeOrAdmin('platform-admin')
+  @Audit({ action: 'certificate.artifact.activate' })
+  async activateArtifact(
+    @Param('artifactId') artifactId: string,
+    @Query('operationId') operationId: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    try {
+      const result = await this.certificateService.activateCertificateArtifact(
+        artifactId,
+        operationId,
+      );
+
+      return operationId
+        ? {
+            operationId,
+            status: 'succeeded',
+            ...result,
+          }
+        : result;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to activate artifact';
+
+      if (operationId) {
+        response.status(HttpStatus.INTERNAL_SERVER_ERROR);
+        return {
+          operationId,
+          status: 'failed',
+          artifactId,
+          error: message,
+        };
+      }
+
+      throw new BadRequestException(message);
+    }
   }
 
   @Get(':id')

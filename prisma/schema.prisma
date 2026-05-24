@@ -110,6 +110,10 @@ model CertificateArtifactVersion {
   issuedAt      DateTime
   expiresAt     DateTime
   activatedAt   DateTime?
+  isCurrent     Boolean           @default(false)
+  distributionStatus      String?
+  distributionOperationId String?
+  distributionCompletedAt DateTime?
   createdByNode String?
   metadata      Json?
   order         CertificateOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
@@ -120,6 +124,7 @@ model CertificateArtifactVersion {
   @@index([orderId])
   @@index([certificateId, createdAt])
   @@index([domainsHash, createdAt])
+  @@index([domainsHash, isCurrent])
 }
 
 model ClusterNode {

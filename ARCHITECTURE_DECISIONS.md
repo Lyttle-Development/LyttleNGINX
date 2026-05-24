@@ -35,6 +35,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-017 | Validated allowlisted `nginx_custom_code` fragments                                       | accepted | Session 14 | 2026-05-24 |
 | ADR-018 | Strict normalized certificate domains and argument-array process execution                | accepted | Session 15 | 2026-05-24 |
 | ADR-019 | Durable certificate orders with artifact history and retryable lifecycle state            | accepted | Session 16 | 2026-05-24 |
+| ADR-020 | ACK-backed certificate artifact activation with rollback to prior versions                | accepted | Session 17 | 2026-05-24 |
 
 ---
 
@@ -667,4 +668,34 @@ The initial Session 16 state vocabulary is:
 - failed ACME orders now persist retry/backoff history and can be resumed safely through an explicit retry path rather than only by hoping a later scheduled renewal happens to recreate context
 - certificate artifact metadata is now versioned, which gives Session 17 a concrete foundation for separating issuance from cluster-wide activation and for adding rollback-aware distribution state
 - artifact history currently stores the same PEM material as the existing certificate table, so Session 19 must build encryption-at-rest on top of this new lifecycle model before it is suitable for hardened production key storage
+
+---
+
+## ADR-020 — ACK-backed certificate artifact activation with rollback to prior versions
+
+- Status: accepted
+- Session: Session 17 — Rework cluster certificate distribution and activation
+- Date: 2026-05-24
+
+### Context
+
+Session 16 introduced durable certificate orders and artifact history, but issuance still looked complete as soon as the leader had PEM material locally. Remote nodes could still be out of date, and there was no explicit artifact-level activation contract or rollback path to a previously known-good version.
+
+### Decision
+
+Separate issuance from activation and make activation an ACK-backed cluster operation:
+
+1. issuance, upload, and self-signed generation now store a `CertificateArtifactVersion` first instead of immediately treating the artifact as the active cluster certificate
+2. activating an artifact now runs through the cluster-operation journal so every node returns an explicit success/failure acknowledgement
+3. the live `Certificate` row is updated only after the artifact activation operation succeeds across the cluster
+4. artifact records now persist rollout metadata (`isCurrent`, `distributionStatus`, `distributionOperationId`, `distributionCompletedAt`) so operators can inspect which version is active and what the latest rollout did
+5. failed activation retries should reuse the stored artifact instead of reissuing certificate material
+6. rollback should reactivate the prior successful artifact version rather than mutating raw certificate state in place
+
+### Consequences
+
+- a certificate order now becomes `activated` only after the cluster rollout succeeds, not merely after local issuance succeeds
+- per-node distribution status is inspectable through the linked cluster operation and exposed on order detail responses
+- failed activations leave the previously active certificate row unchanged, preserving a safe rollback target and letting later reconciliation flows restore drifted nodes from the durable active state
+- later sessions can build richer activation policies, operator APIs, and certificate-distribution observability on top of artifact-level rollout state instead of inferring activation from local filesystem writes alone
 

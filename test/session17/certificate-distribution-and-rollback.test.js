@@ -15,36 +15,39 @@ const certificateOrderServicePath = path.join(
   repoRoot,
   'src/certificate/certificate-order.service.ts',
 );
-const domainUtilsPath = path.join(repoRoot, 'src/utils/domain-utils.ts');
 
 const originalAdminEmail = process.env.ADMIN_EMAIL;
-const originalDatabaseUrl = process.env.DATABASE_URL;
 const originalExecFile = childProcess.execFile;
 
 function resetModules() {
   delete require.cache[require.resolve(certificateServicePath)];
   delete require.cache[require.resolve(certificateOrderServicePath)];
-  delete require.cache[require.resolve(domainUtilsPath)];
 }
 
 function installExecFileStub(handler) {
+  const calls = [];
+
   childProcess.execFile = (command, args, options, callback) => {
     if (typeof options === 'function') {
       callback = options;
       options = {};
     }
 
-    const stdin = {
-      end() {},
-    };
+    calls.push({ command, args: [...args], options: { ...options } });
 
     Promise.resolve()
-      .then(() => handler({ command, args, options }))
+      .then(() => handler({ command, args, options, calls }))
       .then((result) => callback?.(null, result?.stdout ?? '', result?.stderr ?? ''))
       .catch((error) => callback?.(error, '', error?.stderr ?? ''));
 
-    return { stdin };
+    return {
+      stdin: {
+        end() {},
+      },
+    };
   };
+
+  return calls;
 }
 
 function restoreExecFile() {
@@ -84,59 +87,45 @@ function createPrismaMock(clusterState) {
     artifacts: [],
   };
 
-  function getCertificateById(id) {
-    return state.certificates.find((certificate) => certificate.id === id) ?? null;
+  function getCertificate(where) {
+    if (where.id) {
+      return state.certificates.find((entry) => entry.id === where.id) ?? null;
+    }
+
+    if (where.domainsHash) {
+      return (
+        state.certificates.find((entry) => entry.domainsHash === where.domainsHash) ??
+        null
+      );
+    }
+
+    return null;
   }
 
   function getOrderById(id) {
-    return state.orders.find((order) => order.id === id) ?? null;
+    return state.orders.find((entry) => entry.id === id) ?? null;
   }
 
-  function matchesCertificateWhere(certificate, where = {}) {
-    if (where.id && certificate.id !== where.id) {
+  function matchesArtifactWhere(artifact, where = {}) {
+    if (typeof where.id === 'string' && artifact.id !== where.id) {
       return false;
     }
-    if (where.domainsHash && certificate.domainsHash !== where.domainsHash) {
+    if (where.orderId && artifact.orderId !== where.orderId) {
       return false;
     }
-    if (where.isOrphaned !== undefined && certificate.isOrphaned !== where.isOrphaned) {
+    if (where.domainsHash && artifact.domainsHash !== where.domainsHash) {
       return false;
     }
-    if (where.domains?.contains && !certificate.domains.includes(where.domains.contains)) {
+    if (where.isCurrent !== undefined && artifact.isCurrent !== where.isCurrent) {
       return false;
     }
-    if (where.expiresAt?.gt && !(certificate.expiresAt > where.expiresAt.gt)) {
+    if (where.version?.lt !== undefined && !(artifact.version < where.version.lt)) {
       return false;
     }
-    if (where.issuedAt?.gte && !(certificate.issuedAt >= where.issuedAt.gte)) {
+    if (where.activatedAt?.not === null && artifact.activatedAt === null) {
       return false;
     }
-    if (where.retryAfter?.lte && !(certificate.retryAfter && certificate.retryAfter <= where.retryAfter.lte)) {
-      return false;
-    }
-    if (where.status && certificate.status !== where.status) {
-      return false;
-    }
-    return true;
-  }
-
-  function matchesOrderWhere(order, where = {}) {
-    if (where.id && order.id !== where.id) {
-      return false;
-    }
-    if (where.domainsHash && order.domainsHash !== where.domainsHash) {
-      return false;
-    }
-    if (where.sourceType && order.sourceType !== where.sourceType) {
-      return false;
-    }
-    if (typeof where.status === 'string' && order.status !== where.status) {
-      return false;
-    }
-    if (where.status?.in && !where.status.in.includes(order.status)) {
-      return false;
-    }
-    if (where.nextRetryAt?.lte && !(order.nextRetryAt && order.nextRetryAt <= where.nextRetryAt.lte)) {
+    if (where.id?.not && artifact.id === where.id.not) {
       return false;
     }
     return true;
@@ -150,41 +139,26 @@ function createPrismaMock(clusterState) {
         const now = new Date();
         const certificate = {
           id: `cert-${state.certificateSequence}`,
-          status: data.status ?? 'active',
+          createdAt: now,
+          updatedAt: now,
           failureReason: data.failureReason ?? null,
           retryAfter: data.retryAfter ?? null,
           failureCount: data.failureCount ?? 0,
           issuedByNode: data.issuedByNode ?? null,
-          createdAt: data.createdAt ?? now,
-          updatedAt: data.updatedAt ?? now,
           ...data,
         };
         state.certificates.push(certificate);
         return clone(certificate);
       },
-      async findFirst({ where, orderBy } = {}) {
-        const results = state.certificates.filter((certificate) =>
-          matchesCertificateWhere(certificate, where),
-        );
-        if (orderBy?.expiresAt === 'desc') {
-          results.sort((left, right) => right.expiresAt - left.expiresAt);
-        }
-        return results[0] ? clone(results[0]) : null;
+      async findFirst() {
+        return null;
       },
       async findUnique({ where }) {
-        const certificate = where.id
-          ? getCertificateById(where.id)
-          : state.certificates.find(
-              (entry) => entry.domainsHash === where.domainsHash,
-            ) ?? null;
+        const certificate = getCertificate(where);
         return certificate ? clone(certificate) : null;
       },
       async update({ where, data }) {
-        const certificate = where.id
-          ? getCertificateById(where.id)
-          : state.certificates.find(
-              (entry) => entry.domainsHash === where.domainsHash,
-            ) ?? null;
+        const certificate = getCertificate(where);
         if (!certificate) {
           throw new Error(`Certificate not found for update: ${JSON.stringify(where)}`);
         }
@@ -192,30 +166,11 @@ function createPrismaMock(clusterState) {
         certificate.updatedAt = new Date();
         return clone(certificate);
       },
-      async upsert({ where, update, create }) {
-        const existing = state.certificates.find(
-          (certificate) => certificate.domainsHash === where.domainsHash,
-        );
-        if (existing) {
-          applyDataPatch(existing, update);
-          existing.updatedAt = new Date();
-          return clone(existing);
-        }
-        return this.create({ data: create });
+      async findMany() {
+        return state.certificates.map(clone);
       },
-      async findMany({ where, orderBy } = {}) {
-        const results = state.certificates.filter((certificate) =>
-          matchesCertificateWhere(certificate, where),
-        );
-        if (orderBy?.expiresAt === 'asc') {
-          results.sort((left, right) => left.expiresAt - right.expiresAt);
-        }
-        return results.map(clone);
-      },
-      async count({ where } = {}) {
-        return state.certificates.filter((certificate) =>
-          matchesCertificateWhere(certificate, where),
-        ).length;
+      async count() {
+        return 0;
       },
       async delete() {
         return undefined;
@@ -254,7 +209,24 @@ function createPrismaMock(clusterState) {
         return clone(order);
       },
       async findFirst({ where, orderBy } = {}) {
-        const results = state.orders.filter((order) => matchesOrderWhere(order, where));
+        const results = state.orders.filter((order) => {
+          if (where?.domainsHash && order.domainsHash !== where.domainsHash) {
+            return false;
+          }
+          if (typeof where?.status === 'string' && order.status !== where.status) {
+            return false;
+          }
+          if (where?.status?.in && !where.status.in.includes(order.status)) {
+            return false;
+          }
+          if (where?.sourceType && order.sourceType !== where.sourceType) {
+            return false;
+          }
+          if (where?.nextRetryAt?.lte && !(order.nextRetryAt && order.nextRetryAt <= where.nextRetryAt.lte)) {
+            return false;
+          }
+          return true;
+        });
         if (orderBy?.createdAt === 'desc') {
           results.sort((left, right) => right.createdAt - left.createdAt);
         }
@@ -266,13 +238,13 @@ function createPrismaMock(clusterState) {
           return null;
         }
         if (select) {
-          const record = {};
+          const selected = {};
           for (const [key, enabled] of Object.entries(select)) {
             if (enabled) {
-              record[key] = order[key];
+              selected[key] = order[key];
             }
           }
-          return clone(record);
+          return clone(selected);
         }
         if (!include) {
           return clone(order);
@@ -280,13 +252,13 @@ function createPrismaMock(clusterState) {
         const record = clone(order);
         if (include.events) {
           record.events = state.events
-            .filter((event) => event.orderId === order.id)
+            .filter((entry) => entry.orderId === order.id)
             .sort((left, right) => right.occurredAt - left.occurredAt)
             .map(clone);
         }
         if (include.artifacts) {
           record.artifacts = state.artifacts
-            .filter((artifact) => artifact.orderId === order.id)
+            .filter((entry) => entry.orderId === order.id)
             .sort((left, right) => right.version - left.version)
             .map(clone);
         }
@@ -295,7 +267,7 @@ function createPrismaMock(clusterState) {
       async update({ where, data }) {
         const order = getOrderById(where.id);
         if (!order) {
-          throw new Error(`Certificate order not found: ${where.id}`);
+          throw new Error(`Order not found for update: ${where.id}`);
         }
         applyDataPatch(order, data);
         order.updatedAt = new Date();
@@ -303,7 +275,18 @@ function createPrismaMock(clusterState) {
       },
       async findMany({ where, take } = {}) {
         return state.orders
-          .filter((order) => matchesOrderWhere(order, where))
+          .filter((order) => {
+            if (where?.sourceType && order.sourceType !== where.sourceType) {
+              return false;
+            }
+            if (where?.status && order.status !== where.status) {
+              return false;
+            }
+            if (where?.nextRetryAt?.lte && !(order.nextRetryAt && order.nextRetryAt <= where.nextRetryAt.lte)) {
+              return false;
+            }
+            return true;
+          })
           .sort((left, right) => right.createdAt - left.createdAt)
           .slice(0, take ?? state.orders.length)
           .map(clone);
@@ -314,9 +297,9 @@ function createPrismaMock(clusterState) {
         state.eventSequence += 1;
         const event = {
           id: `event-${state.eventSequence}`,
-          ...data,
-          details: data.details ?? null,
           occurredAt: data.occurredAt ?? new Date(),
+          details: data.details ?? null,
+          ...data,
         };
         state.events.push(event);
         return clone(event);
@@ -324,24 +307,9 @@ function createPrismaMock(clusterState) {
     },
     certificateArtifactVersion: {
       async findFirst({ where, orderBy } = {}) {
-        const results = state.artifacts.filter((artifact) => {
-          if (where?.domainsHash && artifact.domainsHash !== where.domainsHash) {
-            return false;
-          }
-          if (where?.orderId && artifact.orderId !== where.orderId) {
-            return false;
-          }
-          if (where?.isCurrent !== undefined && artifact.isCurrent !== where.isCurrent) {
-            return false;
-          }
-          if (where?.version?.lt !== undefined && !(artifact.version < where.version.lt)) {
-            return false;
-          }
-          if (where?.activatedAt?.not === null && artifact.activatedAt === null) {
-            return false;
-          }
-          return true;
-        });
+        const results = state.artifacts.filter((artifact) =>
+          matchesArtifactWhere(artifact, where),
+        );
         if (orderBy?.version === 'desc') {
           results.sort((left, right) => right.version - left.version);
         }
@@ -376,24 +344,13 @@ function createPrismaMock(clusterState) {
         return clone(artifact);
       },
       async updateMany({ where, data }) {
-        const matches = state.artifacts.filter((artifact) => {
-          if (where?.domainsHash && artifact.domainsHash !== where.domainsHash) {
-            return false;
-          }
-          if (where?.id?.not && artifact.id === where.id.not) {
-            return false;
-          }
-          return true;
-        });
+        const matches = state.artifacts.filter((artifact) =>
+          matchesArtifactWhere(artifact, where),
+        );
         for (const artifact of matches) {
           applyDataPatch(artifact, data);
         }
         return { count: matches.length };
-      },
-    },
-    proxyEntry: {
-      async findMany() {
-        return [];
       },
     },
     clusterOperation: {
@@ -403,59 +360,106 @@ function createPrismaMock(clusterState) {
         return operation ? clone(operation) : null;
       },
     },
+    proxyEntry: {
+      async findMany() {
+        return [];
+      },
+    },
   };
 }
 
 function createHarness() {
-  process.env.ADMIN_EMAIL = 'session16@example.test';
+  process.env.ADMIN_EMAIL = 'session17@example.test';
   resetModules();
   const { CertificateOrderService } = require(certificateOrderServicePath);
   const { CertificateService } = require(certificateServicePath);
 
   const clusterState = {
+    sequence: 0,
+    mode: 'succeeded',
     operations: [],
   };
   const prisma = createPrismaMock(clusterState);
+  const orderService = new CertificateOrderService(prisma);
   const alertService = {
     sendAlert: async () => undefined,
   };
-  const orderService = new CertificateOrderService(prisma);
   const clusterOperations = {
-    enqueueBroadcastOperation: async (options) => {
-      await options.localAction('op-1');
-      clusterState.operations.push({
-        id: 'op-1',
-        status: 'succeeded',
-        completedAt: new Date(),
-        acknowledgements: [
-          {
-            nodeInstanceId: 'node-1',
-            nodeHostname: 'node-1',
-            endpointUrl: null,
-            status: 'succeeded',
-            responseStatus: 200,
-            errorMessage: null,
-            startedAt: new Date(),
-            ackedAt: new Date(),
-            details: { status: 'activated' },
-          },
-        ],
-      });
-      return { operationId: 'op-1' };
+    async enqueueBroadcastOperation(options) {
+      clusterState.sequence += 1;
+      const operationId = `op-${clusterState.sequence}`;
+      await options.localAction(operationId);
+      const operation =
+        clusterState.mode === 'succeeded'
+          ? {
+              id: operationId,
+              status: 'succeeded',
+              completedAt: new Date(),
+              acknowledgements: [
+                {
+                  nodeInstanceId: 'node-1',
+                  nodeHostname: 'node-1',
+                  endpointUrl: null,
+                  status: 'succeeded',
+                  responseStatus: 200,
+                  errorMessage: null,
+                  startedAt: new Date(),
+                  ackedAt: new Date(),
+                  details: { status: 'activated' },
+                },
+                {
+                  nodeInstanceId: 'node-2',
+                  nodeHostname: 'node-2',
+                  endpointUrl: 'http://node-2.internal:3000/certificates/artifacts/activate',
+                  status: 'succeeded',
+                  responseStatus: 200,
+                  errorMessage: null,
+                  startedAt: new Date(),
+                  ackedAt: new Date(),
+                  details: { status: 'activated' },
+                },
+              ],
+            }
+          : {
+              id: operationId,
+              status: 'partially_failed',
+              completedAt: new Date(),
+              acknowledgements: [
+                {
+                  nodeInstanceId: 'node-1',
+                  nodeHostname: 'node-1',
+                  endpointUrl: null,
+                  status: 'succeeded',
+                  responseStatus: 200,
+                  errorMessage: null,
+                  startedAt: new Date(),
+                  ackedAt: new Date(),
+                  details: { status: 'activated' },
+                },
+                {
+                  nodeInstanceId: 'node-2',
+                  nodeHostname: 'node-2',
+                  endpointUrl: 'http://node-2.internal:3000/certificates/artifacts/activate',
+                  status: 'failed',
+                  responseStatus: 500,
+                  errorMessage: 'node-2 failed activation',
+                  startedAt: new Date(),
+                  ackedAt: new Date(),
+                  details: { status: 'failed' },
+                },
+              ],
+            };
+      clusterState.operations.push(operation);
+      return { operationId };
     },
-    waitForOperationToSettle: async () => ({
-      id: 'op-1',
-      status: 'succeeded',
-      completedAt: new Date(),
-      acknowledgements: [
-        {
-          nodeHostname: 'node-1',
-          nodeInstanceId: 'node-1',
-          status: 'succeeded',
-          errorMessage: null,
-        },
-      ],
-    }),
+    async waitForOperationToSettle(operationId) {
+      const operation =
+        clusterState.operations.find((entry) => entry.id === operationId) ?? null;
+      if (!operation) {
+        throw new Error(`Unknown operation: ${operationId}`);
+      }
+      return clone(operation);
+    },
   };
   const distributedLock = {
     getInstanceId: () => 'node-1',
@@ -479,14 +483,11 @@ function createHarness() {
     null,
   );
 
-  service.writeCertToFs = () => undefined;
-
-  return { prisma, service, orderService };
+  return { prisma, orderService, service, clusterState };
 }
 
 beforeEach(() => {
-  process.env.ADMIN_EMAIL = 'session16@example.test';
-  delete process.env.NODE_ENV;
+  process.env.ADMIN_EMAIL = 'session17@example.test';
   restoreExecFile();
   resetModules();
 });
@@ -500,17 +501,12 @@ afterEach(() => {
   } else {
     process.env.ADMIN_EMAIL = originalAdminEmail;
   }
-
-  if (originalDatabaseUrl === undefined) {
-    delete process.env.DATABASE_URL;
-  } else {
-    process.env.DATABASE_URL = originalDatabaseUrl;
-  }
 });
 
-describe('Session 16 certificate order state machine', () => {
-  it('records self-signed certificate workflows as durable orders with artifact history', async () => {
-    installExecFileStub(async ({ command, args }) => {
+describe('Session 17 cluster certificate distribution and activation', () => {
+  it('retries failed distribution by reusing the stored artifact instead of reissuing certificate material', async () => {
+    let certificateSequence = 0;
+    const calls = installExecFileStub(async ({ command, args }) => {
       if (command === 'nginx') {
         return { stdout: '' };
       }
@@ -526,10 +522,11 @@ describe('Session 16 certificate order state machine', () => {
       }
 
       if (args[0] === 'req') {
+        certificateSequence += 1;
         const outIndex = args.indexOf('-out');
         fs.writeFileSync(
           args[outIndex + 1],
-          '-----BEGIN CERTIFICATE-----\nunit-test\n-----END CERTIFICATE-----\n',
+          `-----BEGIN CERTIFICATE-----\nversion-${certificateSequence}\n-----END CERTIFICATE-----\n`,
         );
         return { stdout: '' };
       }
@@ -548,116 +545,111 @@ describe('Session 16 certificate order state machine', () => {
 
       if (args[0] === 'x509' && args.includes('-text')) {
         return {
-          stdout:
-            'Certificate Data\nX509v3 Subject Alternative Name:\n    DNS:example.com\n',
+          stdout: `Certificate Data\nX509v3 Subject Alternative Name:\n    DNS:example.com\n`,
         };
       }
 
       throw new Error(`Unexpected command: ${args.join(' ')}`);
     });
 
-    const { service, orderService } = createHarness();
-    const record = await service.generateSelfSignedCertificate(['Example.com']);
-    const orders = await orderService.listOrders();
-    const detail = await orderService.getOrder(orders.orders[0].id);
+    const { orderService, service, clusterState } = createHarness();
+    clusterState.mode = 'partially_failed';
+    service.writeCertToFs = () => undefined;
 
-    assert.equal(record.domains, 'example.com');
-    assert.equal(orders.count, 1);
-    assert.equal(orders.orders[0].status, 'activated');
-    assert.equal(orders.orders[0].sourceType, 'self-signed');
-    assert.equal(detail.artifacts.length, 1);
-    assert.equal(detail.artifacts[0].certificateId, record.id);
-    assert.equal(detail.artifacts[0].version, 1);
-    assert.equal(detail.artifacts[0].sourceType, 'self-signed');
-    assert.equal(Object.hasOwn(detail.artifacts[0], 'keyPem'), false);
-    assert.equal(detail.events.length, 5);
-    assert.equal(
-      detail.events.filter((event) => event.eventType === 'state-transition')
-        .length,
-      3,
+    await assert.rejects(
+      () => service.generateSelfSignedCertificate(['Example.com']),
+      /node-2 failed activation/,
     );
+
+    const failedList = await orderService.listOrders();
+    const failedOrder = await orderService.getOrder(failedList.orders[0].id);
+
+    assert.equal(failedOrder.status, 'failed');
+    assert.equal(failedOrder.artifacts.length, 1);
+    assert.equal(failedOrder.artifacts[0].distributionStatus, 'partially_failed');
+    assert.equal(failedOrder.latestDistribution?.acknowledgements.length, 2);
+    assert.equal(certificateSequence, 1);
+
+    clusterState.mode = 'succeeded';
+    const retriedOrder = await service.retryCertificateOrder(failedOrder.id);
+
+    assert.equal(retriedOrder.status, 'activated');
+    assert.equal(retriedOrder.artifacts.length, 1);
+    assert.equal(retriedOrder.artifacts[0].isCurrent, true);
+    assert.equal(retriedOrder.artifacts[0].distributionStatus, 'succeeded');
+    assert.equal(retriedOrder.latestDistribution?.status, 'succeeded');
+    assert.equal(certificateSequence, 1);
     assert.equal(
-      detail.events.some((event) => event.eventType === 'artifact-created'),
-      true,
-    );
-    assert.equal(
-      detail.events.some((event) => event.eventType === 'created'),
-      true,
-    );
-    assert.deepEqual(
-      detail.events
-        .filter((event) => event.toStatus)
-        .map((event) => event.toStatus)
-        .sort(),
-      ['activated', 'distributing', 'issued', 'requested'].sort(),
+      calls.filter((call) => call.command === 'openssl' && call.args[0] === 'req').length,
+      1,
     );
   });
 
-  it('persists failure history and resumes the same ACME order on manual retry', async () => {
-    process.env.DATABASE_URL = 'not-a-postgresql-url';
-    const { service, orderService, prisma } = createHarness();
-    const { hashDomains } = require(domainUtilsPath);
-    const domains = ['example.com'];
-    const domainsHash = hashDomains(domains, { allowWildcard: true });
+  it('supports rolling back to the prior activated artifact version', async () => {
+    let certificateSequence = 0;
+    installExecFileStub(async ({ command, args }) => {
+      if (command === 'nginx') {
+        return { stdout: '' };
+      }
 
-    await assert.rejects(
-      () => service.ensureCertificate(domains),
-      /Could not parse DATABASE_URL/,
-    );
+      assert.equal(command, 'openssl');
 
-    const firstList = await orderService.listOrders();
-    const failedOrder = await orderService.getOrder(firstList.orders[0].id);
+      if (args[0] === 'genrsa') {
+        fs.writeFileSync(
+          args[2],
+          `-----BEGIN PRIVATE KEY-----\nkey-${certificateSequence + 1}\n-----END PRIVATE KEY-----\n`,
+        );
+        return { stdout: '' };
+      }
 
-    assert.equal(failedOrder.status, 'failed');
-    assert.equal(failedOrder.retryCount, 0);
-    assert.equal(failedOrder.attemptCount, 1);
-    assert.ok(failedOrder.nextRetryAt instanceof Date);
-    assert.match(failedOrder.lastError ?? '', /Could not parse DATABASE_URL/);
-    assert.equal(
-      failedOrder.events.some((event) => event.eventType === 'retry-scheduled'),
-      true,
-    );
+      if (args[0] === 'req') {
+        certificateSequence += 1;
+        const outIndex = args.indexOf('-out');
+        fs.writeFileSync(
+          args[outIndex + 1],
+          `-----BEGIN CERTIFICATE-----\nversion-${certificateSequence}\n-----END CERTIFICATE-----\n`,
+        );
+        return { stdout: '' };
+      }
 
-    const futureExpiry = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000);
-    prisma.state.certificates.push({
-      id: 'cert-existing',
-      domains: 'example.com',
-      domainsHash,
-      certPem: '-----BEGIN CERTIFICATE-----\nexisting\n-----END CERTIFICATE-----\n',
-      keyPem: '-----BEGIN PRIVATE KEY-----\nexisting\n-----END PRIVATE KEY-----\n',
-      expiresAt: futureExpiry,
-      issuedAt: new Date(),
-      lastUsedAt: new Date(),
-      isOrphaned: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      status: 'active',
-      failureReason: null,
-      retryAfter: null,
-      failureCount: 0,
-      issuedByNode: 'node-2',
+      if (args[0] === 'x509' && args.includes('-pubkey')) {
+        return { stdout: 'unit-test-public-key\n' };
+      }
+
+      if (args[0] === 'pkey') {
+        return { stdout: 'unit-test-public-key\n' };
+      }
+
+      if (args[0] === 'x509' && args.includes('-enddate')) {
+        return { stdout: 'notAfter=Jan  1 00:00:00 2035 GMT\n' };
+      }
+
+      if (args[0] === 'x509' && args.includes('-text')) {
+        return {
+          stdout: `Certificate Data\nX509v3 Subject Alternative Name:\n    DNS:example.com\n`,
+        };
+      }
+
+      throw new Error(`Unexpected command: ${args.join(' ')}`);
     });
 
-    const retriedOrder = await service.retryCertificateOrder(failedOrder.id);
+    const { prisma, orderService, service } = createHarness();
+    service.writeCertToFs = () => undefined;
 
-    assert.equal(retriedOrder.id, failedOrder.id);
-    assert.equal(retriedOrder.status, 'activated');
-    assert.equal(retriedOrder.retryCount, 1);
-    assert.equal(retriedOrder.attemptCount, 2);
-    assert.equal(retriedOrder.certificateId, 'cert-existing');
-    assert.equal(retriedOrder.lastError, null);
-    assert.equal(
-      retriedOrder.events.some((event) => event.eventType === 'retry-requested'),
-      true,
-    );
-    assert.equal(
-      retriedOrder.events.some(
-        (event) =>
-          event.toStatus === 'activated' &&
-          /Reused existing valid certificate/i.test(event.message ?? ''),
-      ),
-      true,
-    );
+    const firstCertificate = await service.generateSelfSignedCertificate(['example.com']);
+    const secondCertificate = await service.generateSelfSignedCertificate(['example.com']);
+    const rolledBack = await service.rollbackCertificate(secondCertificate.id);
+    const rollbackOrder = await orderService.getOrder(rolledBack.orderId);
+    const currentArtifacts = prisma.state.artifacts.filter((artifact) => artifact.isCurrent);
+    const certificateRecord = prisma.state.certificates[0];
+
+    assert.equal(firstCertificate.id, secondCertificate.id);
+    assert.equal(rolledBack.rollbackToVersion, 1);
+    assert.equal(rollbackOrder.status, 'activated');
+    assert.equal(rollbackOrder.latestDistribution?.status, 'succeeded');
+    assert.equal(currentArtifacts.length, 1);
+    assert.equal(currentArtifacts[0].version, 1);
+    assert.match(certificateRecord.certPem, /version-1/);
   });
 });
 

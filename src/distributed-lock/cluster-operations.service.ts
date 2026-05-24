@@ -79,6 +79,11 @@ type StartClusterOperationOptions<TLocalResult = unknown> = {
   metadata?: Record<string, unknown>;
 };
 
+type WaitForOperationOptions = {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+};
+
 export type ClusterOperationAcceptedResponse = {
   operationId: string;
   operationType: string;
@@ -222,6 +227,33 @@ export class ClusterOperationsService {
     return this.toDetailedOperation(operation);
   }
 
+  async waitForOperationToSettle(
+    operationId: string,
+    options: WaitForOperationOptions = {},
+  ) {
+    const timeoutMs = options.timeoutMs ?? 30000;
+    const pollIntervalMs = options.pollIntervalMs ?? 250;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() <= deadline) {
+      const operation = await this.getOperation(operationId);
+
+      if (!operation) {
+        throw new Error(`Cluster operation not found: ${operationId}`);
+      }
+
+      if (!['pending', 'running'].includes(operation.status)) {
+        return operation;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    throw new Error(
+      `Timed out waiting for cluster operation ${operationId} to settle after ${timeoutMs}ms`,
+    );
+  }
+
   private async executeOperation<TLocalResult>(
     operationId: string,
     targets: OperationTarget[],
@@ -278,8 +310,8 @@ export class ClusterOperationsService {
     await this.markAckStarted(operationId, target.instanceId);
 
     try {
-      await localAction(operationId);
-      await this.markAckSucceeded(operationId, target.instanceId, 200);
+      const result = await localAction(operationId);
+      await this.markAckSucceeded(operationId, target.instanceId, 200, null, result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.markAckFailed(operationId, target.instanceId, message);
@@ -337,11 +369,14 @@ export class ClusterOperationsService {
         return;
       }
 
+      const details = await this.readRemoteSuccess(response);
+
       await this.markAckSucceeded(
         operationId,
         target.instanceId,
         response.status,
         url,
+        details,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -427,6 +462,7 @@ export class ClusterOperationsService {
     nodeInstanceId: string,
     responseStatus: number,
     endpointUrl?: string | null,
+    details?: unknown,
   ) {
     await this.prisma.clusterOperationAck.update({
       where: {
@@ -440,6 +476,10 @@ export class ClusterOperationsService {
         responseStatus,
         errorMessage: null,
         ackedAt: new Date(),
+        details:
+          details === undefined
+            ? undefined
+            : this.normalizeAckDetails(details),
         ...(endpointUrl === undefined ? {} : { endpointUrl }),
       },
     });
@@ -557,6 +597,40 @@ export class ClusterOperationsService {
         error instanceof Error ? error.message : response.statusText,
       );
     }
+  }
+
+  private async readRemoteSuccess(response: Response) {
+    try {
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.includes('application/json')) {
+        return (await response.json()) as Record<string, unknown>;
+      }
+
+      const text = await response.text();
+      return text.trim().length > 0 ? { message: text } : null;
+    } catch (error) {
+      return {
+        message: error instanceof Error ? error.message : response.statusText,
+      };
+    }
+  }
+
+  private normalizeAckDetails(details: unknown) {
+    if (details === null) {
+      return null;
+    }
+
+    if (details === undefined) {
+      return undefined;
+    }
+
+    if (typeof details === 'object') {
+      return details as Record<string, unknown>;
+    }
+
+    return {
+      value: details,
+    };
   }
 
   private toAcceptedResponse(

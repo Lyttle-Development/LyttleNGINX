@@ -72,14 +72,44 @@ type CertificateOrderEventRecord = {
 
 type CertificateArtifactRecord = {
   id: string;
+  orderId: string | null;
   certificateId: string | null;
+  domainsHash: string;
   version: number;
   sourceType: CertificateOrderSourceType;
   issuedAt: Date;
   expiresAt: Date;
   activatedAt: Date | null;
+  isCurrent: boolean;
+  distributionStatus: string | null;
+  distributionOperationId: string | null;
+  distributionCompletedAt: Date | null;
   createdByNode: string | null;
   createdAt: Date;
+};
+
+type ClusterOperationAckRecord = {
+  nodeInstanceId: string;
+  nodeHostname: string | null;
+  endpointUrl: string | null;
+  status: string;
+  responseStatus: number | null;
+  errorMessage: string | null;
+  startedAt: Date | null;
+  ackedAt: Date | null;
+  details: Record<string, unknown> | null;
+};
+
+type ClusterOperationWithAcks = {
+  id: string;
+  status: string;
+  completedAt: Date | null;
+  acknowledgements: ClusterOperationAckRecord[];
+};
+
+type LatestDistributionRecord = {
+  artifact: CertificateArtifactRecord;
+  operation: ClusterOperationWithAcks;
 };
 
 @Injectable()
@@ -343,7 +373,7 @@ export class CertificateOrderService {
 
   async recordArtifact(params: {
     orderId: string;
-    certificateId: string;
+    certificateId?: string | null;
     domains: string[];
     sourceType: CertificateOrderSourceType;
     certPem: string;
@@ -366,7 +396,7 @@ export class CertificateOrderService {
     const artifact = (await this.prisma.certificateArtifactVersion.create({
       data: {
         orderId: params.orderId,
-        certificateId: params.certificateId,
+          certificateId: params.certificateId ?? null,
         domains: joinDomains(domains, { allowWildcard: true }),
         domainsHash,
         version,
@@ -394,6 +424,50 @@ export class CertificateOrderService {
     });
 
     return artifact;
+  }
+
+  async getLatestArtifactForOrder(orderId: string) {
+    return (await this.prisma.certificateArtifactVersion.findFirst({
+      where: { orderId },
+      orderBy: { version: 'desc' },
+    })) as CertificateArtifactRecord | null;
+  }
+
+  async getArtifact(artifactId: string) {
+    return (await this.prisma.certificateArtifactVersion.findUnique({
+      where: { id: artifactId },
+    })) as (CertificateArtifactRecord & {
+      domains: string;
+      domainsHash: string;
+      certPem: string;
+      keyPem: string;
+      metadata: Record<string, unknown> | null;
+      orderId: string | null;
+    }) | null;
+  }
+
+  async getCurrentArtifactForDomainsHash(domainsHash: string) {
+    return (await this.prisma.certificateArtifactVersion.findFirst({
+      where: {
+        domainsHash,
+        isCurrent: true,
+      },
+      orderBy: { version: 'desc' },
+    })) as CertificateArtifactRecord | null;
+  }
+
+  async getRollbackArtifactForDomainsHash(
+    domainsHash: string,
+    currentVersion: number,
+  ) {
+    return (await this.prisma.certificateArtifactVersion.findFirst({
+      where: {
+        domainsHash,
+        version: { lt: currentVersion },
+        activatedAt: { not: null },
+      },
+      orderBy: { version: 'desc' },
+    })) as CertificateArtifactRecord | null;
   }
 
   async listOrders(limit = 25): Promise<{
@@ -436,7 +510,9 @@ export class CertificateOrderService {
       throw new Error(`Certificate order not found: ${orderId}`);
     }
 
-    return this.toDetailDto(order);
+    const latestDistribution = await this.getLatestDistribution(order.artifacts);
+
+    return this.toDetailDto(order, latestDistribution);
   }
 
   async validateRetryableOrder(
@@ -510,6 +586,7 @@ export class CertificateOrderService {
       failedAt: order.failedAt,
       revokedAt: order.revokedAt,
       completedAt: order.completedAt,
+      metadata: order.metadata,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     };
@@ -520,6 +597,7 @@ export class CertificateOrderService {
       events: CertificateOrderEventRecord[];
       artifacts: CertificateArtifactRecord[];
     },
+    latestDistribution: LatestDistributionRecord | null,
   ): CertificateOrderDetailDto {
     return {
       ...this.toSummaryDto(order),
@@ -542,9 +620,66 @@ export class CertificateOrderService {
         issuedAt: artifact.issuedAt,
         expiresAt: artifact.expiresAt,
         activatedAt: artifact.activatedAt,
+        isCurrent: artifact.isCurrent,
+        distributionStatus: artifact.distributionStatus,
+        distributionOperationId: artifact.distributionOperationId,
+        distributionCompletedAt: artifact.distributionCompletedAt,
         createdByNode: artifact.createdByNode,
         createdAt: artifact.createdAt,
       })),
+      latestDistribution:
+        latestDistribution
+          ? {
+              artifactId: latestDistribution.artifact.id,
+              version: latestDistribution.artifact.version,
+              status: latestDistribution.operation.status,
+              operationId: latestDistribution.operation.id,
+              completedAt: latestDistribution.operation.completedAt,
+              acknowledgements: latestDistribution.operation.acknowledgements.map((ack) => ({
+                nodeInstanceId: ack.nodeInstanceId,
+                nodeHostname: ack.nodeHostname,
+                endpointUrl: ack.endpointUrl,
+                status: ack.status,
+                responseStatus: ack.responseStatus,
+                errorMessage: ack.errorMessage,
+                startedAt: ack.startedAt,
+                ackedAt: ack.ackedAt,
+                details: ack.details,
+              })),
+            }
+          : null,
     };
+  }
+
+  private async getLatestDistribution(
+    artifacts: CertificateArtifactRecord[],
+  ): Promise<LatestDistributionRecord | null> {
+    const latestArtifact = artifacts
+      .filter((artifact) => typeof artifact.distributionOperationId === 'string')
+      .sort((left, right) => {
+        const leftTime = left.distributionCompletedAt?.getTime() ?? 0;
+        const rightTime = right.distributionCompletedAt?.getTime() ?? 0;
+        return rightTime - leftTime || right.version - left.version;
+      })[0];
+
+    if (!latestArtifact?.distributionOperationId) {
+      return null;
+    }
+
+    const operation = (await this.prisma.clusterOperation.findUnique({
+      where: { id: latestArtifact.distributionOperationId },
+      include: {
+        acknowledgements: {
+          orderBy: [{ nodeHostname: 'asc' }, { nodeInstanceId: 'asc' }],
+        },
+      },
+    })) as ClusterOperationWithAcks | null;
+
+    return operation
+      ? {
+          artifact: latestArtifact,
+          operation,
+        }
+      : null;
   }
 }

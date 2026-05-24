@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 5 — Certificate lifecycle redesign
-- Most recently completed session: Session 16 — Add certificate order state machine
-- Next recommended session from the roadmap: Session 17 — Rework cluster certificate distribution and activation
+- Most recently completed session: Session 17 — Rework cluster certificate distribution and activation
+- Next recommended session from the roadmap: Session 18 — Harden the ACME strategy for clustered production
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -611,13 +611,40 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 17 — Rework cluster certificate distribution and activation
 
-- Status: not started
+- Status: done
 - Objective: separate issuance from activation and track per-node rollout state
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: cluster cert activation remains local-first instead of ACK-driven
-- Follow-up sessions: Session 22, Session 27
-- Notes: rollback to prior artifact version remains open
+- Files touched:
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20260524200000_session17_certificate_distribution_activation/migration.sql`
+  - `src/distributed-lock/cluster-operations.service.ts`
+  - `src/certificate/certificate-order.service.ts`
+  - `src/certificate/dto/certificate-order.dto.ts`
+  - `src/certificate/certificate.service.ts`
+  - `src/certificate/certificate.controller.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session15/domain-validation-and-safe-process.test.js`
+  - `test/session16/certificate-order-state-machine.test.js`
+  - `test/session17/certificate-distribution-and-rollback.test.js`
+- Tests added/updated:
+  - added `test/session17/certificate-distribution-and-rollback.test.js` to verify failed rollout retries reuse stored artifacts and rollback reactivates the prior successful artifact version
+  - updated the Session 15 and Session 16 certificate harnesses so they cover the new activation-time certificate validation and NGINX reload steps
+  - ran `npm run prisma:generate`, `npm run typecheck`, the focused Session 15-17 certificate suites, the full `npm test` suite, and `npm run build` successfully after landing the new rollout flow
+- Risks:
+  - cluster artifact activation now waits for node ACKs, but peer transport is still authenticated HTTP rather than mTLS-backed service identity
+  - artifact rollout state is durable, but rollback and retry visibility is still routed through certificate-order detail plus the cluster-operation journal; richer operator-focused cluster/certificate views remain future work for Session 22
+  - activation failure recovery currently relies on retrying the stored artifact and on the existing active certificate row for safe rollback; broader fault-injection proof remains planned for Session 27
+- Follow-up sessions:
+  - Session 18 — harden the ACME strategy for clustered production
+  - Session 22 — add cluster operations and node-status admin APIs
+  - Session 25 — expand metrics and alerting
+  - Session 27 — add chaos and fault-injection validation
+- Notes:
+  - issuance, upload, and self-signed generation now create durable certificate artifacts first and only update the live `Certificate` row after the artifact has been ACKed across the cluster
+  - certificate artifacts now persist rollout metadata (`isCurrent`, `distributionStatus`, `distributionOperationId`, `distributionCompletedAt`) and order detail responses surface the latest distribution ACK summary
+  - failed activation retries now reuse the existing artifact instead of reissuing certificate material, reducing unnecessary issuance churn and preserving rollback targets
+  - added admin rollback support that reactivates the prior successful artifact version through the same cluster operation + ACK path used for forward activation
 
 ## Session 18 — Harden the ACME strategy for clustered production
 

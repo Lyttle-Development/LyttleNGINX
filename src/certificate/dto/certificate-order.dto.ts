@@ -11,8 +11,33 @@ export class CertificateOrderArtifactDto {
   issuedAt: Date;
   expiresAt: Date;
   activatedAt: Date | null;
+  isCurrent: boolean;
+  distributionStatus: string | null;
+  distributionOperationId: string | null;
+  distributionCompletedAt: Date | null;
   createdByNode: string | null;
   createdAt: Date;
+}
+
+export class CertificateOrderDistributionAckDto {
+  nodeInstanceId: string;
+  nodeHostname: string | null;
+  endpointUrl: string | null;
+  status: string;
+  responseStatus: number | null;
+  errorMessage: string | null;
+  startedAt: Date | null;
+  ackedAt: Date | null;
+  details: Record<string, unknown> | null;
+}
+
+export class CertificateOrderDistributionDto {
+  artifactId: string;
+  version: number;
+  status: string;
+  operationId: string;
+  completedAt: Date | null;
+  acknowledgements: CertificateOrderDistributionAckDto[];
 }
 
 export class CertificateOrderEventDto {
@@ -49,6 +74,7 @@ export class CertificateOrderSummaryDto {
   failedAt: Date | null;
   revokedAt: Date | null;
   completedAt: Date | null;
+  metadata: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -56,4 +82,5 @@ export class CertificateOrderSummaryDto {
 export class CertificateOrderDetailDto extends CertificateOrderSummaryDto {
   events: CertificateOrderEventDto[];
   artifacts: CertificateOrderArtifactDto[];
+  latestDistribution: CertificateOrderDistributionDto | null;
 }
