@@ -9,7 +9,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 0 — Delivery setup and guardrails
-- Most recently completed session: Session 2 — Dependency hygiene and secret-handling cleanup
+- Most recently completed session: Session 2 — Dependency hygiene and secret-handling cleanup (followed by 2026-05-24 dependency/toolchain refresh)
 - Next recommended session from the roadmap: Session 3 — Lock down public mutating endpoints
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
@@ -68,6 +68,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - Session 28 — upgrade CI/CD and release gating
 - Notes:
   - upgraded the direct dependency versions called out in the assessment (`@nestjs/core`-aligned Nest packages and `nodemailer`)
+  - follow-up maintenance on 2026-05-24 refreshed the full npm package set to the latest available versions, regenerated `package-lock.json`, and pinned the repo toolchain to Node `24.16.0` and npm `11.15.0`
   - tightened `.gitignore` so live env files, generated key material, and backup artifacts stay out of git while keeping `.env.example` tracked
   - rewrote `.env.example` to use safe placeholders and explicit runtime-injection guidance
   - documented Docker Swarm secrets and external secret-manager expectations in `README.md`

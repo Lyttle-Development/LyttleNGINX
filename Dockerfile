@@ -1,5 +1,5 @@
 # Multi-stage build for smaller, more secure image
-FROM node:24-bookworm-slim AS builder
+FROM node:24.16.0-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -20,14 +20,14 @@ RUN npm prune --production && \
     npm cache clean --force
 
 # Production stage
-FROM debian:bookworm-slim
+FROM node:24.16.0-bookworm-slim
 
 # Add labels for better container management
 LABEL maintainer="lyttle-development"
 LABEL description="NGINX proxy with SSL management and database integration"
 LABEL version="1.0"
 
-# Install system packages with specific versions for reproducibility
+# Install runtime system packages
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
@@ -41,8 +41,6 @@ RUN apt-get update && \
         procps \
         netcat-openbsd \
         postgresql-client && \
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 

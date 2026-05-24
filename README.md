@@ -19,7 +19,7 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 0 in progress
-- **Completed in Sessions 1-2:** delivery scaffolding, status tracking, dependency hygiene for known direct CVEs, and secret-handling cleanup for publishable env examples
+- **Completed in Sessions 1-2 plus follow-up maintenance:** delivery scaffolding, status tracking, dependency hygiene for known direct CVEs, secret-handling cleanup for publishable env examples, and a full npm/toolchain refresh to the latest available package set on 2026-05-24
 - **Next recommended implementation session:** Session 3 — lock down public mutating endpoints
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
@@ -44,6 +44,13 @@ npm run lint
 npm run typecheck
 npm run build
 npm run verify
+```
+
+Current repo toolchain target:
+
+```bash
+node -v   # expected: v24.16.0
+npm -v    # expected: 11.15.0
 ```
 
 `npm run test` is currently an explicit placeholder until Session 26 adds the automated test harness.
@@ -149,7 +156,8 @@ npm run verify
 
 ### Prerequisites
 
-- Node.js 24.11.1 or higher
+- Node.js 24.16.0
+- npm 11.15.0
 - PostgreSQL 12 or higher
 - Docker & Docker Compose (optional)
 
@@ -647,7 +655,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18.4-alpine
     environment:
       POSTGRES_DB: lyttlenginx
       POSTGRES_USER: lyttlenginx
