@@ -6,8 +6,12 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "clean": "rm -rf dist coverage",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node -e \"console.log('No automated tests are configured yet. Session 26 will add the test harness.')\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -17,9 +21,11 @@
     "prisma:dangerously-db-push": "prisma db push",
     "prisma:migrate": "prisma migrate dev --name merge-upstream",
     "prisma:deploy": "prisma migrate deploy",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,test}/**/*.ts\"",
+    "lint:fix": "npm run lint -- --fix",
     "docker:setup": "npm run prisma:generate && npm run build",
     "docker:build": "docker build -t lyttle-nginx .",
+    "verify": "npm run lint && npm run typecheck && npm run build",
     "update": "npm update --save"
   },
   "volta": {

@@ -1,15 +1,51 @@
 # 🔒 LyttleNGINX
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-production--ready-success" alt="Status" />
-  <img src="https://img.shields.io/badge/build-passing-brightgreen" alt="Build" />
-  <img src="https://img.shields.io/badge/coverage-ready-blue" alt="Coverage" />
+  <img src="https://img.shields.io/badge/status-roadmap--in--progress-yellow" alt="Status" />
+  <img src="https://img.shields.io/badge/readiness-not--production--ready-critical" alt="Readiness" />
+  <img src="https://img.shields.io/badge/session%201-complete-blue" alt="Session 1" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
-**Enterprise-grade NGINX proxy management with automated SSL/TLS certificate management, real-time monitoring, and comprehensive backup solutions.**
+**NGINX proxy management control plane with certificate automation, monitoring primitives, and an active production-hardening roadmap.**
 
 Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www.postgresql.org/) • Secured by [Let's Encrypt](https://letsencrypt.org/)
+
+> Current state: this repository is under active implementation and hardening. It should **not** currently be treated as production-ready for single-node or Docker Swarm deployment. The current delivery baseline is tracked in `PRODUCTION_READINESS_ASSESSMENT.md`, `IMPLEMENTATION_PLAN_BY_SESSION.md`, `IMPLEMENTATION_STATUS.md`, and `ARCHITECTURE_DECISIONS.md`.
+
+---
+
+## 📍 Current Delivery Status
+
+- **Roadmap status:** Phase 0 in progress
+- **Completed in Session 1:** delivery scaffolding, status tracking, architecture decision logging, and normalized verification scripts
+- **Next recommended implementation session:** Session 3 — lock down public mutating endpoints
+- **Canonical planning and status docs:**
+  - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
+  - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
+  - [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)
+  - [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md)
+
+## 🧭 Deployment Mode Expectations
+
+| Mode | Use it for | Current expectation |
+| --- | --- | --- |
+| Local development | coding, manual verification, exploratory testing | best-supported workflow today |
+| Single-node Compose | demos, operator evaluation, non-HA environments | usable for local/single-node evaluation, **not** yet positioned as hardened production |
+| Docker Swarm global mode | target cluster architecture | roadmap target only; use for controlled testing until P0/P1 hardening sessions are complete |
+
+## ✅ Repository Verification Commands
+
+Run these commands once a local Node/npm toolchain is available:
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+npm run verify
+```
+
+`npm run test` is currently an explicit placeholder until Session 26 adds the automated test harness.
 
 ---
 
@@ -84,7 +120,7 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 - **OpenAPI Ready** - API documentation ready
 - **Error Handling** - Structured error responses with codes
 - **Comprehensive Docs** - 2,500+ lines of documentation
-- **Docker Support** - Production-ready Docker configuration
+- **Docker Support** - Evaluation manifests with hardening work tracked in the roadmap
 - **TypeScript** - Fully typed codebase
 
 ---
@@ -92,6 +128,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📋 Table of Contents
 
 - [Quick Start](#-quick-start)
+- [Current Delivery Status](#-current-delivery-status)
+- [Deployment Mode Expectations](#-deployment-mode-expectations)
+- [Repository Verification Commands](#-repository-verification-commands)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [API Documentation](#-api-documentation)
@@ -109,7 +148,7 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ### Prerequisites
 
-- Node.js 22.19.0 or higher
+- Node.js 24.11.1 or higher
 - PostgreSQL 12 or higher
 - Docker & Docker Compose (optional)
 
@@ -137,7 +176,7 @@ ADMIN_EMAIL=admin@example.com
 NODE_ENV=production
 ```
 
-> **Note:** Connection pooling limits are automatically applied (10 connections per instance). For high-traffic deployments, see [Database Connection Management](docs/DATABASE_CONNECTION_MANAGEMENT.md).
+> **Note:** Connection pooling limits are automatically applied (10 connections per instance). Until dedicated database-operations docs are added, use `PRODUCTION_READINESS_ASSESSMENT.md` and `IMPLEMENTATION_PLAN_BY_SESSION.md` as the current references for production-hardening work.
 
 ### 3. Setup Database
 
@@ -340,7 +379,7 @@ npm run prisma:migrate
 | GET    | `/ready`         | Readiness check     | Public |
 | POST   | `/health/reload` | Reload NGINX config | Public |
 
-**📖 Complete API documentation:** [API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)
+**📖 API documentation status:** a refreshed API reference is still pending; for now, use the controller source under `src/`, `IMPLEMENTATION_STATUS.md`, and `PRODUCTION_READINESS_ASSESSMENT.md` as the current references.
 
 ---
 
@@ -539,9 +578,9 @@ curl http://localhost:3000/certificates/backup/$FILENAME -o /backups/$FILENAME
 
 ## 🐳 Docker Deployment
 
-### Docker Swarm (Recommended for Production) 🆕
+### Docker Swarm (Roadmap Target / Controlled Testing Only)
 
-Deploy LyttleNGINX in **global mode** across your Docker Swarm cluster with built-in distributed coordination:
+Deploy LyttleNGINX in **global mode** across your Docker Swarm cluster only for controlled testing while the hardening roadmap is still in progress:
 
 ```bash
 # Quick deployment with script
@@ -551,13 +590,11 @@ Deploy LyttleNGINX in **global mode** across your Docker Swarm cluster with buil
 docker stack deploy -c docker-compose.swarm.yml lyttlenginx
 ```
 
-**Key Features:**
+**Current caveats:**
 
-- ✅ Runs on every node (global mode)
-- ✅ Distributed locking prevents certificate conflicts
-- ✅ Automatic leader election for renewals
-- ✅ Zero-downtime rolling updates
-- ✅ Automatic failure recovery
+- global mode is the intended target architecture
+- the current assessment still identifies P0/P1 blockers in auth, health semantics, recovery behavior, cluster comms, and config rollout
+- use the swarm manifest for evaluation and development feedback, not as a final production deployment contract yet
 
 **View cluster status:**
 
@@ -572,11 +609,13 @@ docker service logs lyttlenginx_lyttlenginx 2>&1 | grep "LEADER"
 docker service ps lyttlenginx_lyttlenginx
 ```
 
-**📖 Complete guide:** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
+**📖 Current deployment references:** [`docker-compose.swarm.yml`](docker-compose.swarm.yml), [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md), and [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
 
 ---
 
-### Docker Compose (Single Instance)
+### Docker Compose (Single-node Evaluation)
+
+Use `docker-compose.yml` for local or single-node evaluation only. It is not yet the documented high-availability production path.
 
 **docker-compose.yml:**
 
@@ -632,7 +671,7 @@ docker-compose logs -f app
 docker-compose ps
 ```
 
-**📖 More Docker examples:** [DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)
+**📖 Current single-node references:** [`docker-compose.yml`](docker-compose.yml) and [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)
 
 ---
 
@@ -658,18 +697,30 @@ LyttleNGINX/
 │   └── utils/              # Utility functions
 ├── nginx/                  # NGINX configuration templates
 ├── prisma/                 # Database schema and migrations
-└── docs/                   # Documentation files
+├── IMPLEMENTATION_STATUS.md        # Session-by-session delivery tracker
+└── ARCHITECTURE_DECISIONS.md       # Architecture decision log
 ```
 
 ### Available Scripts
 
 ```bash
+# Repository verification
+npm run lint               # Run ESLint without modifying files
+npm run lint:fix           # Run ESLint and apply safe fixes
+npm run typecheck          # Run TypeScript type-checking
+npm run build              # Build application
+npm run verify             # Lint + typecheck + build
+npm run test               # Placeholder until Session 26 adds the test harness
+
 # Development
 npm run start:dev          # Start with hot reload
 npm run start:debug        # Start with debugger
 
-# Production
-npm run build              # Build application
+# Formatting
+npm run format             # Format with Prettier
+npm run format:check       # Check formatting without changing files
+
+# Runtime
 npm run start:prod         # Start production server
 
 # Database
@@ -681,10 +732,6 @@ npm run prisma:format      # Format Prisma schema
 # Docker
 npm run docker:build       # Build Docker image
 npm run docker:setup       # Setup for Docker
-
-# Code Quality
-npm run lint               # Run ESLint
-npm run format             # Format with Prettier
 ```
 
 ### Adding a New Feature
@@ -715,15 +762,11 @@ npm run format             # Format with Prettier
 ### Testing
 
 ```bash
-# Unit tests (when implemented)
+# Placeholder until Session 26
 npm run test
-
-# E2E tests (when implemented)
-npm run test:e2e
-
-# Test coverage (when implemented)
-npm run test:cov
 ```
+
+At the time of Session 1, the repository does **not** yet have the automated unit/integration/e2e harness required by the implementation plan. That work is explicitly tracked in Session 26.
 
 ---
 
@@ -731,30 +774,23 @@ npm run test:cov
 
 ### Complete Documentation Set
 
-1. **[README.md](README.md)** (this file) - Project overview
-2. **[API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md)** - Authentication setup and usage
-3. **[TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)** - Complete TLS guide (600+ lines)
-4. **[ENHANCED_FEATURES.md](ENHANCED_FEATURES.md)** - Enhanced features guide (500+ lines)
-5. **[API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)** - Full API documentation (700+ lines)
-6. **[API_EXAMPLES.md](API_EXAMPLES.md)** - API usage examples with curl, TypeScript, Python
-7. **[DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)** - Docker deployment examples
-8. **[TLS_QUICK_REFERENCE.md](TLS_QUICK_REFERENCE.md)** - Quick command reference
-9. **[QUICK_START_ENHANCED.md](QUICK_START_ENHANCED.md)** - Enhanced features quick start
-10. **[docs/DATABASE_CONNECTION_MANAGEMENT.md](docs/DATABASE_CONNECTION_MANAGEMENT.md)** - Connection pooling & optimization ⭐ NEW
-11. **[docs/QUICK_REFERENCE_CONNECTIONS.md](docs/QUICK_REFERENCE_CONNECTIONS.md)** - Connection monitoring quick reference ⭐ NEW
-12. **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - Deployment guide for connection fixes ⭐ NEW
-13. **[.env.example](.env.example)** - Environment configuration template
+1. **[README.md](README.md)** - current project overview and operator notes
+2. **[PRODUCTION_READINESS_ASSESSMENT.md](PRODUCTION_READINESS_ASSESSMENT.md)** - current gap analysis and remediation priorities
+3. **[IMPLEMENTATION_PLAN_BY_SESSION.md](IMPLEMENTATION_PLAN_BY_SESSION.md)** - session-by-session delivery roadmap
+4. **[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)** - live progress tracker for shipped work
+5. **[ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)** - architecture decision log
+6. **[docker-compose.yml](docker-compose.yml)** - single-node evaluation manifest
+7. **[docker-compose.swarm.yml](docker-compose.swarm.yml)** - swarm evaluation manifest and target architecture reference
+8. **[.env.example](.env.example)** - environment configuration template
 
 ### Key Topics
 
-- **Authentication** → [API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md)
-- **Certificate Management** → [TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)
-- **Database Connections** → [docs/DATABASE_CONNECTION_MANAGEMENT.md](docs/DATABASE_CONNECTION_MANAGEMENT.md) ⭐ NEW
-- **API Reference** → [API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)
-- **Examples** → [API_EXAMPLES.md](API_EXAMPLES.md)
-- **Docker** → [DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)
-- **Monitoring** → [ENHANCED_FEATURES.md](ENHANCED_FEATURES.md)
-- **Quick Reference** → [docs/QUICK_REFERENCE_CONNECTIONS.md](docs/QUICK_REFERENCE_CONNECTIONS.md) ⭐ NEW
+- **Readiness and risk register** → [PRODUCTION_READINESS_ASSESSMENT.md](PRODUCTION_READINESS_ASSESSMENT.md)
+- **Implementation roadmap** → [IMPLEMENTATION_PLAN_BY_SESSION.md](IMPLEMENTATION_PLAN_BY_SESSION.md)
+- **Delivery progress** → [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
+- **Architecture decisions** → [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)
+- **Environment setup** → [.env.example](.env.example)
+- **Deployment manifests** → [docker-compose.yml](docker-compose.yml), [docker-compose.swarm.yml](docker-compose.swarm.yml)
 
 ---
 
@@ -841,8 +877,8 @@ docker-compose logs -f app
 
 For issues and questions:
 
-1. Check [TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md) troubleshooting section
-2. Review [API_EXAMPLES.md](API_EXAMPLES.md) for usage examples
+1. Check [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md) for known gaps and risks
+2. Review [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) for the latest shipped scope
 3. Check application logs: `docker-compose logs -f app`
 
 ---
@@ -865,7 +901,7 @@ For issues and questions:
 | 🛡️ TLS 1.3       | ✅      | Modern protocols only         |
 | 🔒 OCSP Stapling  | ✅      | Enhanced performance          |
 | 📈 Monitoring     | ✅      | Daily health checks           |
-| 🐳 Docker         | ✅      | Production-ready              |
+| 🐳 Docker         | ⚠️      | Evaluation-ready, hardening in progress |
 
 ---
 
@@ -877,7 +913,7 @@ For issues and questions:
 - **Services:** 17+
 - **Controllers:** 9
 - **Modules:** 11+
-- **Build Status:** ✅ Passing
+- **Verification Status:** Scripts normalized in Session 1; full execution requires a local Node/npm toolchain
 
 ---
 
