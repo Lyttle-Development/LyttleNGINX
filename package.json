@@ -12,7 +12,7 @@
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node -e \"console.log('No automated tests are configured yet. Session 26 will add the test harness.')\"",
+    "test": "TS_NODE_PROJECT=tsconfig.test.json node --test -r ts-node/register/transpile-only test/**/*.test.js",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",

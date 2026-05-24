@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { timingSafeEqual } from 'crypto';
 
 @Injectable()
 export class AuthService {
@@ -7,7 +8,10 @@ export class AuthService {
 
   constructor() {
     // Load API keys from environment (comma-separated)
-    const apiKeys = process.env.API_KEY?.split(',').filter(Boolean) || [];
+    const apiKeys =
+      process.env.API_KEY?.split(',')
+        .map((apiKey) => apiKey.trim())
+        .filter(Boolean) || [];
     this.validApiKeys = new Set(apiKeys);
   }
 
@@ -15,15 +19,24 @@ export class AuthService {
    * Validate API key
    */
   validateApiKey(apiKey: string): boolean {
-    // If no API keys configured, allow access (development mode)
-    if (
-      this.validApiKeys.size === 0 &&
-      process.env.NODE_ENV === 'development'
-    ) {
-      return true;
+    const normalizedApiKey = apiKey.trim();
+    if (!normalizedApiKey || this.validApiKeys.size === 0) {
+      return false;
     }
 
-    return this.validApiKeys.has(apiKey);
+    const provided = Buffer.from(normalizedApiKey);
+
+    for (const validApiKey of this.validApiKeys) {
+      const candidate = Buffer.from(validApiKey);
+      if (
+        provided.length === candidate.length &&
+        timingSafeEqual(provided, candidate)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**

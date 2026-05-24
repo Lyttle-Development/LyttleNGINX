@@ -8,8 +8,10 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 @Controller('.well-known/acme-challenge')
+@Public()
 export class AcmeController {
   private readonly logger = new Logger(AcmeController.name);
 

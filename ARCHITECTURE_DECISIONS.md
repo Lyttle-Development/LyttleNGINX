@@ -21,6 +21,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-003 | Standard repository verification contract | accepted | Session 1 | 2026-05-24 |
 | ADR-004 | Deployment mode expectations | accepted | Session 1 | 2026-05-24 |
 | ADR-005 | Secret material stays out of git | accepted | Session 2 | 2026-05-24 |
+| ADR-006 | Authenticated-by-default control-plane API | accepted | Session 3 | 2026-05-24 |
 
 ---
 
@@ -168,4 +169,37 @@ Adopt the following repository policy:
 - future delivery sessions should preserve the distinction between safe examples and runtime secret injection
 - operators have an explicit default for where production secrets should live even before first-class secret-provider integration lands
 - later sessions can add `_FILE` support or deeper secret-provider integrations without changing the repository rule that sensitive material must stay out of git
+
+---
+
+## ADR-006 — Authenticated-by-default control-plane API
+
+- Status: accepted
+- Session: Session 3 — Lock down public mutating endpoints
+- Date: 2026-05-24
+
+### Context
+
+The production-readiness assessment identified several P0 write endpoints that were publicly reachable, including certificate upload, self-signed certificate generation, certificate sync, and DH parameter generation. The repository also relied on per-endpoint guard annotations, which made it easy to miss new routes and accidentally expose control-plane functionality.
+
+### Decision
+
+Adopt an authenticated-by-default API policy for the NestJS control plane:
+
+1. register the API-key guard globally so admin and internal-control endpoints require authentication unless explicitly marked otherwise
+2. keep a small, explicit public allowlist using a `@Public()` decorator
+3. limit the current public allowlist to:
+   - `GET /health`
+   - `GET /ready`
+   - `GET /metrics`
+   - `GET /metrics/json`
+   - `GET /.well-known/acme-challenge/:token`
+4. remove the previous development-mode bypass that made protected endpoints public when `API_KEY` was unset
+
+### Consequences
+
+- new endpoints are protected by default, which reduces the chance of future accidental public mutations
+- operators must configure `API_KEY` even in local evaluation when they need to access admin endpoints
+- public observability and ACME flows remain available, but all other current API surfaces should be treated as admin/control-plane endpoints
+- Session 7 and Session 8 can build on this deny-by-default posture when introducing richer identity and RBAC models
 

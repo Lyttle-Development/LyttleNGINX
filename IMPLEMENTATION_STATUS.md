@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 0 — Delivery setup and guardrails
-- Most recently completed session: Session 2 — Dependency hygiene and secret-handling cleanup (followed by 2026-05-24 dependency/toolchain refresh)
-- Next recommended session from the roadmap: Session 3 — Lock down public mutating endpoints
+- Current phase: Phase 1 — Emergency hardening and correctness fixes
+- Most recently completed session: Session 3 — Lock down public mutating endpoints
+- Next recommended session from the roadmap: Session 4 — Fix health, readiness, liveness, and startup semantics
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -78,13 +78,40 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 1 — Emergency hardening and correctness fixes
 
 ## Session 3 — Lock down public mutating endpoints
-- Status: not started
+- Status: done
 - Objective: require auth on all mutating endpoints and define the public allowlist
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: public write endpoints remain a P0 issue until addressed
-- Follow-up sessions: Session 7, Session 8, Session 26
-- Notes: recommended as the next implementation session in the roadmap
+- Files touched:
+  - `package.json`
+  - `README.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `tsconfig.json`
+  - `tsconfig.test.json`
+  - `src/auth/auth.module.ts`
+  - `src/auth/auth.service.ts`
+  - `src/auth/decorators/public.decorator.ts`
+  - `src/auth/guards/api-key.guard.ts`
+  - `src/certificate/acme.controller.ts`
+  - `src/health/health.controller.ts`
+  - `src/metrics/metrics.controller.ts`
+  - `test/session3/auth-lockdown.test.js`
+- Tests added/updated:
+  - added `test/session3/auth-lockdown.test.js` to prove unauthenticated writes are rejected and explicit public probe endpoints remain reachable
+  - wired `npm run test` to execute the Session 3 regression checks with Node's built-in test runner
+  - verified the focused access-control test suite passes locally
+- Risks:
+  - authentication is still API-key based only; Session 7 and Session 8 remain responsible for real identity and RBAC
+  - internal node-to-node traffic still shares the same auth mechanism and is not yet mTLS-protected
+  - health/readiness semantics are still shallow until Session 4 lands
+- Follow-up sessions:
+  - Session 4 — fix health, readiness, liveness, and startup semantics
+  - Session 7 — introduce a real auth foundation
+  - Session 8 — add RBAC and authorization policies
+  - Session 26 — expand automated test coverage beyond the current focused regression set
+- Notes:
+  - admin and internal-control endpoints are now authenticated by default through a global guard
+  - the explicit public allowlist is currently limited to health probes, metrics, and the ACME challenge endpoint
+  - removed the previous development-mode auth bypass so write endpoints no longer become public when `API_KEY` is unset
 
 ## Session 4 — Fix health, readiness, liveness, and startup semantics
 - Status: not started

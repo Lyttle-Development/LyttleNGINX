@@ -5,6 +5,7 @@
   <img src="https://img.shields.io/badge/readiness-not--production--ready-critical" alt="Readiness" />
   <img src="https://img.shields.io/badge/session%201-complete-blue" alt="Session 1" />
   <img src="https://img.shields.io/badge/session%202-complete-blue" alt="Session 2" />
+  <img src="https://img.shields.io/badge/session%203-complete-blue" alt="Session 3" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -18,9 +19,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 0 in progress
-- **Completed in Sessions 1-2 plus follow-up maintenance:** delivery scaffolding, status tracking, dependency hygiene for known direct CVEs, secret-handling cleanup for publishable env examples, and a full npm/toolchain refresh to the latest available package set on 2026-05-24
-- **Next recommended implementation session:** Session 3 — lock down public mutating endpoints
+- **Roadmap status:** Phase 1 in progress
+- **Completed in Sessions 1-3 plus follow-up maintenance:** delivery scaffolding, status tracking, dependency hygiene for known direct CVEs, secret-handling cleanup for publishable env examples, a full npm/toolchain refresh to the latest available package set on 2026-05-24, and Session 3 endpoint lockdown with authenticated-by-default admin APIs plus a targeted regression test pass
+- **Next recommended implementation session:** Session 4 — fix health, readiness, liveness, and startup semantics
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -53,7 +54,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` is currently an explicit placeholder until Session 26 adds the automated test harness.
+`npm run test` now runs the focused Session 3 regression tests for API access control. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -212,8 +213,9 @@ curl http://localhost:3000/ready
 # View metrics
 curl http://localhost:3000/metrics/json
 
-# List certificates
-curl http://localhost:3000/certificates
+# List certificates (admin API key required)
+curl http://localhost:3000/certificates \
+  -H "X-API-Key: $API_KEY"
 ```
 
 **🎉 You're ready to go!**
@@ -351,54 +353,69 @@ npm run prisma:migrate
 
 ## 📚 API Documentation
 
+### Session 3 access policy
+
+As of Session 3, the control-plane API is **authenticated by default**.
+
+The current explicit public allowlist is limited to:
+
+- `GET /health`
+- `GET /ready`
+- `GET /metrics`
+- `GET /metrics/json`
+- `GET /.well-known/acme-challenge/:token`
+
+All other endpoints should be treated as admin or internal control-plane endpoints and require `X-API-Key` (or `Authorization: ApiKey <key>`).
+
 ### Certificate Endpoints
 
-| Method | Endpoint                             | Description                       |
-|--------|--------------------------------------|-----------------------------------|
-| GET    | `/certificates`                      | List all certificates with status |
-| GET    | `/certificates/:id`                  | Get certificate details           |
-| POST   | `/certificates/upload`               | Upload custom certificate         |
-| POST   | `/certificates/generate-self-signed` | Generate self-signed cert         |
-| POST   | `/certificates/renew/:id`            | Renew specific certificate        |
-| POST   | `/certificates/renew-all`            | Renew all certificates            |
-| DELETE | `/certificates/:id`                  | Delete certificate                |
-| GET    | `/certificates/validate/:domain`     | Validate domain                   |
+| Method | Endpoint                             | Description                       | Auth     |
+|--------|--------------------------------------|-----------------------------------|----------|
+| GET    | `/certificates`                      | List all certificates with status | Required |
+| GET    | `/certificates/:id`                  | Get certificate details           | Required |
+| POST   | `/certificates/upload`               | Upload custom certificate         | Required |
+| POST   | `/certificates/generate-self-signed` | Generate self-signed cert         | Required |
+| POST   | `/certificates/renew/:id`            | Renew specific certificate        | Required |
+| POST   | `/certificates/renew-all`            | Renew all certificates            | Required |
+| DELETE | `/certificates/:id`                  | Delete certificate                | Required |
+| GET    | `/certificates/validate/:domain`     | Validate domain                   | Required |
+| POST   | `/certificates/sync`                 | Trigger certificate sync          | Required |
 
 ### Backup Endpoints
 
-| Method | Endpoint                          | Description         |
-|--------|-----------------------------------|---------------------|
-| POST   | `/certificates/backup`            | Create backup       |
-| GET    | `/certificates/backup`            | List backups        |
-| GET    | `/certificates/backup/:filename`  | Download backup     |
-| DELETE | `/certificates/backup/:filename`  | Delete backup       |
-| POST   | `/certificates/backup/import`     | Import certificates |
-| GET    | `/certificates/backup/export/:id` | Export certificate  |
+| Method | Endpoint                          | Description         | Auth     |
+|--------|-----------------------------------|---------------------|----------|
+| POST   | `/certificates/backup`            | Create backup       | Required |
+| GET    | `/certificates/backup`            | List backups        | Required |
+| GET    | `/certificates/backup/:filename`  | Download backup     | Required |
+| DELETE | `/certificates/backup/:filename`  | Delete backup       | Required |
+| POST   | `/certificates/backup/import`     | Import certificates | Required |
+| GET    | `/certificates/backup/export/:id` | Export certificate  | Required |
 
 ### Metrics Endpoints
 
-| Method | Endpoint        | Description        |
-|--------|-----------------|--------------------|
-| GET    | `/metrics`      | Prometheus metrics |
-| GET    | `/metrics/json` | JSON metrics       |
+| Method | Endpoint        | Description        | Auth   |
+|--------|-----------------|--------------------|--------|
+| GET    | `/metrics`      | Prometheus metrics | Public |
+| GET    | `/metrics/json` | JSON metrics       | Public |
 
 ### TLS Configuration Endpoints
 
-| Method | Endpoint                          | Description         |
-|--------|-----------------------------------|---------------------|
-| GET    | `/tls/config/:domain`             | Get TLS config      |
-| GET    | `/tls/test/:domain`               | Test TLS connection |
-| POST   | `/tls/dhparam`                    | Generate DH params  |
-| GET    | `/tls/dhparam/status`             | Check DH params     |
-| POST   | `/tls/certificate/info`           | Parse certificate   |
-| POST   | `/tls/certificate/validate-chain` | Validate chain      |
+| Method | Endpoint                          | Description         | Auth     |
+|--------|-----------------------------------|---------------------|----------|
+| GET    | `/tls/config/:domain`             | Get TLS config      | Required |
+| GET    | `/tls/test/:domain`               | Test TLS connection | Required |
+| POST   | `/tls/dhparam`                    | Generate DH params  | Required |
+| GET    | `/tls/dhparam/status`             | Check DH params     | Required |
+| POST   | `/tls/certificate/info`           | Parse certificate   | Required |
+| POST   | `/tls/certificate/validate-chain` | Validate chain      | Required |
 
 ### Authentication Endpoints
 
 | Method | Endpoint       | Description                 | Auth     |
 |--------|----------------|-----------------------------|----------|
 | GET    | `/auth/status` | Check authentication status | Required |
-| GET    | `/auth/info`   | Get auth configuration info | Public   |
+| GET    | `/auth/info`   | Get auth configuration info | Required |
 
 ### Health Endpoints
 
@@ -406,7 +423,13 @@ npm run prisma:migrate
 |--------|------------------|---------------------|--------|
 | GET    | `/health`        | Health check        | Public |
 | GET    | `/ready`         | Readiness check     | Public |
-| POST   | `/health/reload` | Reload NGINX config | Public |
+| POST   | `/reload`        | Reload NGINX config | Required |
+
+### ACME Challenge Endpoint
+
+| Method | Endpoint                             | Description               | Auth   |
+|--------|--------------------------------------|---------------------------|--------|
+| GET    | `/.well-known/acme-challenge/:token` | Serve ACME challenge data | Public |
 
 **📖 API documentation status:** a refreshed API reference is still pending; for now, use the controller source under `src/`, `IMPLEMENTATION_STATUS.md`, and `PRODUCTION_READINESS_ASSESSMENT.md` as the current references.
 
@@ -436,6 +459,7 @@ The system will:
 
 ```bash
 curl -X POST http://localhost:3000/certificates/upload \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "domains": ["example.com", "www.example.com"],
@@ -451,6 +475,7 @@ Perfect for development and testing:
 
 ```bash
 curl -X POST http://localhost:3000/certificates/generate-self-signed \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"domains": ["localhost", "*.localhost"]}'
 ```
@@ -465,7 +490,8 @@ Certificates have three statuses:
 
 ```bash
 # Check certificate status
-curl http://localhost:3000/certificates | jq '.[] | {domain: .domains[0], status, days: .daysUntilExpiry}'
+curl http://localhost:3000/certificates \
+  -H "X-API-Key: $API_KEY" | jq '.[] | {domain: .domains[0], status, days: .daysUntilExpiry}'
 ```
 
 ---
@@ -549,7 +575,8 @@ The monitoring service runs **daily at 9 AM** automatically.
 ### Create Backup
 
 ```bash
-curl -X POST http://localhost:3000/certificates/backup
+curl -X POST http://localhost:3000/certificates/backup \
+  -H "X-API-Key: $API_KEY"
 ```
 
 Creates a ZIP file containing:
@@ -562,13 +589,15 @@ Creates a ZIP file containing:
 ### List Backups
 
 ```bash
-curl http://localhost:3000/certificates/backup
+curl http://localhost:3000/certificates/backup \
+  -H "X-API-Key: $API_KEY"
 ```
 
 ### Download Backup
 
 ```bash
 curl http://localhost:3000/certificates/backup/certificates-backup-2025-11-22.zip \
+  -H "X-API-Key: $API_KEY" \
   --output backup.zip
 ```
 
@@ -580,6 +609,7 @@ unzip backup.zip
 
 # Import certificates
 curl -X POST http://localhost:3000/certificates/backup/import \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d @certificates.json
 ```
@@ -592,9 +622,9 @@ curl -X POST http://localhost:3000/certificates/backup/import \
 #!/bin/bash
 # /scripts/backup-daily.sh
 
-curl -X POST http://localhost:3000/certificates/backup
-FILENAME=$(curl -s http://localhost:3000/certificates/backup | jq -r '.[0].filename')
-curl http://localhost:3000/certificates/backup/$FILENAME -o /backups/$FILENAME
+curl -X POST http://localhost:3000/certificates/backup -H "X-API-Key: $API_KEY"
+FILENAME=$(curl -s http://localhost:3000/certificates/backup -H "X-API-Key: $API_KEY" | jq -r '.[0].filename')
+curl http://localhost:3000/certificates/backup/$FILENAME -H "X-API-Key: $API_KEY" -o /backups/$FILENAME
 ```
 
 **Add to crontab:**
