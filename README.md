@@ -4,6 +4,7 @@
   <img src="https://img.shields.io/badge/status-roadmap--in--progress-yellow" alt="Status" />
   <img src="https://img.shields.io/badge/readiness-not--production--ready-critical" alt="Readiness" />
   <img src="https://img.shields.io/badge/session%201-complete-blue" alt="Session 1" />
+  <img src="https://img.shields.io/badge/session%202-complete-blue" alt="Session 2" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -18,7 +19,7 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 0 in progress
-- **Completed in Session 1:** delivery scaffolding, status tracking, architecture decision logging, and normalized verification scripts
+- **Completed in Sessions 1-2:** delivery scaffolding, status tracking, dependency hygiene for known direct CVEs, and secret-handling cleanup for publishable env examples
 - **Next recommended implementation session:** Session 3 — lock down public mutating endpoints
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
@@ -167,11 +168,13 @@ cp .env.example .env
 nano .env
 ```
 
+Use `.env` only for local evaluation. Do **not** commit `.env`, `.env.local`, `.env.production`, or any other live secret file.
+
 **Minimum Configuration:**
 
 ```bash
 # Connection pooling is automatically configured, but you can customize:
-DATABASE_URL=postgresql://user:password@localhost:5432/lyttlenginx?connection_limit=10&pool_timeout=10&connect_timeout=10
+DATABASE_URL=postgresql://user:<db-password>@localhost:5432/lyttlenginx?connection_limit=10&pool_timeout=10&connect_timeout=10
 ADMIN_EMAIL=admin@example.com
 NODE_ENV=production
 ```
@@ -268,10 +271,28 @@ docker-compose logs -f app
 #### Required
 
 ```bash
-DATABASE_URL=postgresql://user:pass@host:5432/db
+DATABASE_URL=postgresql://user:<db-password>@host:5432/db
 ADMIN_EMAIL=admin@example.com        # For Let's Encrypt
 NODE_ENV=production                  # production | development
 ```
+
+### Secret handling policy
+
+The repository is intentionally configured so that only `.env.example` is tracked. Real runtime secrets must stay outside git.
+
+- **Local/single-node evaluation:** keep secrets in an untracked `.env` file on the operator workstation.
+- **Docker Swarm:** store sensitive values as Swarm secrets and inject them at deploy time instead of hard-coding them into compose files or committed env files.
+- **External secret stores:** Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or equivalent are preferred for long-lived production credentials.
+- **Current implementation note:** the app still consumes environment variables directly. Until first-class `*_FILE` support or a dedicated secret-provider integration is added, have the deployment system materialize secret values at runtime rather than committing them.
+
+Treat at least the following as secret material:
+
+- `DATABASE_URL`
+- `API_KEY`
+- `SMTP_PASS`
+- `SLACK_WEBHOOK_URL`
+- `DISCORD_WEBHOOK_URL`
+- certificate private keys, backup archives, and exported PEM material
 
 #### TLS Configuration
 
@@ -288,15 +309,15 @@ ALERT_FROM_EMAIL=noreply@example.com
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
+SMTP_USER=alerts@example.com
+SMTP_PASS=<inject-at-runtime>
 
 # Alert Threshold
 ALERT_THRESHOLD_DAYS=14             # Alert when expiring within X days
 
 # Webhook Alerts
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+SLACK_WEBHOOK_URL=<inject-at-runtime>
+DISCORD_WEBHOOK_URL=<inject-at-runtime>
 ```
 
 #### Backup Configuration
@@ -582,6 +603,8 @@ curl http://localhost:3000/certificates/backup/$FILENAME -o /backups/$FILENAME
 
 Deploy LyttleNGINX in **global mode** across your Docker Swarm cluster only for controlled testing while the hardening roadmap is still in progress:
 
+> **Secret handling for Swarm:** keep live credentials out of committed env files. Store them as Swarm secrets or in an external secret manager, then inject them at deployment time. Session 2 cleaned up the tracked examples and documentation, but runtime secret-file ingestion is still future work.
+
 ```bash
 # Quick deployment with script
 ./deploy-swarm.sh
@@ -658,7 +681,7 @@ volumes:
 
 ```bash
 # Create .env file
-echo "POSTGRES_PASSWORD=your-secure-password" > .env
+echo "POSTGRES_PASSWORD=<local-only-password>" > .env
 echo "ADMIN_EMAIL=admin@example.com" >> .env
 
 # Start services
@@ -670,6 +693,8 @@ docker-compose logs -f app
 # Check status
 docker-compose ps
 ```
+
+For any environment beyond local/single-node evaluation, prefer Swarm secrets or an external secret store over checked-in or shared `.env` files.
 
 **📖 Current single-node references:** [`docker-compose.yml`](docker-compose.yml) and [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)
 

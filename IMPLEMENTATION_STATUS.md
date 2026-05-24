@@ -9,7 +9,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 0 — Delivery setup and guardrails
-- Most recently completed session: Session 1 — Delivery scaffolding and progress tracking
+- Most recently completed session: Session 2 — Dependency hygiene and secret-handling cleanup
 - Next recommended session from the roadmap: Session 3 — Lock down public mutating endpoints
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
@@ -42,13 +42,35 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - documented current expectations for local, single-node, and swarm deployment modes in `README.md`
 
 ## Session 2 — Dependency hygiene and secret-handling cleanup
-- Status: not started
+- Status: done
 - Objective: remove immediate supply-chain and secret risks
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: vulnerable dependencies and secret-handling guidance remain open until this session ships
-- Follow-up sessions: Session 28
-- Notes: direct dependency upgrades and secret-handling docs are still pending
+- Files touched:
+  - `package.json`
+  - `package-lock.json`
+  - `.gitignore`
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+- Tests added/updated:
+  - no automated tests yet; Session 26 remains the dedicated test-harness milestone
+  - validated direct npm CVE fixes against the upgraded target versions
+  - verified via git that only `.env.example` is tracked among env files
+- Risks:
+  - the application still relies on direct environment-variable injection; first-class `*_FILE` or secret-provider integration remains future work
+  - broader automated dependency scanning and release gating remain deferred to Session 28
+  - lockfile regeneration could not be performed with npm in this workspace, so the lockfile was updated manually using npm registry metadata for the patched versions
+- Follow-up sessions:
+  - Session 3 — lock down public mutating endpoints
+  - Session 19 — encrypt private key material at rest
+  - Session 20 — harden backup, export, import, and restore flows
+  - Session 23 — add security administration APIs
+  - Session 28 — upgrade CI/CD and release gating
+- Notes:
+  - upgraded the direct dependency versions called out in the assessment (`@nestjs/core`-aligned Nest packages and `nodemailer`)
+  - tightened `.gitignore` so live env files, generated key material, and backup artifacts stay out of git while keeping `.env.example` tracked
+  - rewrote `.env.example` to use safe placeholders and explicit runtime-injection guidance
+  - documented Docker Swarm secrets and external secret-manager expectations in `README.md`
 
 ---
 

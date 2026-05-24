@@ -20,6 +20,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-002 | Session-based delivery model | accepted | Session 1 | 2026-05-24 |
 | ADR-003 | Standard repository verification contract | accepted | Session 1 | 2026-05-24 |
 | ADR-004 | Deployment mode expectations | accepted | Session 1 | 2026-05-24 |
+| ADR-005 | Secret material stays out of git | accepted | Session 2 | 2026-05-24 |
 
 ---
 
@@ -139,4 +140,32 @@ Document three explicit deployment expectations:
 - operator documentation must distinguish current support level from target architecture
 - deployment examples should prefer clarity over overclaiming readiness
 - later sessions should tighten each mode's docs and manifests without erasing the current warning state
+
+---
+
+## ADR-005 — Secret material stays out of git
+
+- Status: accepted
+- Session: Session 2 — Dependency hygiene and secret-handling cleanup
+- Date: 2026-05-24
+
+### Context
+
+The production-readiness assessment identified secret handling as an immediate risk area. The repository already tracked only `.env.example`, but the ignore rules and operator docs did not clearly define which files and artifacts must stay out of version control or where production secrets should come from.
+
+### Decision
+
+Adopt the following repository policy:
+
+1. `.env.example` remains the only env template intended for git tracking.
+2. Live env overrides such as `.env`, `.env.local`, `.env.production`, and other `.env.*` files must remain untracked.
+3. Generated certificate/key material and backup artifacts must also remain untracked.
+4. Production secret sources should be Docker Swarm secrets or an external secret manager such as Vault or a cloud secret-management service.
+5. Published examples and docs must use placeholders, not live-looking credentials.
+
+### Consequences
+
+- future delivery sessions should preserve the distinction between safe examples and runtime secret injection
+- operators have an explicit default for where production secrets should live even before first-class secret-provider integration lands
+- later sessions can add `_FILE` support or deeper secret-provider integrations without changing the repository rule that sensitive material must stay out of git
 

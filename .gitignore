@@ -6,8 +6,25 @@ venv
 .git
 cogs/.DS_Store
 .DS_Store
+
+# Local secrets and environment overrides
 .env
+.env.*
+!.env.example
 *.env
+.envrc
+*.local
+secrets/
+
+# Generated certificate and backup material
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+certs/
+backups/
 
 # Logs
 *.log
@@ -79,9 +96,6 @@ typings/
 # Yarn Integrity file
 .yarn-integrity
 
-# dotenv environment variables file
-.env
-.env.test
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
