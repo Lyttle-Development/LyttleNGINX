@@ -30,9 +30,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 4 in progress
-- **Completed in Sessions 1-14 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, and validated allowlisted custom NGINX fragments
-- **Next recommended implementation session:** Session 15 — add strict domain validation and safe process execution
+- **Roadmap status:** Phase 5 in progress
+- **Completed in Sessions 1-15 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, and strict certificate-domain validation with safe process execution
+- **Next recommended implementation session:** Session 16 — add certificate order state machine
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -594,6 +594,14 @@ The system will:
 3. Update config with HTTPS + HTTP→HTTPS redirect
 4. Auto-renew when within `RENEW_BEFORE_DAYS` threshold
 
+Certificate domain input is now normalized and validated strictly before any filesystem or process interaction:
+
+- domains must be fully-qualified (`example.com`, not `localhost`)
+- internationalized domains are normalized to ASCII/punycode
+- wildcard domains must use the left-most `*.` form
+- path separators, whitespace, control characters, and shell metacharacter tricks are rejected early
+- wildcard issuance is currently rejected for the built-in ACME flow because the current implementation is still HTTP-01-based and DNS-01 support has not landed yet
+
 ### Upload Custom Certificate
 
 ```bash
@@ -616,7 +624,7 @@ Perfect for development and testing:
 curl -X POST http://localhost:3000/certificates/generate-self-signed \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"domains": ["localhost", "*.localhost"]}'
+  -d '{"domains": ["example.test", "*.example.test"]}'
 ```
 
 ### Certificate Status
@@ -721,8 +729,8 @@ curl -X POST http://localhost:3000/certificates/backup \
 Creates a ZIP file containing:
 
 - `certificates.json` - Database export
-- `certs/{domain}/fullchain.pem` - Certificate files
-- `certs/{domain}/privkey.pem` - Private keys
+- `certs/{certificate-storage-id}/fullchain.pem` - Certificate files
+- `certs/{certificate-storage-id}/privkey.pem` - Private keys
 - `metadata.json` - Backup metadata
 
 ### List Backups

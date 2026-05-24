@@ -23,6 +23,7 @@ import {
 } from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { Audit } from '../audit/decorators/audit.decorator';
+import { NormalizedDomainPipe } from '../utils/pipes/normalized-domain.pipe';
 
 @Controller('certificates')
 @AuthorizeAdmin('viewer')
@@ -136,7 +137,9 @@ export class CertificateController {
   }
 
   @Get('validate/:domain')
-  async validateDomain(@Param('domain') domain: string) {
+  async validateDomain(
+    @Param('domain', new NormalizedDomainPipe()) domain: string,
+  ) {
     return this.certificateService.validateDomainForCertificate(domain);
   }
 

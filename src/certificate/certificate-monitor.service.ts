@@ -42,7 +42,7 @@ export class CertificateMonitorService implements OnModuleInit {
         const daysUntilExpiry = Math.ceil(
           (cert.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
         );
-        const domains = parseDomains(cert.domains);
+        const domains = parseDomains(cert.domains, { allowWildcard: true });
 
         if (daysUntilExpiry < 0) {
           // Certificate has expired
@@ -109,7 +109,7 @@ export class CertificateMonitorService implements OnModuleInit {
 
         return {
           id: cert.id,
-          domains: parseDomains(cert.domains),
+          domains: parseDomains(cert.domains, { allowWildcard: true }),
           expiresAt: cert.expiresAt,
           daysUntilExpiry,
           status,

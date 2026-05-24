@@ -17,7 +17,11 @@ export class CertificateCleanupService {
     this.logger.log('Fetching all ProxyEntry domain hashes...');
     const entries = await this.prisma.proxyEntry.findMany();
     const usedDomainHashes = new Set(
-      entries.map((e) => hashDomains(parseDomains(e.domains))),
+      entries.map((e) =>
+        hashDomains(parseDomains(e.domains, { allowWildcard: true }), {
+          allowWildcard: true,
+        }),
+      ),
     );
     this.logger.log(
       `Found ${usedDomainHashes.size} unique ProxyEntry domain hashes in use.`,

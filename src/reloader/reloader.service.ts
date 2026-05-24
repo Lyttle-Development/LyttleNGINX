@@ -28,6 +28,7 @@ import { TlsConfigService } from '../certificate/tls-config.service';
 import { lookup } from 'dns/promises'; // <-- Added
 import { HealthService } from '../health/health.service';
 import { extractManagedPathsFromCustomCode } from '../nginx/nginx-custom-code';
+import { getCertificateStorageName, parseDomains } from '../utils/domain-utils';
 
 const NGINX_ETC_DIR = process.env['NGINX_ETC_DIR'] ?? '/etc/nginx';
 const NGINX_SOURCE_DIR =
@@ -36,10 +37,7 @@ const NGINX_LOG_DIR = process.env['NGINX_LOG_DIR'] ?? '/var/log/nginx';
 const NGINX_RUNTIME_DIR = join(NGINX_ETC_DIR, 'runtime');
 const NGINX_RELEASES_DIR = join(NGINX_RUNTIME_DIR, 'releases');
 const NGINX_CURRENT_RELEASE_LINK = join(NGINX_RUNTIME_DIR, 'current');
-const NGINX_LAST_KNOWN_GOOD_LINK = join(
-  NGINX_RUNTIME_DIR,
-  'last-known-good',
-);
+const NGINX_LAST_KNOWN_GOOD_LINK = join(NGINX_RUNTIME_DIR, 'last-known-good');
 const NGINX_RELEASE_METADATA_FILE = 'lyttle-nginx-release.json';
 const RELEASE_RETENTION_COUNT = 5;
 
@@ -139,14 +137,12 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
       for (const entry of entries) {
         try {
           if (!entry.ssl) continue;
-          const domains = entry.domains
-            .split(';')
-            .map((d) => d.trim())
-            .filter(Boolean);
+          const domains = parseDomains(entry.domains, { allowWildcard: true });
           if (domains.length === 0) continue;
           const primaryDomain = domains[0];
-          const certPath = `/etc/letsencrypt/live/${primaryDomain}/fullchain.pem`;
-          const keyPath = `/etc/letsencrypt/live/${primaryDomain}/privkey.pem`;
+          const certStorageName = getCertificateStorageName(primaryDomain);
+          const certPath = `/etc/letsencrypt/live/${certStorageName}/fullchain.pem`;
+          const keyPath = `/etc/letsencrypt/live/${certStorageName}/privkey.pem`;
           if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
             this.logger.log(
               `Certificate missing for ${primaryDomain}, calling ensureCertificate`,
@@ -369,7 +365,9 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
   private async ensureRuntimeLayout(): Promise<void> {
     await mkdir(NGINX_RELEASES_DIR, { recursive: true });
 
-    let currentReleasePath = await this.getSymlinkTarget(NGINX_CURRENT_RELEASE_LINK);
+    let currentReleasePath = await this.getSymlinkTarget(
+      NGINX_CURRENT_RELEASE_LINK,
+    );
     if (!currentReleasePath) {
       currentReleasePath = await this.createBootstrapRelease();
       await this.updateSymlinkAtomically(
@@ -466,8 +464,7 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
         previousReleasePath,
         failedReleasePath: releasePath,
         validationOutput,
-        activationError:
-          error instanceof Error ? error.message : String(error),
+        activationError: error instanceof Error ? error.message : String(error),
       });
     }
 
@@ -556,9 +553,15 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
 
   private async writeValidationConfig(releasePath: string): Promise<string> {
     const validationConfigPath = join(releasePath, '.validation-nginx.conf');
-    const bundledConfig = await readFile(join(releasePath, 'nginx.conf'), 'utf8');
+    const bundledConfig = await readFile(
+      join(releasePath, 'nginx.conf'),
+      'utf8',
+    );
     const validationConfig = bundledConfig
-      .replace(/^pid\s+.*;$/m, `pid ${join(releasePath, '.validation-nginx.pid')};`)
+      .replace(
+        /^pid\s+.*;$/m,
+        `pid ${join(releasePath, '.validation-nginx.pid')};`,
+      )
       .replaceAll('/etc/nginx/mime.types', join(releasePath, 'mime.types'))
       .replaceAll(
         '/etc/nginx/runtime/current/conf.d/*.conf',
@@ -570,7 +573,9 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
     return validationConfigPath;
   }
 
-  private async rewriteBundledDefaultConfig(releasePath: string): Promise<void> {
+  private async rewriteBundledDefaultConfig(
+    releasePath: string,
+  ): Promise<void> {
     const defaultConfPath = join(releasePath, 'conf.d', 'default.conf');
     if (!(await this.pathExists(defaultConfPath))) {
       return;
@@ -608,7 +613,11 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
     try {
       return await readlink(linkPath);
     } catch (error) {
-      if (['ENOENT', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+      if (
+        ['ENOENT', 'EINVAL'].includes(
+          (error as NodeJS.ErrnoException).code ?? '',
+        )
+      ) {
         return null;
       }
       throw error;
@@ -624,7 +633,9 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
   private async pruneOldReleases(
     retainedReleasePaths: Array<string | null>,
   ): Promise<void> {
-    const lastKnownGoodPath = await this.getSymlinkTarget(NGINX_LAST_KNOWN_GOOD_LINK);
+    const lastKnownGoodPath = await this.getSymlinkTarget(
+      NGINX_LAST_KNOWN_GOOD_LINK,
+    );
     const protectedPaths = new Set(
       [...retainedReleasePaths, lastKnownGoodPath]
         .filter((value): value is string => Boolean(value))
@@ -695,4 +706,3 @@ type ActivatedRelease = {
   phase: string;
   validationOutput: string;
 };
-

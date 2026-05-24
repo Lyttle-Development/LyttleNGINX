@@ -4,6 +4,13 @@ import archiver from 'archiver';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Readable } from 'stream';
+import {
+  getCertificateStorageName,
+  hashDomains,
+  joinDomains,
+  normalizeDomains,
+  parseDomains,
+} from '../utils/domain-utils';
 
 @Injectable()
 export class CertificateBackupService {
@@ -51,8 +58,8 @@ export class CertificateBackupService {
 
           // Add individual certificate files
           certificates.forEach((cert) => {
-            const domains = cert.domains.split(';')[0].trim();
-            const prefix = `certs/${domains}`;
+            const domains = parseDomains(cert.domains, { allowWildcard: true });
+            const prefix = `certs/${getCertificateStorageName(domains[0])}`;
 
             archive.append(cert.certPem, { name: `${prefix}/fullchain.pem` });
             archive.append(cert.keyPem, { name: `${prefix}/privkey.pem` });
@@ -87,7 +94,7 @@ export class CertificateBackupService {
     return {
       certPem: cert.certPem,
       keyPem: cert.keyPem,
-      domains: cert.domains.split(';').map((d) => d.trim()),
+      domains: parseDomains(cert.domains, { allowWildcard: true }),
     };
   }
 
@@ -106,15 +113,21 @@ export class CertificateBackupService {
 
     for (const cert of data) {
       try {
+        const normalizedDomains = normalizeDomains(cert.domains, {
+          allowWildcard: true,
+        });
+
         // Check if certificate already exists
-        const domainsStr = cert.domains.join(';');
+        const domainsStr = joinDomains(normalizedDomains, {
+          allowWildcard: true,
+        });
         const existing = await this.prisma.certificate.findFirst({
           where: { domains: domainsStr },
         });
 
         if (existing) {
           this.logger.log(
-            `[Import] Skipping existing cert: ${cert.domains[0]}`,
+            `[Import] Skipping existing cert: ${normalizedDomains[0]}`,
           );
           results.skipped++;
           continue;
@@ -124,7 +137,9 @@ export class CertificateBackupService {
         await this.prisma.certificate.create({
           data: {
             domains: domainsStr,
-            domainsHash: this.hashDomains(cert.domains),
+            domainsHash: hashDomains(normalizedDomains, {
+              allowWildcard: true,
+            }),
             certPem: cert.certPem,
             keyPem: cert.keyPem,
             expiresAt: new Date(cert.expiresAt),
@@ -134,7 +149,7 @@ export class CertificateBackupService {
           },
         });
 
-        this.logger.log(`[Import] Imported cert: ${cert.domains[0]}`);
+        this.logger.log(`[Import] Imported cert: ${normalizedDomains[0]}`);
         results.imported++;
       } catch (error) {
         this.logger.error(
@@ -189,11 +204,5 @@ export class CertificateBackupService {
       fs.unlinkSync(filepath);
       this.logger.log(`[Backup] Deleted: ${filename}`);
     }
-  }
-
-  private hashDomains(domains: string[]): string {
-    const crypto = require('crypto');
-    const sorted = [...domains].sort();
-    return crypto.createHash('sha256').update(sorted.join(';')).digest('hex');
   }
 }

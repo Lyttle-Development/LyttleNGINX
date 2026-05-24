@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 4 — Configuration rollout and rollback safety
-- Most recently completed session: Session 14 — Restrict or redesign `nginx_custom_code`
-- Next recommended session from the roadmap: Session 15 — Add strict domain validation and safe process execution
+- Current phase: Phase 5 — Certificate lifecycle redesign
+- Most recently completed session: Session 15 — Add strict domain validation and safe process execution
+- Next recommended session from the roadmap: Session 16 — Add certificate order state machine
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -529,13 +529,48 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 15 — Add strict domain validation and safe process execution
 
-- Status: not started
+- Status: done
 - Objective: reject malformed domains early and stop using unsafe shell interpolation
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: command injection and unsafe path derivation remain open
-- Follow-up sessions: Session 16, Session 18, Session 20, Session 26
-- Notes: domain normalization rules need to become explicit
+- Files touched:
+  - `src/utils/domain-utils.ts`
+  - `src/utils/process-utils.ts`
+  - `src/utils/pipes/normalized-domain.pipe.ts`
+  - `src/certificate/dto/domain-list.decorator.ts`
+  - `src/certificate/dto/generate-self-signed.dto.ts`
+  - `src/certificate/dto/upload-certificate.dto.ts`
+  - `src/certificate/certificate.controller.ts`
+  - `src/certificate/tls.controller.ts`
+  - `src/certificate/certificate.service.ts`
+  - `src/certificate/tls-config.service.ts`
+  - `src/certificate/certificate-backup.service.ts`
+  - `src/certificate/certificate-monitor.service.ts`
+  - `src/certificate/certificate-cleanup.service.ts`
+  - `src/nginx/nginx.service.ts`
+  - `src/reloader/reloader.service.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session15/domain-validation-and-safe-process.test.js`
+- Tests added/updated:
+  - added `test/session15/domain-validation-and-safe-process.test.js` to verify strict FQDN normalization, malformed-domain rejection, wildcard HTTP-01 issuance rejection, safe OpenSSL argument execution, and safe certificate storage names in generated NGINX config
+  - ran `npm run typecheck`, `npm test`, and `npm run build` successfully after landing the domain-validation and process-execution changes
+  - ran `npm run lint`; the repo-wide lint command still reports pre-existing unrelated formatting debt in untouched files, but the Session 15 files were cleaned up and do not block typecheck/build/test verification
+- Risks:
+  - wildcard issuance remains intentionally blocked until Session 18 introduces DNS-01 or another wildcard-safe ACME strategy
+  - certificate lifecycle durability, retry journaling, and resumable issuance state are still pending Session 16 and Session 17
+  - private keys and backup artifacts are still not encrypted at rest; Session 19 and Session 20 remain responsible for that hardening
+- Follow-up sessions:
+  - Session 16 — add certificate order state machine
+  - Session 17 — rework cluster certificate distribution and activation
+  - Session 18 — harden the ACME strategy for clustered production
+  - Session 19 — encrypt private key material at rest
+  - Session 20 — harden backup, export, import, and restore flows
+  - Session 26 — expand automated regression coverage further
+- Notes:
+  - domain handling now enforces lowercase normalized FQDNs with punycode conversion, explicit wildcard rules, and early rejection of path separators, whitespace, control characters, and IP addresses
+  - certificate storage directories now derive from safe deterministic storage IDs instead of raw domain strings, preventing wildcard/path characters from leaking into filesystem layout or generated NGINX certificate paths
+  - OpenSSL, certbot, and NGINX invocations in the certificate and TLS flows now use argument arrays via a shared `execFile`-based helper instead of shell-interpolated command strings
+  - route params and certificate DTO domain arrays are validated and normalized before the certificate services run, reducing the chance of malformed input reaching DNS lookups, certbot, OpenSSL, or archive generation
 
 ## Session 16 — Add certificate order state machine
 

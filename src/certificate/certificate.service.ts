@@ -6,20 +6,27 @@ import {
   OnApplicationShutdown,
   OnModuleInit,
 } from '@nestjs/common';
-import { exec as execCb } from 'child_process';
-import { promisify } from 'util';
 import { PrismaService } from '../prisma/prisma.service';
 import * as process from 'node:process';
+import * as os from 'node:os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { addDays } from 'date-fns';
-import { hashDomains, joinDomains, parseDomains } from '../utils/domain-utils';
+import {
+  containsWildcardDomain,
+  getCertificateStorageName,
+  hashDomains,
+  joinDomains,
+  normalizeDomain,
+  normalizeDomains,
+  parseDomains,
+} from '../utils/domain-utils';
 import { AlertService } from '../alert/alert.service';
+import { ClusterHeartbeatService } from '../distributed-lock/cluster-heartbeat.service';
 import { ClusterOperationsService } from '../distributed-lock/cluster-operations.service';
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
 import { HealthService } from '../health/health.service';
-
-const exec = promisify(execCb);
+import { runCommand } from '../utils/process-utils';
 
 // Validate ADMIN_EMAIL is set (required by Let's Encrypt)
 const adminEmail = process.env.ADMIN_EMAIL;
@@ -46,14 +53,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     private clusterOperations: ClusterOperationsService,
     private distributedLock: DistributedLockService,
     private healthService: HealthService,
-    @Inject(
-      forwardRef(
-        () =>
-          require('../distributed-lock/cluster-heartbeat.service')
-            .ClusterHeartbeatService,
-      ),
-    )
-    private clusterHeartbeat: any,
+    @Inject(forwardRef(() => ClusterHeartbeatService))
+    private clusterHeartbeat: ClusterHeartbeatService | null,
   ) {}
 
   async onModuleInit() {
@@ -113,7 +114,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
       for (const cert of certs) {
         try {
-          const domains = parseDomains(cert.domains);
+          const domains = parseDomains(cert.domains, { allowWildcard: true });
           const primaryDomain = domains[0];
 
           // Quick validation check
@@ -194,8 +195,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
         // Reload NGINX to pick up new certificates
         try {
-          await exec('nginx -t');
-          await exec('nginx -s reload');
+          await runCommand('nginx', ['-t']);
+          await runCommand('nginx', ['-s', 'reload']);
           this.logger.log('[Sync] NGINX reloaded successfully');
         } catch (reloadErr) {
           const errorMsg =
@@ -467,7 +468,54 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private certDir(primaryDomain: string) {
-    return `/etc/letsencrypt/live/${primaryDomain}`;
+    return `/etc/letsencrypt/live/${getCertificateStorageName(primaryDomain)}`;
+  }
+
+  private createTempDirectory(prefix: string): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  }
+
+  private async getCertificateExpiryFromFile(certPath: string): Promise<Date> {
+    const { stdout } = await runCommand('openssl', [
+      'x509',
+      '-enddate',
+      '-noout',
+      '-in',
+      certPath,
+    ]);
+    const match = stdout.match(/notAfter=(.*)/);
+    return match ? new Date(match[1]) : addDays(new Date(), 365);
+  }
+
+  private async getCertificatePublicKey(certPath: string): Promise<string> {
+    const { stdout } = await runCommand('openssl', [
+      'x509',
+      '-in',
+      certPath,
+      '-noout',
+      '-pubkey',
+    ]);
+    return stdout.trim();
+  }
+
+  private async getPrivateKeyPublicKey(keyPath: string): Promise<string> {
+    const { stdout } = await runCommand('openssl', [
+      'pkey',
+      '-in',
+      keyPath,
+      '-pubout',
+    ]);
+    return stdout.trim();
+  }
+
+  private assertWildcardIssuanceSupported(domains: string[]): void {
+    if (!containsWildcardDomain(domains)) {
+      return;
+    }
+
+    throw new Error(
+      'Wildcard certificate issuance requires DNS-01 and is not supported by the current HTTP-01 ACME flow',
+    );
   }
 
   /**
@@ -549,7 +597,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
    * Examples: subdomain.example.com -> example.com, www.example.co.uk -> example.co.uk
    */
   private getRegisteredDomain(domain: string): string {
-    const parts = domain.split('.');
+    const normalizedDomain = normalizeDomain(domain, { allowWildcard: true });
+    const hostname = normalizedDomain.startsWith('*.')
+      ? normalizedDomain.slice(2)
+      : normalizedDomain;
+    const parts = hostname.split('.');
 
     // Handle special TLDs like .co.uk, .com.au, etc.
     const specialTlds = ['co.uk', 'com.au', 'co.nz', 'co.za', 'com.br'];
@@ -589,8 +641,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       }
 
       // 2. Write to temp files for validation
-      const tempDir = `/tmp/cert-validation-${Date.now()}`;
-      fs.mkdirSync(tempDir, { recursive: true });
+      const tempDir = this.createTempDirectory('lyttlenginx-cert-validation-');
 
       const tempCertPath = path.join(tempDir, 'cert.pem');
       const tempKeyPath = path.join(tempDir, 'key.pem');
@@ -600,36 +651,26 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
       try {
         // 3. Validate certificate structure
-        const certCheck = await exec(
-          `openssl x509 -in ${tempCertPath} -noout -text 2>&1`,
-        );
-        if (certCheck.stderr) {
+        const certCheck = await runCommand('openssl', [
+          'x509',
+          '-in',
+          tempCertPath,
+          '-noout',
+          '-text',
+        ]);
+        if (!certCheck.stdout.trim()) {
           return {
             valid: false,
-            error: `Certificate validation failed: ${certCheck.stderr}`,
+            error:
+              'Certificate validation failed: no certificate data returned',
           };
         }
 
-        // 4. Validate private key
-        const keyCheck = await exec(
-          `openssl rsa -in ${tempKeyPath} -check -noout 2>&1`,
-        );
-        if (keyCheck.stderr && !keyCheck.stderr.includes('ok')) {
-          return {
-            valid: false,
-            error: `Private key validation failed: ${keyCheck.stderr}`,
-          };
-        }
+        // 4. Validate private key and 5. Verify cert and key match
+        const certPublicKey = await this.getCertificatePublicKey(tempCertPath);
+        const keyPublicKey = await this.getPrivateKeyPublicKey(tempKeyPath);
 
-        // 5. Verify cert and key match
-        const certModulus = await exec(
-          `openssl x509 -noout -modulus -in ${tempCertPath} | openssl md5`,
-        );
-        const keyModulus = await exec(
-          `openssl rsa -noout -modulus -in ${tempKeyPath} | openssl md5`,
-        );
-
-        if (certModulus.stdout.trim() !== keyModulus.stdout.trim()) {
+        if (certPublicKey !== keyPublicKey) {
           return {
             valid: false,
             error: 'Certificate and private key do not match',
@@ -637,9 +678,13 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         }
 
         // 6. Check expiry
-        const expiryOutput = await exec(
-          `openssl x509 -enddate -noout -in ${tempCertPath}`,
-        );
+        const expiryOutput = await runCommand('openssl', [
+          'x509',
+          '-enddate',
+          '-noout',
+          '-in',
+          tempCertPath,
+        ]);
         const match = expiryOutput.stdout.match(/notAfter=(.*)/);
         if (!match) {
           return { valid: false, error: 'Could not parse expiry date' };
@@ -661,11 +706,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         }
 
         // 7. Verify domains (SAN check)
-        const sanOutput = await exec(
-          `openssl x509 -in ${tempCertPath} -noout -text | grep -A1 "Subject Alternative Name"`,
-        );
         const certDomains =
-          sanOutput.stdout
+          certCheck.stdout
             .match(/DNS:([^,\s]+)/g)
             ?.map((d) => d.replace('DNS:', '')) || [];
 
@@ -776,12 +818,13 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       return;
     }
     const domains = Array.isArray(domainsInput)
-      ? domainsInput
-      : parseDomains(domainsInput);
+      ? normalizeDomains(domainsInput as string[], { allowWildcard: true })
+      : parseDomains(domainsInput as string, { allowWildcard: true });
+    this.assertWildcardIssuanceSupported(domains);
     const primaryDomain = domains[0];
-    const hash = hashDomains(domains);
+    const hash = hashDomains(domains, { allowWildcard: true });
     const domainsHash = hash;
-    const domainsStr = joinDomains(domains);
+    const domainsStr = joinDomains(domains, { allowWildcard: true });
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
 
@@ -882,7 +925,6 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         this.logger.log(
           `[Certbot] No valid certificate in DB. Running certbot for: [${domainsStr}]`,
         );
-        const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
 
         try {
           // Use shell script hooks that directly interact with PostgreSQL
@@ -923,15 +965,36 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           }
 
           const [, dbUser, dbPassword, dbHost, dbPort, dbName] = dbMatch;
+          const certbotArgs = [
+            'certonly',
+            '--manual',
+            '--preferred-challenges=http',
+            `--manual-auth-hook=${authHookPath}`,
+            `--manual-cleanup-hook=${cleanupHookPath}`,
+            '--non-interactive',
+            '--agree-tos',
+            '--cert-name',
+            getCertificateStorageName(primaryDomain),
+            '-m',
+            adminEmail,
+            ...domains.flatMap((domain) => ['-d', domain]),
+          ];
 
           this.logger.log(
-            `[Certbot] Running command: certbot certonly --manual --preferred-challenges=http --manual-auth-hook=${authHookPath} --manual-cleanup-hook=${cleanupHookPath} --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+            `[Certbot] Running command: certbot ${certbotArgs.join(' ')}`,
           );
 
           // Use manual mode with shell hooks so all nodes can serve challenges from database
-          await exec(
-            `DB_USER=${dbUser} DB_PASSWORD=${dbPassword} DB_HOST=${dbHost} DB_PORT=${dbPort} DB_NAME=${dbName} certbot certonly --manual --preferred-challenges=http --manual-auth-hook=${authHookPath} --manual-cleanup-hook=${cleanupHookPath} --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
-          );
+          await runCommand('certbot', certbotArgs, {
+            env: {
+              DB_USER: dbUser,
+              DB_PASSWORD: dbPassword,
+              DB_HOST: dbHost,
+              DB_PORT: dbPort,
+              DB_NAME: dbName,
+            },
+            timeoutMs: 10 * 60 * 1000,
+          });
           this.logger.log(
             `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
           );
@@ -1194,8 +1257,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       },
     });
     const domainGroups = Array.from(
-      new Set<string>(entries.map((e) => joinDomains(parseDomains(e.domains)))),
-    ).map((group) => parseDomains(group));
+      new Set<string>(
+        entries.map((e) =>
+          joinDomains(parseDomains(e.domains, { allowWildcard: true }), {
+            allowWildcard: true,
+          }),
+        ),
+      ),
+    ).map((group) => parseDomains(group, { allowWildcard: true }));
 
     this.logger.log(
       `[Renewal] Found ${domainGroups.length} unique domain group(s) to renew.`,
@@ -1204,12 +1273,12 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     for (const domains of domainGroups) {
       try {
         this.logger.log(
-          `[Renewal] Ensuring certificate for group: [${joinDomains(domains)}]`,
+          `[Renewal] Ensuring certificate for group: [${joinDomains(domains, { allowWildcard: true })}]`,
         );
         await this.ensureCertificate(domains);
       } catch (err) {
         this.logger.error(
-          `[Renewal] Error ensuring certificate for domains [${joinDomains(domains)}]: ${err instanceof Error ? err.stack : String(err)}`,
+          `[Renewal] Error ensuring certificate for domains [${joinDomains(domains, { allowWildcard: true })}]: ${err instanceof Error ? err.stack : String(err)}`,
         );
       }
     }
@@ -1223,7 +1292,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     } as any);
 
     for (const cert of failedCerts) {
-      const domains = parseDomains(cert.domains);
+      const domains = parseDomains(cert.domains, { allowWildcard: true });
       try {
         this.logger.log(
           `[Renewal] Retrying failed certificate for [${cert.domains}] (failureCount=${(cert as any).failureCount ?? 0})`,
@@ -1239,7 +1308,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     // After possible renewals, reload nginx
     try {
       this.logger.log('[Renewal] Reloading nginx after cert renewal check...');
-      await exec('nginx -s reload');
+      await runCommand('nginx', ['-s', 'reload']);
       this.logger.log('[Renewal] nginx reloaded after cert renewal.');
 
       // Also trigger cluster reload to be safe
@@ -1265,25 +1334,23 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     keyPem: string;
     chainPem?: string;
   }) {
+    const domains = normalizeDomains(dto.domains, { allowWildcard: true });
     this.logger.log(
-      `[Upload] Uploading custom certificate for domains: [${joinDomains(dto.domains)}]`,
+      `[Upload] Uploading custom certificate for domains: [${joinDomains(domains, { allowWildcard: true })}]`,
     );
-    const hash = hashDomains(dto.domains);
-    const domainsStr = joinDomains(dto.domains);
-    const primaryDomain = dto.domains[0];
+    const hash = hashDomains(domains, { allowWildcard: true });
+    const domainsStr = joinDomains(domains, { allowWildcard: true });
+    const primaryDomain = domains[0];
 
     // Validate certificate and key match
     await this.validateCertificateKeyPair(dto.certPem, dto.keyPem);
 
     // Extract expiry from cert
-    const certFile = `/tmp/cert-${Date.now()}.pem`;
+    const tempDir = this.createTempDirectory('lyttlenginx-upload-cert-');
+    const certFile = path.join(tempDir, 'cert.pem');
     fs.writeFileSync(certFile, dto.certPem, 'utf8');
     try {
-      const { stdout } = await exec(
-        `openssl x509 -enddate -noout -in ${certFile}`,
-      );
-      const match = stdout.match(/notAfter=(.*)/);
-      const expiresAt = match ? new Date(match[1]) : addDays(new Date(), 365);
+      const expiresAt = await this.getCertificateExpiryFromFile(certFile);
 
       // Combine cert with chain if provided
       const fullChainPem = dto.chainPem
@@ -1314,8 +1381,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     } finally {
       // Clean up temp file
       try {
-        fs.unlinkSync(certFile);
-      } catch (e) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore
       }
     }
@@ -1325,26 +1392,44 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
    * Generate a self-signed certificate for testing/development
    */
   async generateSelfSignedCertificate(domains: string[]) {
+    const normalizedDomains = normalizeDomains(domains, {
+      allowWildcard: true,
+    });
     this.logger.log(
-      `[Self-Signed] Generating self-signed certificate for domains: [${joinDomains(domains)}]`,
+      `[Self-Signed] Generating self-signed certificate for domains: [${joinDomains(normalizedDomains, { allowWildcard: true })}]`,
     );
-    const hash = hashDomains(domains);
-    const domainsStr = joinDomains(domains);
-    const primaryDomain = domains[0];
+    const hash = hashDomains(normalizedDomains, { allowWildcard: true });
+    const domainsStr = joinDomains(normalizedDomains, {
+      allowWildcard: true,
+    });
+    const primaryDomain = normalizedDomains[0];
 
     // Generate self-signed certificate using openssl
-    const keyFile = `/tmp/key-${Date.now()}.pem`;
-    const certFile = `/tmp/cert-${Date.now()}.pem`;
+    const tempDir = this.createTempDirectory('lyttlenginx-self-signed-');
+    const keyFile = path.join(tempDir, 'key.pem');
+    const certFile = path.join(tempDir, 'cert.pem');
 
     try {
       // Generate private key
-      await exec(`openssl genrsa -out ${keyFile} 2048`);
+      await runCommand('openssl', ['genrsa', '-out', keyFile, '2048']);
 
       // Generate certificate
-      const sanList = domains.map((d) => `DNS:${d}`).join(',');
-      await exec(
-        `openssl req -new -x509 -key ${keyFile} -out ${certFile} -days 365 -subj "/CN=${primaryDomain}" -addext "subjectAltName=${sanList}"`,
-      );
+      const sanList = normalizedDomains.map((d) => `DNS:${d}`).join(',');
+      await runCommand('openssl', [
+        'req',
+        '-new',
+        '-x509',
+        '-key',
+        keyFile,
+        '-out',
+        certFile,
+        '-days',
+        '365',
+        '-subj',
+        `/CN=${primaryDomain}`,
+        '-addext',
+        `subjectAltName=${sanList}`,
+      ]);
 
       const certPem = fs.readFileSync(certFile, 'utf8');
       const keyPem = fs.readFileSync(keyFile, 'utf8');
@@ -1373,9 +1458,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     } finally {
       // Clean up temp files
       try {
-        fs.unlinkSync(keyFile);
-        fs.unlinkSync(certFile);
-      } catch (e) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore
       }
     }
@@ -1405,7 +1489,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
       return {
         id: cert.id,
-        domains: parseDomains(cert.domains),
+        domains: parseDomains(cert.domains, { allowWildcard: true }),
         expiresAt: cert.expiresAt,
         issuedAt: cert.issuedAt,
         lastUsedAt: cert.lastUsedAt,
@@ -1443,7 +1527,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
     return {
       id: cert.id,
-      domains: parseDomains(cert.domains),
+      domains: parseDomains(cert.domains, { allowWildcard: true }),
       expiresAt: cert.expiresAt,
       issuedAt: cert.issuedAt,
       lastUsedAt: cert.lastUsedAt,
@@ -1466,46 +1550,59 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   }> {
     try {
       // Write cert to temp file for analysis
-      const tempFile = `/tmp/cert-${Date.now()}.pem`;
+      const tempDir = this.createTempDirectory('lyttlenginx-cert-analysis-');
+      const tempFile = path.join(tempDir, 'cert.pem');
       fs.writeFileSync(tempFile, certPem);
 
       // Check for OCSP URI
       let ocspUri = '';
       try {
-        const { stdout } = await exec(
-          `openssl x509 -in ${tempFile} -noout -ocsp_uri`,
-        );
+        const { stdout } = await runCommand('openssl', [
+          'x509',
+          '-in',
+          tempFile,
+          '-noout',
+          '-ocsp_uri',
+        ]);
         ocspUri = stdout.trim();
-      } catch (err) {
+      } catch {
         // No OCSP URI
       }
 
       // Check issuer
       let issuer = 'Unknown';
       try {
-        const { stdout } = await exec(
-          `openssl x509 -in ${tempFile} -noout -issuer`,
-        );
+        const { stdout } = await runCommand('openssl', [
+          'x509',
+          '-in',
+          tempFile,
+          '-noout',
+          '-issuer',
+        ]);
         issuer = stdout.replace('issuer=', '').trim();
-      } catch (err) {
+      } catch {
         // Could not get issuer
       }
 
       // Check subject
       let subject = '';
       try {
-        const { stdout } = await exec(
-          `openssl x509 -in ${tempFile} -noout -subject`,
-        );
+        const { stdout } = await runCommand('openssl', [
+          'x509',
+          '-in',
+          tempFile,
+          '-noout',
+          '-subject',
+        ]);
         subject = stdout.replace('subject=', '').trim();
-      } catch (err) {
+      } catch {
         // Could not get subject
       }
 
       // Clean up temp file
       try {
-        fs.unlinkSync(tempFile);
-      } catch (err) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore cleanup errors
       }
 
@@ -1552,7 +1649,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       throw new Error(`Certificate not found: ${id}`);
     }
 
-    const domains = parseDomains(cert.domains);
+    const domains = parseDomains(cert.domains, { allowWildcard: true });
     await this.ensureCertificate(domains);
 
     return { message: `Certificate renewal initiated for ${cert.domains}` };
@@ -1569,7 +1666,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     }
 
     // Delete from filesystem
-    const primaryDomain = parseDomains(cert.domains)[0];
+    const primaryDomain = parseDomains(cert.domains, {
+      allowWildcard: true,
+    })[0];
     const dir = this.certDir(primaryDomain);
     try {
       if (fs.existsSync(dir)) {
@@ -1592,16 +1691,21 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
    * Validate domain ownership for certificate issuance
    */
   async validateDomainForCertificate(domain: string) {
-    this.logger.log(`[Validate] Validating domain: ${domain}`);
+    const normalizedDomain = normalizeDomain(domain);
+    this.logger.log(`[Validate] Validating domain: ${normalizedDomain}`);
     // This is a placeholder - in production, you'd check DNS, HTTP challenges, etc.
     // For now, just check if domain resolves
     const { lookup } = await import('dns/promises');
     try {
-      await lookup(domain);
-      return { domain, valid: true, message: 'Domain resolves successfully' };
+      await lookup(normalizedDomain);
+      return {
+        domain: normalizedDomain,
+        valid: true,
+        message: 'Domain resolves successfully',
+      };
     } catch (err) {
       return {
-        domain,
+        domain: normalizedDomain,
         valid: false,
         message: `Domain does not resolve: ${err instanceof Error ? err.message : String(err)}`,
       };
@@ -1615,23 +1719,18 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     certPem: string,
     keyPem: string,
   ): Promise<void> {
-    const certFile = `/tmp/cert-validate-${Date.now()}.pem`;
-    const keyFile = `/tmp/key-validate-${Date.now()}.pem`;
+    const tempDir = this.createTempDirectory('lyttlenginx-keypair-validation-');
+    const certFile = path.join(tempDir, 'cert.pem');
+    const keyFile = path.join(tempDir, 'key.pem');
 
     try {
       fs.writeFileSync(certFile, certPem, 'utf8');
       fs.writeFileSync(keyFile, keyPem, 'utf8');
 
-      // Get modulus from cert
-      const { stdout: certModulus } = await exec(
-        `openssl x509 -noout -modulus -in ${certFile}`,
-      );
-      // Get modulus from key
-      const { stdout: keyModulus } = await exec(
-        `openssl rsa -noout -modulus -in ${keyFile}`,
-      );
+      const certPublicKey = await this.getCertificatePublicKey(certFile);
+      const keyPublicKey = await this.getPrivateKeyPublicKey(keyFile);
 
-      if (certModulus.trim() !== keyModulus.trim()) {
+      if (certPublicKey !== keyPublicKey) {
         throw new Error('Certificate and private key do not match');
       }
 
@@ -1639,9 +1738,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     } finally {
       // Clean up temp files
       try {
-        fs.unlinkSync(certFile);
-        fs.unlinkSync(keyFile);
-      } catch (e) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore
       }
     }
@@ -1662,11 +1760,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     const results = await Promise.all(
       certs.map(async (cert) => {
         const analysis = await this.analyzeCertificate(cert.certPem);
-        const domains = parseDomains(cert.domains);
+        const domains = parseDomains(cert.domains, { allowWildcard: true });
 
         return {
           id: cert.id,
-          domains: parseDomains(cert.domains),
+          domains: parseDomains(cert.domains, { allowWildcard: true }),
           primaryDomain: domains[0],
           hasOcsp: analysis.hasOcsp,
           certificateType: analysis.type,

@@ -14,6 +14,7 @@ import { ValidateCertChainDto } from './dto/validate-cert-chain.dto';
 import { AuthorizeAdmin } from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { Audit } from '../audit/decorators/audit.decorator';
+import { NormalizedDomainPipe } from '../utils/pipes/normalized-domain.pipe';
 
 @Controller('tls')
 @AuthorizeAdmin('viewer')
@@ -21,12 +22,16 @@ export class TlsController {
   constructor(private readonly tlsConfigService: TlsConfigService) {}
 
   @Get('config/:domain')
-  async getRecommendedConfig(@Param('domain') domain: string) {
+  async getRecommendedConfig(
+    @Param('domain', new NormalizedDomainPipe()) domain: string,
+  ) {
     return this.tlsConfigService.getRecommendedTlsConfig(domain);
   }
 
   @Get('test/:domain')
-  async testTlsConnection(@Param('domain') domain: string) {
+  async testTlsConnection(
+    @Param('domain', new NormalizedDomainPipe()) domain: string,
+  ) {
     return this.tlsConfigService.testTlsConnection(domain);
   }
 

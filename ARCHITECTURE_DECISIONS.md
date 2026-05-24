@@ -14,25 +14,26 @@ This file records repository-level architectural and delivery decisions so futur
 
 ## Decision index
 
-| ID      | Title                                                                                     | Status   | Session   | Date       |
-| ------- | ----------------------------------------------------------------------------------------- | -------- | --------- | ---------- |
-| ADR-001 | Production-readiness source of truth                                                      | accepted | Session 1 | 2026-05-24 |
-| ADR-002 | Session-based delivery model                                                              | accepted | Session 1 | 2026-05-24 |
-| ADR-003 | Standard repository verification contract                                                 | accepted | Session 1 | 2026-05-24 |
-| ADR-004 | Deployment mode expectations                                                              | accepted | Session 1 | 2026-05-24 |
-| ADR-005 | Secret material stays out of git                                                          | accepted | Session 2 | 2026-05-24 |
-| ADR-006 | Authenticated-by-default control-plane API                                                | accepted | Session 3 | 2026-05-24 |
-| ADR-007 | Explicit probe endpoints with dependency-aware readiness                                  | accepted | Session 4 | 2026-05-24 |
-| ADR-008 | Fail-fast container supervision and restart-friendly deployment policies                  | accepted | Session 5 | 2026-05-24 |
-| ADR-009 | Explicit advertised control-plane endpoints for cluster communication                     | accepted | Session 6 | 2026-05-24 |
-| ADR-010 | Identity-aware auth foundation with bearer-token support and legacy API-key compatibility | accepted | Session 7 | 2026-05-24 |
-| ADR-011 | Explicit RBAC policies with a global authorization guard                                  | accepted | Session 8 | 2026-05-24 |
-| ADR-012 | Durable audit events for privileged and mutating operations                               | accepted | Session 9 | 2026-05-24 |
+| ID      | Title                                                                                     | Status   | Session    | Date       |
+| ------- | ----------------------------------------------------------------------------------------- | -------- | ---------- | ---------- |
+| ADR-001 | Production-readiness source of truth                                                      | accepted | Session 1  | 2026-05-24 |
+| ADR-002 | Session-based delivery model                                                              | accepted | Session 1  | 2026-05-24 |
+| ADR-003 | Standard repository verification contract                                                 | accepted | Session 1  | 2026-05-24 |
+| ADR-004 | Deployment mode expectations                                                              | accepted | Session 1  | 2026-05-24 |
+| ADR-005 | Secret material stays out of git                                                          | accepted | Session 2  | 2026-05-24 |
+| ADR-006 | Authenticated-by-default control-plane API                                                | accepted | Session 3  | 2026-05-24 |
+| ADR-007 | Explicit probe endpoints with dependency-aware readiness                                  | accepted | Session 4  | 2026-05-24 |
+| ADR-008 | Fail-fast container supervision and restart-friendly deployment policies                  | accepted | Session 5  | 2026-05-24 |
+| ADR-009 | Explicit advertised control-plane endpoints for cluster communication                     | accepted | Session 6  | 2026-05-24 |
+| ADR-010 | Identity-aware auth foundation with bearer-token support and legacy API-key compatibility | accepted | Session 7  | 2026-05-24 |
+| ADR-011 | Explicit RBAC policies with a global authorization guard                                  | accepted | Session 8  | 2026-05-24 |
+| ADR-012 | Durable audit events for privileged and mutating operations                               | accepted | Session 9  | 2026-05-24 |
 | ADR-013 | Lease-based leader coordination with generation fencing tokens                            | accepted | Session 10 | 2026-05-24 |
 | ADR-014 | Lease-backed heartbeat and leader reconciliation                                          | accepted | Session 11 | 2026-05-24 |
 | ADR-015 | Durable cluster operation journal with per-node acknowledgements                          | accepted | Session 12 | 2026-05-24 |
 | ADR-016 | Staged NGINX runtime releases with atomic activation and rollback                         | accepted | Session 13 | 2026-05-24 |
 | ADR-017 | Validated allowlisted `nginx_custom_code` fragments                                       | accepted | Session 14 | 2026-05-24 |
+| ADR-018 | Strict normalized certificate domains and argument-array process execution                | accepted | Session 15 | 2026-05-24 |
 
 ---
 
@@ -591,3 +592,36 @@ Keep `nginx_custom_code` as a narrow extensibility surface for now, but replace 
 - the reloader now treats invalid custom fragments as rollout failures instead of silently ignoring or partially applying them
 - future proxy-management APIs in Session 21 should keep building on this validated fragment contract, or replace it with a stricter structured model if operators need richer NGINX extensibility later
 
+---
+
+## ADR-018 — Strict normalized certificate domains and argument-array process execution
+
+- Status: accepted
+- Session: Session 15 — Add strict domain validation and safe process execution
+- Date: 2026-05-24
+
+### Context
+
+The production-readiness assessment identified two closely related certificate risks:
+
+1. domain input was weakly validated, which left room for malformed FQDNs, wildcard/path confusion, and unsafe filesystem path derivation
+2. certificate and TLS workflows still built OpenSSL and certbot commands through shell-interpolated strings, which increased command-injection risk and made argument handling brittle
+
+These problems affected certificate issuance, upload, self-signed generation, TLS inspection helpers, generated NGINX certificate paths, and backup archive naming.
+
+### Decision
+
+Adopt the following certificate-domain and certificate-process policy:
+
+1. normalize certificate-related domains to lowercase ASCII/punycode before use
+2. accept only fully-qualified domains; reject local-only names, IPs, path separators, whitespace, and control characters early
+3. accept wildcard domains only in the left-most `*.` form, and explicitly reject wildcard issuance in the current built-in ACME flow until DNS-01 support exists
+4. derive certificate storage paths from deterministic safe storage identifiers instead of raw domain strings
+5. execute OpenSSL, certbot, and NGINX helper commands in the certificate/TLS path through `execFile`-style argument arrays rather than shell-interpolated command strings
+
+### Consequences
+
+- certificate uploads, self-signed generation, TLS inspection, and route-param-based domain workflows now fail fast on malformed input before they reach filesystem or subprocess boundaries
+- wildcard certificate issuance remains intentionally unavailable in the current HTTP-01 flow, which makes the limitation explicit until Session 18 lands a wildcard-safe ACME strategy
+- generated NGINX certificate paths, local certificate directories, and backup archive paths no longer depend on raw domain text, reducing path-confusion risk
+- future certificate lifecycle work should build on the shared normalized-domain utilities and safe process helper instead of reintroducing ad hoc validation or shell command construction

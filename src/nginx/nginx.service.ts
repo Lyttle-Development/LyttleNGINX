@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ProxyEntry, ProxyType } from '@prisma/client';
 import * as fs from 'fs';
 import { sanitizeNginxCustomCode } from './nginx-custom-code';
+import { getCertificateStorageName, parseDomains } from '../utils/domain-utils';
 
 type GenerateNginxConfigOptions = {
   resolved?: boolean;
@@ -25,18 +26,17 @@ export class NginxService {
 
     for (const entry of entries) {
       try {
-        const domains = entry.domains
-          .split(';')
-          .map((d) => d.trim())
-          .map((d) => d.replace(/^\*/, '').trim())
-          .filter(Boolean);
+        const domains = parseDomains(entry.domains, { allowWildcard: true });
         if (domains.length === 0) continue;
         const primaryDomain = domains[0];
-        const { proxy_pass_host: proxyPassHost, nginx_custom_code: customCodeSource } =
-          entry;
+        const certStorageName = getCertificateStorageName(primaryDomain);
+        const {
+          proxy_pass_host: proxyPassHost,
+          nginx_custom_code: customCodeSource,
+        } = entry;
 
-        const certPath = `${letsEncryptLiveRoot}/${primaryDomain}/fullchain.pem`;
-        const keyPath = `${letsEncryptLiveRoot}/${primaryDomain}/privkey.pem`;
+        const certPath = `${letsEncryptLiveRoot}/${certStorageName}/fullchain.pem`;
+        const keyPath = `${letsEncryptLiveRoot}/${certStorageName}/privkey.pem`;
         const hasCert = fs.existsSync(certPath) && fs.existsSync(keyPath);
         const customCode = sanitizeNginxCustomCode(customCodeSource);
 
