@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 2 — Security model foundation
-- Most recently completed session: Session 9 — Add audit logging for privileged and mutating operations
-- Next recommended session from the roadmap: Session 10 — Add lease-based coordination primitives
+- Current phase: Phase 3 — Cluster coordination redesign
+- Most recently completed session: Session 10 — Add lease-based coordination primitives
+- Next recommended session from the roadmap: Session 11 — Move heartbeat and leader flows onto leases
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -358,13 +358,37 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 10 — Add lease-based coordination primitives
 
-- Status: not started
+- Status: done
 - Objective: replace advisory-lock-centric leadership with durable leases and fencing tokens
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: current leader coordination can diverge under failure
-- Follow-up sessions: Session 11, Session 12, Session 27
-- Notes: central coordination semantics remain to be implemented
+- Files touched:
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20260524161500_session10_cluster_leases/migration.sql`
+  - `src/distributed-lock/distributed-lock.service.ts`
+  - `src/distributed-lock/cluster-heartbeat.service.ts`
+  - `src/distributed-lock/cluster.controller.ts`
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session10/lease-coordination.test.js`
+- Tests added/updated:
+  - added `test/session10/lease-coordination.test.js` to cover the new lease schema/migration, leader-lease acquisition state, fencing-token validation, and the new cluster lease inspection endpoint
+  - regenerated the Prisma client after adding `ClusterLease` so the new delegate and schema types resolve correctly in TypeScript
+  - re-ran the repository test suite so Sessions 3-10 continue to pass together after the lease-foundation changes
+- Risks:
+  - the cluster heartbeat service still maintains transitional `ClusterNode.isLeader` reconciliation until Session 11 completes the full lease-backed leader flow
+  - cluster-wide operations do not yet persist operation IDs or per-node ACKs; Session 12 remains responsible for making lease ownership actionable across async workflows
+  - inter-node transport is still authenticated HTTP rather than mTLS, so this session improves coordination correctness but not network trust boundaries
+- Follow-up sessions:
+  - Session 11 — move heartbeat and leader flows onto leases
+  - Session 12 — add cluster operations and per-node ACK tracking
+  - Session 22 — add cluster operation and node-status admin APIs
+  - Session 27 — add chaos and fault-injection validation
+- Notes:
+  - added a durable `ClusterLease` table with owner, TTL, expiry, and generation-based fencing-token state
+  - moved leader acquisition in `DistributedLockService` to lease upsert/renew/release primitives while preserving the existing advisory-lock helper methods for non-leader exclusivity
+  - replaced the advisory-lock-specific deadlock recovery path with lease reconciliation so the transitional cluster heartbeat can reason about durable lease ownership before the full Session 11 refactor lands
+  - exposed `GET /cluster/lease` and enriched `GET /cluster/leader/status` so operators can inspect current lease owner and fencing-token state
 
 ## Session 11 — Move heartbeat and leader flows onto leases
 

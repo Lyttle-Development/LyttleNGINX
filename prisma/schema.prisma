@@ -61,6 +61,25 @@ model ClusterNode {
   @@index([ipAddress])
 }
 
+model ClusterLease {
+  id            String   @id @default(uuid())
+  leaseName     String   @unique
+  ownerNodeId   String? // Currently stores the active instanceId until stable node IDs land in later sessions
+  ownerHostname String?
+  generation    Int      @default(1)
+  ttlSeconds    Int      @default(30)
+  acquiredAt    DateTime @default(now())
+  renewedAt     DateTime @default(now())
+  expiresAt     DateTime
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([ownerNodeId])
+  @@index([expiresAt])
+  @@index([ownerNodeId, expiresAt])
+}
+
 model AcmeChallenge {
   id        String   @id @default(uuid())
   token     String   @unique // The challenge token (filename)

@@ -183,21 +183,49 @@ export class ClusterController {
   async getLeaderStatus() {
     const dbLeader = await this.clusterHeartbeat.getLeaderNode();
     const lockStatus = this.distributedLock.getLeaderLockStatus();
+    const lease = await this.distributedLock.getLeaderLeaseSnapshot();
     const allLeaders = await this.clusterHeartbeat
       .getClusterStats()
       .then((stats) => stats.leaders);
 
+    const hasActiveLease = Boolean(
+      lease && !lease.isExpired && lease.ownerNodeId,
+    );
+    const dbMatchesLease = Boolean(
+      dbLeader && hasActiveLease && lease?.ownerNodeId === dbLeader.instanceId,
+    );
     const isConsistent =
       allLeaders.length === 1 &&
-      (!dbLeader ||
-        (lockStatus.isLeader && dbLeader.instanceId === lockStatus.instanceId));
+      hasActiveLease &&
+      dbMatchesLease &&
+      (!lockStatus.isLeader ||
+        (lockStatus.ownerNodeId === lease?.ownerNodeId &&
+          lockStatus.generation === lease?.generation));
 
     return {
       status: isConsistent ? 'healthy' : 'inconsistent',
+      lease: lease
+        ? {
+            leaseName: lease.leaseName,
+            ownerNodeId: lease.ownerNodeId,
+            ownerHostname: lease.ownerHostname,
+            generation: lease.generation,
+            fencingToken: lease.fencingToken,
+            ttlSeconds: lease.ttlSeconds,
+            acquiredAt: lease.acquiredAt,
+            renewedAt: lease.renewedAt,
+            expiresAt: lease.expiresAt,
+            isExpired: lease.isExpired,
+            isHeldByThisInstance: lease.isHeldByThisInstance,
+          }
+        : null,
       lockHolder: lockStatus.isLeader
         ? {
-            instanceId: lockStatus.instanceId,
+            instanceId: lockStatus.ownerNodeId ?? lockStatus.instanceId,
             heldForMs: lockStatus.heldForMs,
+            generation: lockStatus.generation,
+            fencingToken: lockStatus.fencingToken,
+            expiresAt: lockStatus.expiresAt,
           }
         : null,
       dbLeader: dbLeader
@@ -221,13 +249,31 @@ export class ClusterController {
       issues: [
         allLeaders.length === 0 && 'NO_LEADER',
         allLeaders.length > 1 && 'MULTIPLE_LEADERS',
-        lockStatus.isLeader && !dbLeader && 'LOCK_WITHOUT_DB_ENTRY',
-        !lockStatus.isLeader && dbLeader && 'DB_ENTRY_WITHOUT_LOCK',
+        !hasActiveLease && 'NO_ACTIVE_LEASE',
+        lease?.isExpired && 'LEASE_EXPIRED',
+        hasActiveLease && !dbLeader && 'LEASE_WITHOUT_DB_ENTRY',
+        !hasActiveLease && dbLeader && 'DB_ENTRY_WITHOUT_LEASE',
         lockStatus.isLeader &&
+          lease &&
+          lockStatus.generation !== lease.generation &&
+          'LOCAL_LEASE_STALE',
+        hasActiveLease &&
           dbLeader &&
-          dbLeader.instanceId !== lockStatus.instanceId &&
-          'LOCK_DB_MISMATCH',
+          dbLeader.instanceId !== lease?.ownerNodeId &&
+          'LEASE_DB_MISMATCH',
       ].filter(Boolean),
+    };
+  }
+
+  /**
+   * Get the current leader lease and fencing-token state.
+   */
+  @Get('lease')
+  async getLease() {
+    const lease = await this.distributedLock.getLeaderLeaseSnapshot();
+    return {
+      lease,
+      local: this.distributedLock.getLeaderLockStatus(),
     };
   }
 

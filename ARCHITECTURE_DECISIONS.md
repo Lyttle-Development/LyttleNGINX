@@ -28,6 +28,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-010 | Identity-aware auth foundation with bearer-token support and legacy API-key compatibility | accepted | Session 7 | 2026-05-24 |
 | ADR-011 | Explicit RBAC policies with a global authorization guard                                  | accepted | Session 8 | 2026-05-24 |
 | ADR-012 | Durable audit events for privileged and mutating operations                               | accepted | Session 9 | 2026-05-24 |
+| ADR-013 | Lease-based leader coordination with generation fencing tokens                            | accepted | Session 10 | 2026-05-24 |
 
 ---
 
@@ -437,3 +438,35 @@ Adopt a durable audit-event model with request correlation for the current NestJ
 - successful writes, controller/service failures, and denied privileged attempts are now durably attributable even before the later structured-logging work lands
 - route authors can opt into clearer action naming and target extraction without reworking the global audit pipeline
 - audit storage currently shares the main application database, so later sessions should still harden retention, redaction, export controls, and long-term operational reporting
+
+---
+
+## ADR-013 — Lease-based leader coordination with generation fencing tokens
+
+- Status: accepted
+- Session: Session 10 — Add lease-based coordination primitives
+- Date: 2026-05-24
+
+### Context
+
+The previous cluster leader model relied on PostgreSQL advisory locks plus `ClusterNode.isLeader` booleans. That left leader intent split across transient session state and durable database state, made recovery paths advisory-lock-specific, and provided no monotonic fencing token that later cluster-wide operations could use to reject stale leaders.
+
+The production-readiness assessment called for a durable lease record with expiration and generation semantics.
+
+### Decision
+
+Adopt a database-backed lease primitive for leader coordination:
+
+1. add a new Prisma-backed `ClusterLease` table with a unique `leaseName`
+2. store the current owner, acquisition/renewal timestamps, TTL, and expiry in that table
+3. maintain a monotonically increasing `generation` value that acts as the leader fencing token
+4. preserve the generation when a lease is released so the next owner observes a higher fencing token
+5. make the leader-acquisition path in `DistributedLockService` use the durable lease primitive with automatic renewal
+6. expose lease state through the cluster API so operators can inspect the active owner and fencing token
+
+### Consequences
+
+- leader identity is now durably visible in the database instead of existing only in a PostgreSQL session lock
+- future cluster-wide writes can carry the leader generation and reject stale actors using the fencing token
+- the codebase remains in a transitional hybrid state until Session 11 finishes moving heartbeat and leader reconciliation fully onto the lease model
+

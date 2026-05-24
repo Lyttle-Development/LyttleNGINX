@@ -582,9 +582,11 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
       const acquired = await this.distributedLock.tryAcquireLeaderLock();
 
       if (acquired) {
+        const leaseStatus = this.distributedLock.getLeaderLockStatus();
+
         // WE WON THE ELECTION!
         this.logger.log(
-          '[LeaderCheck] ✓ This node successfully became the LEADER',
+          `[LeaderCheck] ✓ This node successfully became the LEADER (lease generation ${leaseStatus.generation ?? 'unknown'})`,
         );
 
         // Update DB to reflect leadership
@@ -603,7 +605,9 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
         '[LeaderCheck] Failed to acquire lock - another node holds it',
       );
 
-      // DEADLOCK DETECTION: Lock exists but no DB leader after delay
+      // Lease reconciliation: a peer may hold the leader lease before the DB
+      // leader flag has been updated. Reconcile from lease state instead of
+      // relying on advisory-lock-specific recovery.
       setTimeout(async () => {
         try {
           const leaderCheck = await this.prisma.clusterNode.findFirst({
@@ -611,46 +615,33 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
           });
 
           if (!leaderCheck) {
-            this.logger.error(
-              '[LeaderCheck] DEADLOCK DETECTED: Lock exists but no DB leader! Forcing recovery...',
-            );
+            const lease = await this.distributedLock.getLeaderLeaseSnapshot();
 
-            // Check if the lock holder is a stale/dead node
-            const allNodes = await this.prisma.clusterNode.findMany({
-              where: { status: { in: ['active', 'stale'] } },
-              orderBy: { lastHeartbeat: 'desc' },
-            });
+            if (!lease || lease.isExpired || !lease.ownerNodeId) {
+              this.logger.warn(
+                '[LeaderCheck] No active leader lease is present; retrying election',
+              );
 
-            const staleThreshold = new Date(Date.now() - this.staleThresholdMs);
-            const healthyNodes = allNodes.filter(
-              (n) => n.lastHeartbeat >= staleThreshold,
-            );
+              await this.ensureLeaderExists();
+            } else {
+              const leaseOwner = await this.prisma.clusterNode.findUnique({
+                where: { instanceId: lease.ownerNodeId },
+              });
 
-            if (healthyNodes.length > 0) {
-              // Force release ALL advisory locks (nuclear option for deadlock recovery)
-              try {
-                await this.prisma.$executeRaw`SELECT pg_advisory_unlock_all()`;
+              if (leaseOwner && leaseOwner.status === 'active') {
+                await this.prisma.clusterNode.update({
+                  where: { instanceId: lease.ownerNodeId },
+                  data: { isLeader: true },
+                });
+
                 this.logger.warn(
-                  '[LeaderCheck] Released all advisory locks to break deadlock',
+                  `[LeaderCheck] Reconciled DB leader state from active lease owner ${leaseOwner.hostname} (generation ${lease.generation})`,
                 );
-
-                // Wait for locks to clear, then trigger re-election
-                setTimeout(() => {
-                  this.ensureLeaderExists().catch((err) =>
-                    this.logger.error(
-                      `[LeaderCheck] Re-election failed: ${err.message}`,
-                    ),
-                  );
-                }, 1000);
-              } catch (err) {
-                this.logger.error(
-                  `[LeaderCheck] Failed to release locks: ${err instanceof Error ? err.message : String(err)}`,
+              } else {
+                this.logger.warn(
+                  `[LeaderCheck] Active leader lease belongs to unknown or inactive owner ${lease.ownerNodeId}; waiting for lease expiry before retry`,
                 );
               }
-            } else {
-              this.logger.error(
-                '[LeaderCheck] No healthy nodes available for leadership!',
-              );
             }
           } else {
             this.logger.debug(

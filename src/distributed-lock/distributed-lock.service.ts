@@ -1,20 +1,73 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import * as os from 'os';
 import { PrismaService } from '../prisma/prisma.service';
+
+const LEADER_LEASE_NAME = 'cluster:leader';
+const DEFAULT_LEASE_TTL_SECONDS = 30;
+const MIN_LEASE_TTL_SECONDS = 5;
+const MIN_RENEW_INTERVAL_MS = 1000;
+
+type ClusterLeaseRecord = {
+  id: string;
+  leaseName: string;
+  ownerNodeId: string | null;
+  ownerHostname: string | null;
+  generation: number;
+  ttlSeconds: number;
+  acquiredAt: Date;
+  renewedAt: Date;
+  expiresAt: Date;
+  metadata: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type LeaseSnapshot = {
+  leaseName: string;
+  ownerNodeId: string | null;
+  ownerHostname: string | null;
+  generation: number;
+  ttlSeconds: number;
+  acquiredAt: Date;
+  renewedAt: Date;
+  expiresAt: Date;
+  isExpired: boolean;
+  isHeldByThisInstance: boolean;
+  fencingToken: number;
+};
+
+type AcquireLeaseOptions = {
+  ttlSeconds?: number;
+  autoRenew?: boolean;
+  renewIntervalMs?: number;
+};
+
+type HeldLease = LeaseSnapshot & {
+  autoRenew: boolean;
+  renewIntervalMs: number;
+  renewalTimer: NodeJS.Timeout | null;
+};
 
 /**
  * Distributed lock service using PostgreSQL advisory locks
  * Ensures only one node in the cluster can perform critical operations
  */
 @Injectable()
-export class DistributedLockService {
+export class DistributedLockService implements OnModuleDestroy {
   private readonly logger = new Logger(DistributedLockService.name);
   private readonly instanceId: string;
   private heldLocks = new Map<string, { lockId: number; acquiredAt: number }>();
+  private heldLeases = new Map<string, HeldLease>();
 
   constructor(private prisma: PrismaService) {
     // Generate unique instance ID for this container
     this.instanceId = `${process.env.HOSTNAME || 'unknown'}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     this.logger.log(`[Init] Instance ID: ${this.instanceId}`);
+  }
+
+  async onModuleDestroy() {
+    await this.releaseAllLocks();
   }
 
   /**
@@ -138,11 +191,7 @@ export class DistributedLockService {
    * Returns true if we are holding the leader lock
    */
   async isLeader(): Promise<boolean> {
-    const lockName = 'cluster:leader';
-
-    // Simply check if we have the leader lock in our held locks
-    // Don't try to acquire it - that would release it immediately!
-    return this.heldLocks.has(lockName);
+    return this.hasActiveHeldLease(LEADER_LEASE_NAME);
   }
 
   /**
@@ -151,8 +200,10 @@ export class DistributedLockService {
    * Does NOT wait or retry
    */
   async tryAcquireLeaderLock(): Promise<boolean> {
-    const lockName = 'cluster:leader';
-    return this.tryAcquireLock(lockName, 0);
+    const lease = await this.acquireLease(LEADER_LEASE_NAME, {
+      autoRenew: true,
+    });
+    return lease !== null;
   }
 
   /**
@@ -161,12 +212,14 @@ export class DistributedLockService {
    * CRITICAL: Uses PostgreSQL advisory lock for true distributed locking
    */
   async acquireLeaderLock(): Promise<boolean> {
-    const lockName = 'cluster:leader';
-    const acquired = await this.tryAcquireLock(lockName, 5000);
+    const lease = await this.acquireLease(LEADER_LEASE_NAME, {
+      autoRenew: true,
+    });
+    const acquired = lease !== null;
 
     if (acquired) {
       this.logger.log(
-        '[LeaderLock] Successfully acquired leader lock - this node is now the leader',
+        `[LeaderLock] Successfully acquired leader lease generation ${lease?.generation} - this node is now the leader`,
       );
     }
 
@@ -177,7 +230,269 @@ export class DistributedLockService {
    * Release leader lock
    */
   async releaseLeaderLock(): Promise<void> {
-    await this.releaseLock('cluster:leader');
+    await this.releaseLease(LEADER_LEASE_NAME);
+  }
+
+  async acquireLease(
+    leaseName: string,
+    options: AcquireLeaseOptions = {},
+  ): Promise<LeaseSnapshot | null> {
+    const ttlSeconds = this.resolveLeaseTtlSeconds(options.ttlSeconds);
+
+    try {
+      const result = await this.prisma.$queryRaw<ClusterLeaseRecord[]>`
+        INSERT INTO "ClusterLease" (
+          "id",
+          "leaseName",
+          "ownerNodeId",
+          "ownerHostname",
+          "generation",
+          "ttlSeconds",
+          "acquiredAt",
+          "renewedAt",
+          "expiresAt"
+        )
+        VALUES (
+          ${randomUUID()},
+          ${leaseName},
+          ${this.instanceId},
+          ${os.hostname()},
+          1,
+          ${ttlSeconds},
+          NOW(),
+          NOW(),
+          NOW() + ${ttlSeconds} * interval '1 second'
+        )
+        ON CONFLICT ("leaseName") DO UPDATE
+        SET
+          "ownerNodeId" = EXCLUDED."ownerNodeId",
+          "ownerHostname" = EXCLUDED."ownerHostname",
+          "generation" = CASE
+            WHEN "ClusterLease"."ownerNodeId" = EXCLUDED."ownerNodeId"
+              THEN "ClusterLease"."generation"
+            ELSE "ClusterLease"."generation" + 1
+          END,
+          "ttlSeconds" = EXCLUDED."ttlSeconds",
+          "acquiredAt" = CASE
+            WHEN "ClusterLease"."ownerNodeId" = EXCLUDED."ownerNodeId"
+              THEN "ClusterLease"."acquiredAt"
+            ELSE NOW()
+          END,
+          "renewedAt" = NOW(),
+          "expiresAt" = NOW() + ${ttlSeconds} * interval '1 second',
+          "updatedAt" = NOW()
+        WHERE
+          "ClusterLease"."expiresAt" <= NOW()
+          OR "ClusterLease"."ownerNodeId" IS NULL
+          OR "ClusterLease"."ownerNodeId" = EXCLUDED."ownerNodeId"
+        RETURNING
+          "id",
+          "leaseName",
+          "ownerNodeId",
+          "ownerHostname",
+          "generation",
+          "ttlSeconds",
+          "acquiredAt",
+          "renewedAt",
+          "expiresAt",
+          "metadata",
+          "createdAt",
+          "updatedAt"
+      `;
+
+      const row = result[0];
+      if (!row) {
+        this.logger.debug(
+          `[Lease] Failed to acquire lease "${leaseName}" - held by another active node`,
+        );
+        return null;
+      }
+
+      const snapshot = this.toLeaseSnapshot(row);
+      this.trackHeldLease(leaseName, snapshot, options);
+      this.logger.log(
+        `[Lease] Acquired lease "${leaseName}" with generation ${snapshot.generation} (ttl ${snapshot.ttlSeconds}s)`,
+      );
+      return snapshot;
+    } catch (error) {
+      this.logger.error(
+        `[Lease] Error acquiring lease "${leaseName}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
+  async renewLease(
+    leaseName: string,
+    options: Pick<AcquireLeaseOptions, 'ttlSeconds'> = {},
+  ): Promise<LeaseSnapshot | null> {
+    const heldLease = this.heldLeases.get(leaseName);
+    if (!heldLease) {
+      this.logger.warn(
+        `[Lease] Attempted to renew lease "${leaseName}" that is not held locally`,
+      );
+      return null;
+    }
+
+    const ttlSeconds = this.resolveLeaseTtlSeconds(
+      options.ttlSeconds ?? heldLease.ttlSeconds,
+    );
+
+    try {
+      const result = await this.prisma.$queryRaw<ClusterLeaseRecord[]>`
+        UPDATE "ClusterLease"
+        SET
+          "ttlSeconds" = ${ttlSeconds},
+          "renewedAt" = NOW(),
+          "expiresAt" = NOW() + ${ttlSeconds} * interval '1 second',
+          "updatedAt" = NOW()
+        WHERE
+          "leaseName" = ${leaseName}
+          AND "ownerNodeId" = ${this.instanceId}
+          AND "generation" = ${heldLease.generation}
+        RETURNING
+          "id",
+          "leaseName",
+          "ownerNodeId",
+          "ownerHostname",
+          "generation",
+          "ttlSeconds",
+          "acquiredAt",
+          "renewedAt",
+          "expiresAt",
+          "metadata",
+          "createdAt",
+          "updatedAt"
+      `;
+
+      const row = result[0];
+      if (!row) {
+        this.logger.warn(
+          `[Lease] Lost lease "${leaseName}" while attempting renewal for generation ${heldLease.generation}`,
+        );
+        this.untrackHeldLease(leaseName);
+        return null;
+      }
+
+      const snapshot = this.toLeaseSnapshot(row);
+      this.trackHeldLease(leaseName, snapshot, {
+        autoRenew: heldLease.autoRenew,
+        renewIntervalMs: heldLease.renewIntervalMs,
+      });
+      this.logger.debug(
+        `[Lease] Renewed lease "${leaseName}" generation ${snapshot.generation} until ${snapshot.expiresAt.toISOString()}`,
+      );
+      return snapshot;
+    } catch (error) {
+      this.logger.error(
+        `[Lease] Error renewing lease "${leaseName}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
+  async releaseLease(leaseName: string): Promise<boolean> {
+    const heldLease = this.heldLeases.get(leaseName);
+    if (!heldLease) {
+      this.logger.warn(
+        `[Lease] Attempted to release lease "${leaseName}" that is not held locally`,
+      );
+      return false;
+    }
+
+    try {
+      const result = await this.prisma.$queryRaw<ClusterLeaseRecord[]>`
+        UPDATE "ClusterLease"
+        SET
+          "ownerNodeId" = NULL,
+          "ownerHostname" = NULL,
+          "renewedAt" = NOW(),
+          "expiresAt" = NOW(),
+          "updatedAt" = NOW()
+        WHERE
+          "leaseName" = ${leaseName}
+          AND "ownerNodeId" = ${this.instanceId}
+          AND "generation" = ${heldLease.generation}
+        RETURNING
+          "id",
+          "leaseName",
+          "ownerNodeId",
+          "ownerHostname",
+          "generation",
+          "ttlSeconds",
+          "acquiredAt",
+          "renewedAt",
+          "expiresAt",
+          "metadata",
+          "createdAt",
+          "updatedAt"
+      `;
+
+      const released = result.length > 0;
+      this.untrackHeldLease(leaseName);
+
+      if (released) {
+        this.logger.log(
+          `[Lease] Released lease "${leaseName}" generation ${heldLease.generation}`,
+        );
+      } else {
+        this.logger.warn(
+          `[Lease] Lease "${leaseName}" was no longer owned by this node during release`,
+        );
+      }
+
+      return released;
+    } catch (error) {
+      this.logger.error(
+        `[Lease] Error releasing lease "${leaseName}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+      this.untrackHeldLease(leaseName);
+      return false;
+    }
+  }
+
+  async getLeaseSnapshot(leaseName: string): Promise<LeaseSnapshot | null> {
+    try {
+      const lease = await this.prisma.clusterLease.findUnique({
+        where: { leaseName },
+      });
+
+      return lease ? this.toLeaseSnapshot(lease) : null;
+    } catch (error) {
+      this.logger.error(
+        `[Lease] Error reading lease "${leaseName}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
+  async getLeaderLeaseSnapshot(): Promise<LeaseSnapshot | null> {
+    return this.getLeaseSnapshot(LEADER_LEASE_NAME);
+  }
+
+  async validateLeaseFenceToken(
+    leaseName: string,
+    expectedGeneration: number,
+    ownerNodeId: string = this.instanceId,
+  ): Promise<boolean> {
+    const lease = await this.getLeaseSnapshot(leaseName);
+    return Boolean(
+      lease &&
+        !lease.isExpired &&
+        lease.ownerNodeId === ownerNodeId &&
+        lease.generation === expectedGeneration,
+    );
+  }
+
+  async validateLeaderFenceToken(
+    expectedGeneration: number,
+    ownerNodeId?: string,
+  ): Promise<boolean> {
+    return this.validateLeaseFenceToken(
+      LEADER_LEASE_NAME,
+      expectedGeneration,
+      ownerNodeId,
+    );
   }
 
   /**
@@ -186,12 +501,17 @@ export class DistributedLockService {
    */
   async releaseAllLocks(): Promise<void> {
     const locks = Array.from(this.heldLocks.keys());
+    const leases = Array.from(this.heldLeases.keys());
     this.logger.log(
-      `[Shutdown] Releasing ${locks.length} held lock(s): ${locks.join(', ')}`,
+      `[Shutdown] Releasing ${locks.length} advisory lock(s) and ${leases.length} lease(s)`,
     );
 
     for (const lockName of locks) {
       await this.releaseLock(lockName);
+    }
+
+    for (const leaseName of leases) {
+      await this.releaseLease(leaseName);
     }
   }
 
@@ -237,14 +557,137 @@ export class DistributedLockService {
     isLeader: boolean;
     heldForMs: number | null;
     instanceId: string;
+    ownerNodeId: string | null;
+    generation: number | null;
+    fencingToken: number | null;
+    expiresAt: Date | null;
   } {
-    const lockName = 'cluster:leader';
-    const lockInfo = this.heldLocks.get(lockName);
+    const lease = this.getActiveHeldLease(LEADER_LEASE_NAME);
 
     return {
-      isLeader: lockInfo !== undefined,
-      heldForMs: lockInfo ? Date.now() - lockInfo.acquiredAt : null,
+      isLeader: lease !== null,
+      heldForMs: lease ? Date.now() - lease.acquiredAt.getTime() : null,
       instanceId: this.instanceId,
+      ownerNodeId: lease?.ownerNodeId ?? null,
+      generation: lease?.generation ?? null,
+      fencingToken: lease?.fencingToken ?? null,
+      expiresAt: lease?.expiresAt ?? null,
     };
+  }
+
+  private resolveLeaseTtlSeconds(ttlSeconds?: number): number {
+    const configured = Number.parseInt(
+      String(ttlSeconds ?? process.env.CLUSTER_LEASE_TTL_SECONDS ?? ''),
+      10,
+    );
+
+    if (Number.isInteger(configured) && configured >= MIN_LEASE_TTL_SECONDS) {
+      return configured;
+    }
+
+    return DEFAULT_LEASE_TTL_SECONDS;
+  }
+
+  private resolveRenewIntervalMs(
+    ttlSeconds: number,
+    renewIntervalMs?: number,
+  ): number {
+    const configured = Number.parseInt(
+      String(
+        renewIntervalMs ?? process.env.CLUSTER_LEASE_RENEW_INTERVAL_MS ?? '',
+      ),
+      10,
+    );
+
+    if (Number.isInteger(configured) && configured >= MIN_RENEW_INTERVAL_MS) {
+      return configured;
+    }
+
+    return Math.max(
+      MIN_RENEW_INTERVAL_MS,
+      Math.floor((ttlSeconds * 1000) / 3),
+    );
+  }
+
+  private toLeaseSnapshot(lease: ClusterLeaseRecord): LeaseSnapshot {
+    return {
+      leaseName: lease.leaseName,
+      ownerNodeId: lease.ownerNodeId,
+      ownerHostname: lease.ownerHostname,
+      generation: lease.generation,
+      ttlSeconds: lease.ttlSeconds,
+      acquiredAt: new Date(lease.acquiredAt),
+      renewedAt: new Date(lease.renewedAt),
+      expiresAt: new Date(lease.expiresAt),
+      isExpired: new Date(lease.expiresAt).getTime() <= Date.now(),
+      isHeldByThisInstance: lease.ownerNodeId === this.instanceId,
+      fencingToken: lease.generation,
+    };
+  }
+
+  private trackHeldLease(
+    leaseName: string,
+    snapshot: LeaseSnapshot,
+    options: AcquireLeaseOptions,
+  ) {
+    const existing = this.heldLeases.get(leaseName);
+    if (existing?.renewalTimer) {
+      clearInterval(existing.renewalTimer);
+    }
+
+    const autoRenew = options.autoRenew ?? existing?.autoRenew ?? false;
+    const renewIntervalMs = this.resolveRenewIntervalMs(
+      snapshot.ttlSeconds,
+      options.renewIntervalMs ?? existing?.renewIntervalMs,
+    );
+
+    const heldLease: HeldLease = {
+      ...snapshot,
+      autoRenew,
+      renewIntervalMs,
+      renewalTimer: null,
+    };
+
+    if (autoRenew) {
+      heldLease.renewalTimer = setInterval(() => {
+        this.renewLease(leaseName).catch((error) =>
+          this.logger.error(
+            `[Lease] Auto-renew failed for "${leaseName}": ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }, renewIntervalMs);
+    }
+
+    this.heldLeases.set(leaseName, heldLease);
+  }
+
+  private untrackHeldLease(leaseName: string) {
+    const heldLease = this.heldLeases.get(leaseName);
+    if (heldLease?.renewalTimer) {
+      clearInterval(heldLease.renewalTimer);
+    }
+
+    this.heldLeases.delete(leaseName);
+  }
+
+  private getActiveHeldLease(leaseName: string): HeldLease | null {
+    const heldLease = this.heldLeases.get(leaseName);
+    if (!heldLease) {
+      return null;
+    }
+
+    if (heldLease.expiresAt.getTime() <= Date.now()) {
+      this.logger.warn(
+        `[Lease] Local lease "${leaseName}" expired before release/renewal completed`,
+      );
+      this.untrackHeldLease(leaseName);
+      return null;
+    }
+
+    return heldLease;
+  }
+
+  private hasActiveHeldLease(leaseName: string): boolean {
+    return this.getActiveHeldLease(leaseName) !== null;
   }
 }

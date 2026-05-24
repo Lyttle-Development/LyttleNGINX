@@ -101,8 +101,8 @@ npm -v    # expected: 11.15.0
 
 ### 🌐 Cluster Management
 
-- **Distributed Locking** - PostgreSQL advisory locks for coordination
-- **Leader Election** - Automatic leader election with fail-over
+- **Lease-based Leader Coordination** - Durable PostgreSQL-backed leader leases with generation-based fencing tokens
+- **Leader Election** - Automatic leader election with fail-over and lease renewal
 - **Node Heartbeats** - Real-time cluster health monitoring
 - **Stale Node Cleanup** - Automatic removal of dead nodes (2 min timeout)
 - **Split-Brain Prevention** - Multiple safety layers enforce single leader
@@ -771,8 +771,9 @@ docker stack deploy -c docker-compose.swarm.yml lyttlenginx
 
 - global mode is the intended target architecture
 - Session 6 replaces public-IP autodiscovery with explicit `CLUSTER_CONTROL_ADDRESS` / `CLUSTER_CONTROL_PORT` registration
+- Session 10 replaces leader advisory-lock ownership with a durable `ClusterLease` record and generation-based fencing token
 - Sessions 7-8 add request identity plus explicit RBAC, but internal-node traffic is still plain HTTP and mTLS remains future work
-- the current assessment still identifies remaining P0/P1 blockers in audit logging, certificate lifecycle hardening, internal-traffic security, and transactional config rollout even after the completed health, auto-recovery, inter-node addressing, auth-foundation, and RBAC sessions
+- the current assessment still identifies remaining P0/P1 blockers in full lease-backed heartbeat reconciliation, cluster ACK tracking, certificate lifecycle hardening, internal-traffic security, and transactional config rollout even after the completed health, auto-recovery, inter-node addressing, auth/RBAC, audit logging, and lease-foundation sessions
 - use the swarm manifest for evaluation and development feedback, not as a final production deployment contract yet
 
 The current container model is intentionally **fail-fast**: if either the NestJS control-plane process or the foreground NGINX master exits unexpectedly, the container exits non-zero so Docker or Swarm can restart it instead of leaving the node wedged.
@@ -784,6 +785,12 @@ The current Swarm manifest now treats peer communication as an **advertised cont
 - `CLUSTER_CONTROL_ADDRESS` is the routable hostname/address peers should use for this node (`{{.Node.Hostname}}` in the current example)
 - nodes register that advertised endpoint in the database and cluster broadcasts now use that registration instead of building URLs from discovered public IPs
 
+Leader election now uses a durable database lease:
+
+- `CLUSTER_LEASE_TTL_SECONDS` controls how long the leader lease remains valid without renewal (default `30`)
+- `CLUSTER_LEASE_RENEW_INTERVAL_MS` controls how frequently the local leader renews that lease (default: one third of the TTL, minimum `1000ms`)
+- the active lease carries a monotonically increasing generation number that acts as the leader fencing token for later cluster operations
+
 If your Swarm nodes are not mutually reachable by node hostname, override `CLUSTER_CONTROL_ADDRESS` with a routable internal DNS name or address per node before treating cluster operations as healthy.
 
 **View cluster status:**
@@ -791,6 +798,9 @@ If your Swarm nodes are not mutually reachable by node hostname, override `CLUST
 ```bash
 # See all nodes
 curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/nodes
+
+# Inspect the current leader lease and fencing token
+curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/lease
 
 # View leader
 docker service logs lyttlenginx_lyttlenginx 2>&1 | grep "LEADER"
