@@ -8,6 +8,8 @@
   <img src="https://img.shields.io/badge/session%203-complete-blue" alt="Session 3" />
   <img src="https://img.shields.io/badge/session%204-complete-blue" alt="Session 4" />
   <img src="https://img.shields.io/badge/session%205-complete-blue" alt="Session 5" />
+  <img src="https://img.shields.io/badge/session%206-complete-blue" alt="Session 6" />
+  <img src="https://img.shields.io/badge/session%207-complete-blue" alt="Session 7" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -21,9 +23,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 1 in progress
-- **Completed in Sessions 1-5 plus follow-up maintenance:** delivery scaffolding, status tracking, dependency hygiene for known direct CVEs, secret-handling cleanup for publishable env examples, a full npm/toolchain refresh to the latest available package set on 2026-05-24, authenticated-by-default admin APIs, dependency-aware health semantics, and fail-fast container supervision with restart-friendly Docker manifests
-- **Next recommended implementation session:** Session 6 — fix inter-node addressing and Swarm communication model
+- **Roadmap status:** Phase 2 in progress
+- **Completed in Sessions 1-7 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, and an identity-aware auth foundation with JWT bearer-token support plus temporary legacy API-key compatibility
+- **Next recommended implementation session:** Session 8 — add RBAC and authorization policies
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -56,7 +58,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-5 regression tests for API access control, health semantics, and container-supervision behavior. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-7 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, and the new identity-aware auth foundation. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -361,9 +363,9 @@ npm run prisma:migrate
 
 ## 📚 API Documentation
 
-### Session 3/4 access policy
+### Session 3-7 access policy
 
-As of Sessions 3 and 4, the control-plane API is **authenticated by default**, with a small public probe allowlist.
+As of Sessions 3-7, the control-plane API is **authenticated by default**, with a small public probe allowlist and an identity-aware authentication layer.
 
 The current explicit public allowlist is limited to:
 
@@ -379,7 +381,27 @@ Legacy compatibility aliases currently remain available for:
 - `GET /health` → liveness
 - `GET /ready` → readiness
 
-All other endpoints should be treated as admin or internal control-plane endpoints and require `X-API-Key` (or `Authorization: ApiKey <key>`).
+All other endpoints should be treated as admin or internal control-plane endpoints and require one of:
+
+- `Authorization: Bearer <jwt>`
+- `X-API-Key: <key>`
+- `Authorization: ApiKey <key>`
+
+Session 7 introduces a JWT bearer-token foundation that attaches actor identity to each authenticated request. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
+
+Current identity model:
+
+- `admin` actors for operator/API clients
+- `internal-node` actors for trusted inter-node calls
+
+The resolved identity now carries:
+
+- subject
+- actor type
+- auth method
+- roles
+- scopes
+- issuer/audience metadata
 
 Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The readiness body also reports the status of:
 
@@ -433,10 +455,36 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 
 ### Authentication Endpoints
 
-| Method | Endpoint       | Description                 | Auth     |
-|--------|----------------|-----------------------------|----------|
-| GET    | `/auth/status` | Check authentication status | Required |
-| GET    | `/auth/info`   | Get auth configuration info | Required |
+| Method | Endpoint       | Description                                                       | Auth     |
+|--------|----------------|-------------------------------------------------------------------|----------|
+| GET    | `/auth/status` | Check authentication status and return the resolved actor identity | Required |
+| GET    | `/auth/info`   | Get auth capability/configuration info                            | Required |
+| GET    | `/auth/me`     | Inspect the current request identity                              | Required |
+| POST   | `/auth/token`  | Exchange a legacy API-key-authenticated request for a bearer token | Required |
+
+### Auth configuration
+
+Session 7 adds a JWT/OIDC-compatible claim foundation. The most relevant auth env vars are:
+
+- `API_KEY` — temporary legacy compatibility credentials
+- `AUTH_JWT_SECRET` — enables locally signed HS256 bearer tokens and `/auth/token`
+- `AUTH_JWT_PUBLIC_KEY` — optional RS256 verification key for externally issued bearer tokens
+- `AUTH_JWT_ISSUER` — expected token issuer and local token issuer
+- `AUTH_JWT_AUDIENCE` — expected token audience and local token audience
+- `AUTH_DEFAULT_ADMIN_ROLES` / `AUTH_DEFAULT_ADMIN_SCOPES` — bridge claims applied to legacy API keys until Session 8 lands
+
+Example migration flow:
+
+```bash
+# Exchange a legacy API key for a short-lived bearer token
+JWT=$(curl -s http://localhost:3000/auth/token \
+  -X POST \
+  -H "X-API-Key: $API_KEY" | jq -r '.accessToken')
+
+# Use the bearer token for subsequent admin requests
+curl http://localhost:3000/auth/me \
+  -H "Authorization: Bearer $JWT"
+```
 
 ### Health Endpoints
 
@@ -678,8 +726,9 @@ docker stack deploy -c docker-compose.swarm.yml lyttlenginx
 **Current caveats:**
 
 - global mode is the intended target architecture
-- Session 6 replaces public-IP autodiscovery with explicit `CLUSTER_CONTROL_ADDRESS` / `CLUSTER_CONTROL_PORT` registration, but inter-node auth is still API-key based and mTLS remains future work
-- the current assessment still identifies remaining P0/P1 blockers in auth depth, certificate lifecycle hardening, and transactional config rollout even after the completed health, auto-recovery, and inter-node addressing sessions
+- Session 6 replaces public-IP autodiscovery with explicit `CLUSTER_CONTROL_ADDRESS` / `CLUSTER_CONTROL_PORT` registration
+- Session 7 adds request identity plus bearer-token support, but internal-node traffic is still plain HTTP and mTLS remains future work
+- the current assessment still identifies remaining P0/P1 blockers in RBAC depth, certificate lifecycle hardening, internal-traffic security, and transactional config rollout even after the completed health, auto-recovery, inter-node addressing, and auth-foundation sessions
 - use the swarm manifest for evaluation and development feedback, not as a final production deployment contract yet
 
 The current container model is intentionally **fail-fast**: if either the NestJS control-plane process or the foreground NGINX master exits unexpectedly, the container exits non-zero so Docker or Swarm can restart it instead of leaving the node wedged.

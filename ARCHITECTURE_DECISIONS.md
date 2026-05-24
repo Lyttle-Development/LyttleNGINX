@@ -25,6 +25,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-007 | Explicit probe endpoints with dependency-aware readiness | accepted | Session 4 | 2026-05-24 |
 | ADR-008 | Fail-fast container supervision and restart-friendly deployment policies | accepted | Session 5 | 2026-05-24 |
 | ADR-009 | Explicit advertised control-plane endpoints for cluster communication | accepted | Session 6 | 2026-05-24 |
+| ADR-010 | Identity-aware auth foundation with bearer-token support and legacy API-key compatibility | accepted | Session 7 | 2026-05-24 |
 
 ---
 
@@ -310,4 +311,44 @@ Adopt an explicit advertised control-plane endpoint model:
 - Swarm and other clustered deployments must now provide explicit control-plane addressing configuration
 - operators can inspect the registered peer endpoint for each node through cluster metadata instead of inferring behavior from logs or container internals
 - inter-node communication remains HTTP + API-key authenticated for now; Session 7, Session 8, and later security work still need to introduce stronger node identity and transport security
+
+---
+
+## ADR-010 — Identity-aware auth foundation with bearer-token support and legacy API-key compatibility
+
+- Status: accepted
+- Session: Session 7 — Introduce a real auth foundation
+- Date: 2026-05-24
+
+### Context
+
+The production-readiness assessment identified the current shared API-key model as too weak for real production administration because it lacked request identity, richer claim semantics, and a credible bridge toward RBAC, audit logging, and stronger internal node authentication.
+
+Session 3 already moved the API surface to authenticated-by-default, but the code still treated auth as a yes/no API-key check rather than an actor model.
+
+### Decision
+
+Adopt an identity-aware authentication foundation with the following properties:
+
+1. keep the API authenticated by default using the existing global guard posture
+2. allow that guard to resolve either:
+   - legacy API keys (`X-API-Key` or `Authorization: ApiKey ...`)
+   - JWT bearer tokens (`Authorization: Bearer ...`)
+3. attach a structured identity object to each authenticated request, including:
+   - subject
+   - actor type (`admin` or `internal-node`)
+   - auth method
+   - roles
+   - scopes
+   - issuer/audience metadata
+4. support short-lived locally issued HS256 bearer tokens via `AUTH_JWT_SECRET`
+5. support verification of externally issued bearer tokens through standard issuer/audience claims and optional `AUTH_JWT_PUBLIC_KEY` for RS256 verification
+6. preserve temporary legacy API-key compatibility and allow API-key-authenticated clients to exchange for a bearer token via `POST /auth/token`
+7. introduce identity inspection endpoints (`GET /auth/me`, enriched `GET /auth/status`, and richer `GET /auth/info`) so operators and future tests can observe the resolved actor context
+
+### Consequences
+
+- the codebase now has a real request identity object that later sessions can use for RBAC decisions, audit logging, and internal-node policy separation
+- operators can begin migrating clients from raw API keys to short-lived bearer tokens without breaking existing integrations immediately
+- bearer-token support is intentionally a foundation, not a full security model: Session 8 still needs RBAC, Session 9 still needs audit logging, and later sessions still need stronger internal transport security such as mTLS
 

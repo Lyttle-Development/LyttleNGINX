@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 1 — Emergency hardening and correctness fixes
-- Most recently completed session: Session 6 — Fix inter-node address/port model
-- Next recommended session from the roadmap: Session 7 — Introduce a real auth foundation
+- Current phase: Phase 2 — Security model foundation
+- Most recently completed session: Session 7 — Introduce a real auth foundation
+- Next recommended session from the roadmap: Session 8 — Add RBAC and authorization policies
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -212,13 +212,36 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 2 — Security model foundation
 
 ## Session 7 — Introduce a real auth foundation
-- Status: not started
+- Status: done
 - Objective: move from shared API keys toward a real identity model
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: current auth is insufficient for production admin workflows
-- Follow-up sessions: Session 8, Session 9, Session 23
-- Notes: request identity should become part of request context
+- Files touched:
+  - `src/auth/auth.controller.ts`
+  - `src/auth/auth.service.ts`
+  - `src/auth/guards/api-key.guard.ts`
+  - `src/auth/decorators/current-identity.decorator.ts`
+  - `src/auth/interfaces/authenticated-request.interface.ts`
+  - `src/auth/types/auth-identity.ts`
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session7/auth-foundation.test.js`
+- Tests added/updated:
+  - added `test/session7/auth-foundation.test.js` to verify structured request identity, bearer-token auth, legacy API-key token exchange, and expired-token rejection
+  - validated the focused Session 7 auth suite locally with the repository test runner
+  - validated TypeScript type-checking for the edited auth files after introducing bearer-token verification and request identity types
+- Risks:
+  - bearer-token support is now in place, but endpoint-level authorization policy remains coarse until Session 8 introduces RBAC
+  - inter-node traffic can now carry an `internal-node` identity model, but the transport is still plain HTTP and not yet mTLS-protected
+  - local token issuance currently uses HS256 shared-secret signing; external IdP/JWKS integration remains future work if operators need full OIDC federation
+- Follow-up sessions:
+  - Session 8 — add RBAC and authorization policies
+  - Session 9 — add audit logging for privileged and mutating operations
+  - Session 23 — add security administration APIs
+- Notes:
+  - the global auth guard now resolves either legacy API keys or JWT bearer tokens and attaches a structured identity object to `request.auth`
+  - the identity model distinguishes `admin` and `internal-node` actors and carries roles/scopes so later RBAC and audit work can build on stable request context
+  - `POST /auth/token` now provides a migration bridge from API-key clients to short-lived bearer tokens when `AUTH_JWT_SECRET` is configured
 
 ## Session 8 — Add RBAC and authorization policies
 - Status: not started
