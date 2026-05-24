@@ -29,6 +29,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-011 | Explicit RBAC policies with a global authorization guard                                  | accepted | Session 8 | 2026-05-24 |
 | ADR-012 | Durable audit events for privileged and mutating operations                               | accepted | Session 9 | 2026-05-24 |
 | ADR-013 | Lease-based leader coordination with generation fencing tokens                            | accepted | Session 10 | 2026-05-24 |
+| ADR-014 | Lease-backed heartbeat and leader reconciliation                                          | accepted | Session 11 | 2026-05-24 |
 
 ---
 
@@ -469,4 +470,32 @@ Adopt a database-backed lease primitive for leader coordination:
 - leader identity is now durably visible in the database instead of existing only in a PostgreSQL session lock
 - future cluster-wide writes can carry the leader generation and reject stale actors using the fencing token
 - the codebase remains in a transitional hybrid state until Session 11 finishes moving heartbeat and leader reconciliation fully onto the lease model
+
+---
+
+## ADR-014 — Lease-backed heartbeat and leader reconciliation
+
+- Status: accepted
+- Session: Session 11 — Move heartbeat and leader flows onto leases
+- Date: 2026-05-24
+
+### Context
+
+Session 10 introduced durable `ClusterLease` records and generation-based fencing tokens, but the heartbeat service still treated `ClusterNode.isLeader` as an operational source of truth. That left split-brain recovery logic dependent on stale DB flags and heartbeat recency rather than the current leader lease.
+
+### Decision
+
+Adopt the leader lease as the authoritative source of truth for cluster leadership:
+
+1. derive leader reads, cluster stats, and node leader annotations from the active `cluster:leader` lease
+2. treat `ClusterNode.isLeader` as a denormalized observability field only, reconciled from the lease rather than used for leader election
+3. when the lease owner is missing or stale, clear denormalized leader flags and wait for lease expiry instead of force-electing a replacement from heartbeat recency
+4. simplify admin repair flows so “enforce leader” means reconciling DB flags to the active lease, not choosing a winner from multiple DB leaders
+
+### Consequences
+
+- leadership and membership diagnostics now stay aligned with durable lease ownership instead of transient DB flag drift
+- stale-node cleanup no longer performs risky split-brain arbitration; it marks nodes stale and lets lease expiry govern failover timing
+- operator-facing leader status can explicitly report lease-owner-missing or lease-owner-not-active states, which were previously hidden behind generic “multiple leaders” logic
+- later sessions can layer cluster operations and per-node ACKs onto a cleaner lease-backed control-plane model without preserving the old DB-leader election semantics
 

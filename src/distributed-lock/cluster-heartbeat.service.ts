@@ -9,6 +9,32 @@ import { DistributedLockService } from './distributed-lock.service';
 import * as os from 'os';
 import { getLocalControlPlaneRegistration } from '../utils/network-utils';
 
+type ClusterNodeRecord = {
+  id: string;
+  hostname: string;
+  instanceId: string;
+  ipAddress: string | null;
+  isLeader: boolean;
+  lastHeartbeat: Date;
+  version: string | null;
+  status: string;
+  metadata: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type LeaderLeaseSnapshot = Awaited<
+  ReturnType<DistributedLockService['getLeaderLeaseSnapshot']>
+>;
+
+type LeaderLeaseState = {
+  lease: NonNullable<LeaderLeaseSnapshot> | null;
+  hasActiveLease: boolean;
+  ownerNode: ClusterNodeRecord | null;
+  activeLeaderNode: ClusterNodeRecord | null;
+  issues: string[];
+};
+
 /**
  * Service to track cluster nodes and their health status
  * Helps with monitoring and debugging in distributed deployments
@@ -16,9 +42,9 @@ import { getLocalControlPlaneRegistration } from '../utils/network-utils';
 @Injectable()
 export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ClusterHeartbeatService.name);
-  private heartbeatInterval: NodeJS.Timeout | null = null;
-  private cleanupInterval: NodeJS.Timeout | null = null;
-  private leaderCheckInterval: NodeJS.Timeout | null = null;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private leaderCheckInterval: ReturnType<typeof setInterval> | null = null;
   private readonly heartbeatIntervalMs = 10000; // 10 seconds
   private readonly staleThresholdMs = 45000; // 45 seconds
   private readonly deleteThresholdMs = 3600000; // 1 hour - delete very old stale nodes
@@ -195,30 +221,10 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
     const ipAddress = controlPlane.endpoint?.address ?? null;
 
     try {
-      const isLeader = await this.distributedLock.isLeader();
-
-      // If claiming to be leader, verify no other active leaders exist first
-      if (isLeader) {
-        const otherLeaders = await this.prisma.clusterNode.findMany({
-          where: {
-            isLeader: true,
-            instanceId: { not: instanceId },
-            status: 'active',
-          },
-        });
-
-        if (otherLeaders.length > 0) {
-          this.logger.error(
-            `[Heartbeat] CRITICAL: Detected ${otherLeaders.length} other leader(s): ${otherLeaders.map((n) => n.hostname).join(', ')}. Releasing leadership.`,
-          );
-          // Release our lock to prevent split-brain
-          await this.distributedLock.releaseLeaderLock();
-          // Fall through to update as non-leader
-        }
-      }
-
-      // Re-check leadership status after validation
-      const finalLeaderStatus = await this.distributedLock.isLeader();
+      const leaderState = await this.getLeaderLeaseState();
+      const finalLeaderStatus =
+        leaderState.hasActiveLease &&
+        leaderState.lease?.ownerNodeId === instanceId;
 
       await this.prisma.clusterNode.update({
         where: { instanceId },
@@ -240,6 +246,10 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
           },
         },
       });
+
+      if (finalLeaderStatus || leaderState.issues.length > 0) {
+        await this.enforceOneLeader();
+      }
 
       this.logger.debug(`[Heartbeat] Sent (Leader: ${finalLeaderStatus})`);
     } catch (error) {
@@ -314,10 +324,16 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
           },
         });
 
-        const staleLeaders = staleNodes.filter((n) => n.isLeader);
-        if (staleLeaders.length > 0) {
-          this.logger.error(
-            `[Cleanup] CRITICAL: Removed ${staleLeaders.length} stale LEADER node(s): ${staleLeaders.map((n) => n.hostname).join(', ')}`,
+        const leaderState = await this.getLeaderLeaseState();
+        const staleLeaseOwners = staleNodes.filter(
+          (node) =>
+            leaderState.hasActiveLease &&
+            leaderState.lease?.ownerNodeId === node.instanceId,
+        );
+
+        if (staleLeaseOwners.length > 0) {
+          this.logger.warn(
+            `[Cleanup] Active leader lease currently belongs to stale node(s): ${staleLeaseOwners.map((n) => n.hostname).join(', ')}. Waiting for lease expiry before electing a replacement.`,
           );
         }
 
@@ -326,7 +342,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      // ADDITIONAL SAFETY: Ensure only one leader exists across all nodes
+      // Reconcile denormalized leader flags from the authoritative lease state.
       await this.enforceOneLeader();
 
       // Delete very old stale/inactive nodes to prevent database bloat
@@ -365,43 +381,25 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Enforce that only one node can be marked as leader
-   * If multiple leaders detected, keep the one with the most recent heartbeat
+   * Reconcile denormalized ClusterNode leader flags from the authoritative lease.
+   * Session 11 deliberately stops picking a leader from DB heartbeat recency.
    */
   private async enforceOneLeader() {
     try {
-      const leaders = await this.prisma.clusterNode.findMany({
-        where: {
-          isLeader: true,
-        },
-        orderBy: {
-          lastHeartbeat: 'desc',
-        },
-      });
+      const leaderState = await this.getLeaderLeaseState();
+      await this.reconcileLeaderFlagsFromLease(leaderState);
 
-      if (leaders.length > 1) {
-        this.logger.error(
-          `[EnforceLeader] CRITICAL: Found ${leaders.length} leaders! Fixing...`,
+      if (leaderState.hasActiveLease && leaderState.activeLeaderNode) {
+        this.logger.debug(
+          `[EnforceLeader] Reconciled leader flags to lease owner ${leaderState.activeLeaderNode.hostname} (${leaderState.activeLeaderNode.instanceId}) generation ${leaderState.lease?.generation}`,
         );
-
-        // Keep the most recent leader (first in the sorted list)
-        const validLeader = leaders[0];
-        const invalidLeaders = leaders.slice(1);
-
-        // Remove leader status from all others
-        await this.prisma.clusterNode.updateMany({
-          where: {
-            instanceId: {
-              in: invalidLeaders.map((l) => l.instanceId),
-            },
-          },
-          data: {
-            isLeader: false,
-          },
-        });
-
+      } else if (leaderState.hasActiveLease) {
         this.logger.warn(
-          `[EnforceLeader] Demoted ${invalidLeaders.length} invalid leader(s). Current leader: ${validLeader.hostname} (${validLeader.instanceId})`,
+          `[EnforceLeader] Lease owner ${leaderState.lease?.ownerNodeId} is not currently active; leader flags were cleared while waiting for lease expiry`,
+        );
+      } else {
+        this.logger.debug(
+          '[EnforceLeader] No active leader lease is present; cleared any stale leader flags',
         );
       }
     } catch (error) {
@@ -415,63 +413,95 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
    * Get all active cluster nodes
    */
   async getActiveNodes() {
-    return this.prisma.clusterNode.findMany({
-      where: { status: 'active' },
-      orderBy: { lastHeartbeat: 'desc' },
-    });
+    const [nodes, leaderState] = await Promise.all([
+      this.prisma.clusterNode.findMany({
+        where: { status: 'active' },
+        orderBy: { lastHeartbeat: 'desc' },
+      }),
+      this.getLeaderLeaseState(),
+    ]);
+
+    return this.applyLeaseLeadership(nodes, leaderState);
   }
 
   /**
    * Get the current leader node
    */
   async getLeaderNode() {
-    return this.prisma.clusterNode.findFirst({
-      where: {
-        isLeader: true,
-        status: 'active',
-      },
-      orderBy: { lastHeartbeat: 'desc' },
-    });
+    const leaderState = await this.getLeaderLeaseState();
+    return leaderState.activeLeaderNode;
   }
 
   /**
    * Get cluster statistics
    */
   async getClusterStats() {
-    const [total, active, stale, inactive, leaders] = await Promise.all([
+    const [total, active, stale, inactive, leaderState] = await Promise.all([
       this.prisma.clusterNode.count(),
       this.prisma.clusterNode.count({ where: { status: 'active' } }),
       this.prisma.clusterNode.count({ where: { status: 'stale' } }),
       this.prisma.clusterNode.count({ where: { status: 'inactive' } }),
-      this.prisma.clusterNode.findMany({
-        where: { isLeader: true },
-        select: {
-          hostname: true,
-          instanceId: true,
-          ipAddress: true,
-          status: true,
-          lastHeartbeat: true,
-        },
-      }),
+      this.getLeaderLeaseState(),
     ]);
+
+    const leaders = leaderState.activeLeaderNode
+      ? [leaderState.activeLeaderNode]
+      : [];
 
     return {
       total,
       active,
       stale,
       inactive,
-      leaders: leaders,
+      leaders,
       leaderCount: leaders.length,
-      hasMultipleLeaders: leaders.length > 1,
+      hasMultipleLeaders: false,
+      leadershipIssues: leaderState.issues,
+      leaderLeaseGeneration: leaderState.lease?.generation ?? null,
+      leaderLeaseOwnerNodeId: leaderState.lease?.ownerNodeId ?? null,
     };
   }
 
+  async getLeaderLeaseState() {
+    const lease = await this.distributedLock.getLeaderLeaseSnapshot();
+    const hasActiveLease = Boolean(
+      lease && !lease.isExpired && lease.ownerNodeId,
+    );
+    const ownerNode = hasActiveLease
+      ? await this.prisma.clusterNode.findUnique({
+          where: { instanceId: lease!.ownerNodeId! },
+        })
+      : null;
+    const activeLeaderNode =
+      ownerNode && ownerNode.status === 'active' ? ownerNode : null;
+    const issues: string[] = [];
+
+    if (!lease) {
+      issues.push('NO_LEASE');
+    } else if (lease.isExpired || !lease.ownerNodeId) {
+      issues.push('LEASE_EXPIRED');
+    }
+
+    if (hasActiveLease && !ownerNode) {
+      issues.push('LEASE_OWNER_MISSING');
+    }
+
+    if (ownerNode && ownerNode.status !== 'active') {
+      issues.push('LEASE_OWNER_NOT_ACTIVE');
+    }
+
+    return {
+      lease,
+      hasActiveLease,
+      ownerNode,
+      activeLeaderNode,
+      issues,
+    } satisfies LeaderLeaseState;
+  }
+
   /**
-   * CRITICAL: Ensure exactly one leader exists in the cluster
-   * This method handles:
-   * 1. No leader exists -> elect one
-   * 2. Multiple leaders exist -> keep only one
-   * 3. Stale leader exists -> remove and elect new one
+   * Ensure the cluster has an active leader lease and reconcile the legacy
+   * ClusterNode.isLeader flag from that lease for observability.
    */
   async ensureLeaderExists() {
     try {
@@ -485,175 +515,58 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      const leaders = activeNodes.filter((n) => n.isLeader);
-      const staleThreshold = new Date(Date.now() - this.staleThresholdMs);
+      const leaderState = await this.getLeaderLeaseState();
+      const thisInstanceId = this.distributedLock.getInstanceId();
+      const localLockStatus = this.distributedLock.getLeaderLockStatus();
 
-      // Case 1: Multiple leaders exist - keep the healthiest one
-      if (leaders.length > 1) {
+      if (
+        localLockStatus.isLeader &&
+        leaderState.hasActiveLease &&
+        leaderState.lease?.ownerNodeId !== thisInstanceId
+      ) {
         this.logger.error(
-          `[LeaderCheck] CRITICAL: ${leaders.length} leaders detected! Resolving...`,
+          `[LeaderCheck] Local leader state is stale; releasing local lease tracking because ${leaderState.lease?.ownerNodeId} owns the active leader lease`,
         );
+        await this.distributedLock.releaseLeaderLock();
+      }
 
-        // Find the best leader (most recent heartbeat, active status)
-        const validLeader = leaders[0]; // Already sorted by lastHeartbeat desc
-        const invalidLeaders = leaders.slice(1);
-
-        // Demote invalid leaders in DB
-        await this.prisma.clusterNode.updateMany({
-          where: {
-            instanceId: { in: invalidLeaders.map((l) => l.instanceId) },
-          },
-          data: { isLeader: false },
-        });
-
-        // If any of the invalid leaders is THIS instance, release the lock
-        const thisInstanceId = this.distributedLock.getInstanceId();
-        if (invalidLeaders.some((l) => l.instanceId === thisInstanceId)) {
-          this.logger.warn(
-            '[LeaderCheck] This instance was an invalid leader - releasing lock',
-          );
-          await this.distributedLock.releaseLeaderLock();
-        }
-
-        this.logger.log(
-          `[LeaderCheck] Resolved split-brain: kept ${validLeader.hostname} as leader`,
+      if (leaderState.hasActiveLease && leaderState.activeLeaderNode) {
+        await this.enforceOneLeader();
+        this.logger.debug(
+          `[LeaderCheck] Leader lease is healthy: ${leaderState.activeLeaderNode.hostname} (generation ${leaderState.lease?.generation})`,
         );
         return;
       }
 
-      // Case 2: One leader exists - validate it's healthy
-      if (leaders.length === 1) {
-        const leader = leaders[0];
-        const thisInstanceId = this.distributedLock.getInstanceId();
-
-        // Check if leader is stale
-        if (leader.lastHeartbeat < staleThreshold) {
-          this.logger.error(
-            `[LeaderCheck] CRITICAL: Leader ${leader.hostname} is STALE (last heartbeat: ${leader.lastHeartbeat.toISOString()})`,
-          );
-
-          // Demote stale leader
-          await this.prisma.clusterNode.update({
-            where: { instanceId: leader.instanceId },
-            data: { isLeader: false, status: 'stale' },
-          });
-
-          this.logger.log(
-            '[LeaderCheck] Demoted stale leader, will elect new one...',
-          );
-          // Fall through to elect new leader
-        } else {
-          // Leader is healthy
-          this.logger.debug(
-            `[LeaderCheck] Leader ${leader.hostname} is healthy`,
-          );
-
-          // If we think we're the leader but DB says someone else is, release our lock
-          const weAreLeader = await this.distributedLock.isLeader();
-          if (weAreLeader && leader.instanceId !== thisInstanceId) {
-            this.logger.error(
-              `[LeaderCheck] CRITICAL: Lock mismatch! We hold lock but ${leader.hostname} is DB leader. Releasing lock.`,
-            );
-            await this.distributedLock.releaseLeaderLock();
-          }
-          return;
-        }
-      }
-
-      // Case 3: No leader exists - elect one!
-      this.logger.warn('[LeaderCheck] NO LEADER EXISTS - initiating election');
-
-      // CRITICAL FIX: Check if lock exists but no DB leader (deadlock state)
-      const thisInstanceId = this.distributedLock.getInstanceId();
-
-      // Double-check no DB leader exists (race condition safety)
-      const currentLeader = await this.prisma.clusterNode.findFirst({
-        where: { isLeader: true, status: 'active' },
-      });
-
-      if (currentLeader) {
-        this.logger.log(
-          `[LeaderCheck] Leader appeared during check: ${currentLeader.hostname}`,
+      if (leaderState.hasActiveLease) {
+        await this.enforceOneLeader();
+        this.logger.warn(
+          `[LeaderCheck] Active leader lease generation ${leaderState.lease?.generation} belongs to ${leaderState.lease?.ownerNodeId}, but that node is not currently active. Waiting for lease expiry before electing a replacement.`,
         );
-        return; // Leader was elected by another node, we're done
+        return;
       }
 
-      // Try to acquire - this is non-blocking and race-safe
+      this.logger.warn(
+        '[LeaderCheck] No active leader lease exists - initiating lease election',
+      );
+
       const acquired = await this.distributedLock.tryAcquireLeaderLock();
 
       if (acquired) {
-        const leaseStatus = this.distributedLock.getLeaderLockStatus();
+        const currentLease = await this.getLeaderLeaseState();
+        await this.enforceOneLeader();
 
-        // WE WON THE ELECTION!
         this.logger.log(
-          `[LeaderCheck] ✓ This node successfully became the LEADER (lease generation ${leaseStatus.generation ?? 'unknown'})`,
+          `[LeaderCheck] ✓ This node successfully became the leader (lease generation ${currentLease.lease?.generation ?? 'unknown'})`,
         );
-
-        // Update DB to reflect leadership
-        await this.prisma.clusterNode.update({
-          where: { instanceId: thisInstanceId },
-          data: { isLeader: true },
-        });
-
-        // Verify we're the only leader
-        setTimeout(() => this.enforceOneLeader(), 2000);
         return;
       }
 
-      // Lock acquisition failed - someone else holds it
       this.logger.debug(
-        '[LeaderCheck] Failed to acquire lock - another node holds it',
+        '[LeaderCheck] Failed to acquire leader lease - another node likely holds it',
       );
 
-      // Lease reconciliation: a peer may hold the leader lease before the DB
-      // leader flag has been updated. Reconcile from lease state instead of
-      // relying on advisory-lock-specific recovery.
-      setTimeout(async () => {
-        try {
-          const leaderCheck = await this.prisma.clusterNode.findFirst({
-            where: { isLeader: true, status: 'active' },
-          });
-
-          if (!leaderCheck) {
-            const lease = await this.distributedLock.getLeaderLeaseSnapshot();
-
-            if (!lease || lease.isExpired || !lease.ownerNodeId) {
-              this.logger.warn(
-                '[LeaderCheck] No active leader lease is present; retrying election',
-              );
-
-              await this.ensureLeaderExists();
-            } else {
-              const leaseOwner = await this.prisma.clusterNode.findUnique({
-                where: { instanceId: lease.ownerNodeId },
-              });
-
-              if (leaseOwner && leaseOwner.status === 'active') {
-                await this.prisma.clusterNode.update({
-                  where: { instanceId: lease.ownerNodeId },
-                  data: { isLeader: true },
-                });
-
-                this.logger.warn(
-                  `[LeaderCheck] Reconciled DB leader state from active lease owner ${leaseOwner.hostname} (generation ${lease.generation})`,
-                );
-              } else {
-                this.logger.warn(
-                  `[LeaderCheck] Active leader lease belongs to unknown or inactive owner ${lease.ownerNodeId}; waiting for lease expiry before retry`,
-                );
-              }
-            }
-          } else {
-            this.logger.debug(
-              `[LeaderCheck] Leader confirmed: ${leaderCheck.hostname}`,
-            );
-          }
-        } catch (err) {
-          this.logger.error(
-            `[LeaderCheck] Deadlock detection failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }, 3000); // 3 second delay to allow leader to update DB
+      await this.enforceOneLeader();
     } catch (error) {
       this.logger.error(
         `[LeaderCheck] Failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -668,25 +581,29 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   async tryBecomeLeader(): Promise<boolean> {
     try {
       const thisInstanceId = this.distributedLock.getInstanceId();
+      const leaderState = await this.getLeaderLeaseState();
 
-      // First check if we already are the leader
-      const isLeader = await this.distributedLock.isLeader();
-      if (isLeader) {
+      if (
+        leaderState.hasActiveLease &&
+        leaderState.lease?.ownerNodeId === thisInstanceId
+      ) {
+        await this.enforceOneLeader();
         this.logger.log('[TryBecomeLeader] This node is already the leader');
         return true;
       }
 
-      // Try to acquire the lock
+      if (leaderState.hasActiveLease) {
+        this.logger.log(
+          `[TryBecomeLeader] ✗ Active leader lease is already owned by ${leaderState.lease?.ownerNodeId}`,
+        );
+        return false;
+      }
+
       const acquired = await this.distributedLock.acquireLeaderLock();
 
       if (acquired) {
         this.logger.log('[TryBecomeLeader] ✓ Successfully became the leader');
-
-        // Update DB
-        await this.prisma.clusterNode.update({
-          where: { instanceId: thisInstanceId },
-          data: { isLeader: true },
-        });
+        await this.enforceOneLeader();
 
         return true;
       } else {
@@ -720,7 +637,63 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   async manualEnforceLeader() {
     this.logger.log('[ManualEnforce] Triggered by admin');
     await this.enforceOneLeader();
-    return { success: true, message: 'Leader enforcement completed' };
+    const leaderState = await this.getLeaderLeaseState();
+    return {
+      success: true,
+      message: leaderState.activeLeaderNode
+        ? `Lease-backed leader reconciliation completed for ${leaderState.activeLeaderNode.hostname}`
+        : leaderState.hasActiveLease
+          ? 'Lease-backed leader reconciliation completed while waiting for lease owner recovery/expiry'
+          : 'Lease-backed leader reconciliation completed with no active leader lease',
+    };
+  }
+
+  private applyLeaseLeadership(
+    nodes: ClusterNodeRecord[],
+    leaderState: LeaderLeaseState,
+  ): ClusterNodeRecord[] {
+    const leaderInstanceId = leaderState.hasActiveLease
+      ? (leaderState.lease?.ownerNodeId ?? null)
+      : null;
+
+    return nodes.map((node) => ({
+      ...node,
+      isLeader:
+        leaderInstanceId !== null &&
+        node.status === 'active' &&
+        node.instanceId === leaderInstanceId,
+    }));
+  }
+
+  private async reconcileLeaderFlagsFromLease(
+    leaderState: LeaderLeaseState,
+  ): Promise<void> {
+    const leaderInstanceId = leaderState.activeLeaderNode?.instanceId ?? null;
+
+    if (leaderInstanceId) {
+      await Promise.all([
+        this.prisma.clusterNode.updateMany({
+          where: {
+            instanceId: leaderInstanceId,
+            isLeader: false,
+          },
+          data: { isLeader: true },
+        }),
+        this.prisma.clusterNode.updateMany({
+          where: {
+            isLeader: true,
+            instanceId: { not: leaderInstanceId },
+          },
+          data: { isLeader: false },
+        }),
+      ]);
+      return;
+    }
+
+    await this.prisma.clusterNode.updateMany({
+      where: { isLeader: true },
+      data: { isLeader: false },
+    });
   }
 
   private serializeControlPlaneRegistration(

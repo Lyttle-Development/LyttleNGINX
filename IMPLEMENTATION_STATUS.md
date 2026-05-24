@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 3 — Cluster coordination redesign
-- Most recently completed session: Session 10 — Add lease-based coordination primitives
-- Next recommended session from the roadmap: Session 11 — Move heartbeat and leader flows onto leases
+- Most recently completed session: Session 11 — Move heartbeat and leader flows onto leases
+- Next recommended session from the roadmap: Session 12 — Add cluster operations and per-node ACK tracking
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -392,13 +392,33 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 11 — Move heartbeat and leader flows onto leases
 
-- Status: not started
+- Status: done
 - Objective: align membership and leadership around the new lease model
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: split-brain recovery logic remains fragile until lease-backed
-- Follow-up sessions: Session 22, Session 27
-- Notes: should simplify stale-node handling
+- Files touched:
+  - `src/distributed-lock/distributed-lock.service.ts`
+  - `src/distributed-lock/cluster-heartbeat.service.ts`
+  - `src/distributed-lock/cluster.controller.ts`
+  - `test/session11/lease-backed-heartbeat.test.js`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+- Tests added/updated:
+  - added `test/session11/lease-backed-heartbeat.test.js` to verify lease-derived leader reads, stale lease-owner handling, lease-only leader election, and stale-node cleanup behavior
+  - re-ran the focused Session 11 regression suite and the repository test suite so Sessions 3-11 continue to pass together after the lease-backed refactor
+  - validated the edited cluster coordination files with `npm run typecheck` and `npm run build` after removing the remaining generated-client dependency from lease snapshot reads
+- Risks:
+  - `ClusterNode.isLeader` is still retained as a denormalized observability field for compatibility, so later sessions should continue reducing reliance on legacy node flags in any new APIs
+  - cluster-wide mutating workflows still do not persist operation IDs or per-node ACKs; Session 12 remains responsible for making lease ownership actionable across async workflows
+  - inter-node transport is still authenticated HTTP rather than mTLS, so this session improves coordination correctness but not network trust boundaries
+- Follow-up sessions:
+  - Session 12 — add cluster operations and per-node ACK tracking
+  - Session 22 — add cluster operation and node-status admin APIs
+  - Session 24 — replace ad hoc logging with structured operational and audit logging
+  - Session 27 — add chaos and fault-injection validation
+- Notes:
+  - heartbeat updates, leader reads, and cluster stats now derive leadership from the active leader lease instead of choosing a leader from `ClusterNode.isLeader` flags
+  - stale-node cleanup now marks nodes stale and clears denormalized leader flags, but it waits for lease expiry instead of force-electing a replacement from heartbeat recency
+  - the cluster leader status endpoint now surfaces lease-owner-missing and lease-owner-not-active states explicitly so leadership drift is diagnosable without relying on split-brain heuristics
 
 ## Session 12 — Add cluster operations and per-node ACK tracking
 

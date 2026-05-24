@@ -11,6 +11,9 @@
   <img src="https://img.shields.io/badge/session%206-complete-blue" alt="Session 6" />
   <img src="https://img.shields.io/badge/session%207-complete-blue" alt="Session 7" />
   <img src="https://img.shields.io/badge/session%208-complete-blue" alt="Session 8" />
+  <img src="https://img.shields.io/badge/session%209-complete-blue" alt="Session 9" />
+  <img src="https://img.shields.io/badge/session%2010-complete-blue" alt="Session 10" />
+  <img src="https://img.shields.io/badge/session%2011-complete-blue" alt="Session 11" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -24,9 +27,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 2 in progress
-- **Completed in Sessions 1-9 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, and durable audit logging for privileged and mutating operations
-- **Next recommended implementation session:** Session 10 — add lease-based coordination primitives
+- **Roadmap status:** Phase 3 in progress
+- **Completed in Sessions 1-11 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, and lease-backed heartbeat/leader reconciliation
+- **Next recommended implementation session:** Session 12 — add cluster operations and per-node ACK tracking
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -59,7 +62,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-9 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, and audit-logging regressions. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-11 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, and lease-backed cluster coordination behavior. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -105,7 +108,7 @@ npm -v    # expected: 11.15.0
 - **Leader Election** - Automatic leader election with fail-over and lease renewal
 - **Node Heartbeats** - Real-time cluster health monitoring
 - **Stale Node Cleanup** - Automatic removal of dead nodes (2 min timeout)
-- **Split-Brain Prevention** - Multiple safety layers enforce single leader
+- **Lease-Backed Leadership Reconciliation** - Heartbeats and leader diagnostics derive authority from the active lease instead of stale DB flags
 - **Auto-Recovery** - Self-healing from crashes and network issues
 - **Admin Endpoints** - Manual cluster management and diagnostics
 - **Health Monitoring** - Built-in scripts for cluster health checks

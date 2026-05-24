@@ -46,7 +46,7 @@ type AcquireLeaseOptions = {
 type HeldLease = LeaseSnapshot & {
   autoRenew: boolean;
   renewIntervalMs: number;
-  renewalTimer: NodeJS.Timeout | null;
+  renewalTimer: ReturnType<typeof setInterval> | null;
 };
 
 /**
@@ -74,10 +74,7 @@ export class DistributedLockService implements OnModuleDestroy {
    * Acquire an advisory lock with timeout
    * Returns true if lock was acquired, false otherwise
    */
-  async tryAcquireLock(
-    lockName: string,
-    timeoutMs: number = 5000,
-  ): Promise<boolean> {
+  async tryAcquireLock(lockName: string): Promise<boolean> {
     const lockId = this.stringToLockId(lockName);
     const startTime = Date.now();
 
@@ -160,7 +157,7 @@ export class DistributedLockService implements OnModuleDestroy {
 
     let retries = 0;
     while (retries < maxRetries) {
-      const acquired = await this.tryAcquireLock(lockName, timeoutMs);
+      const acquired = await this.tryAcquireLock(lockName);
 
       if (acquired) {
         try {
@@ -453,9 +450,26 @@ export class DistributedLockService implements OnModuleDestroy {
 
   async getLeaseSnapshot(leaseName: string): Promise<LeaseSnapshot | null> {
     try {
-      const lease = await this.prisma.clusterLease.findUnique({
-        where: { leaseName },
-      });
+      const result = await this.prisma.$queryRaw<ClusterLeaseRecord[]>`
+        SELECT
+          "id",
+          "leaseName",
+          "ownerNodeId",
+          "ownerHostname",
+          "generation",
+          "ttlSeconds",
+          "acquiredAt",
+          "renewedAt",
+          "expiresAt",
+          "metadata",
+          "createdAt",
+          "updatedAt"
+        FROM "ClusterLease"
+        WHERE "leaseName" = ${leaseName}
+        LIMIT 1
+      `;
+
+      const lease = result[0] ?? null;
 
       return lease ? this.toLeaseSnapshot(lease) : null;
     } catch (error) {
@@ -476,11 +490,14 @@ export class DistributedLockService implements OnModuleDestroy {
     ownerNodeId: string = this.instanceId,
   ): Promise<boolean> {
     const lease = await this.getLeaseSnapshot(leaseName);
-    return Boolean(
-      lease &&
-        !lease.isExpired &&
-        lease.ownerNodeId === ownerNodeId &&
-        lease.generation === expectedGeneration,
+    if (!lease) {
+      return false;
+    }
+
+    return (
+      !lease.isExpired &&
+      lease.ownerNodeId === ownerNodeId &&
+      lease.generation === expectedGeneration
     );
   }
 
@@ -603,10 +620,7 @@ export class DistributedLockService implements OnModuleDestroy {
       return configured;
     }
 
-    return Math.max(
-      MIN_RENEW_INTERVAL_MS,
-      Math.floor((ttlSeconds * 1000) / 3),
-    );
+    return Math.max(MIN_RENEW_INTERVAL_MS, Math.floor((ttlSeconds * 1000) / 3));
   }
 
   private toLeaseSnapshot(lease: ClusterLeaseRecord): LeaseSnapshot {

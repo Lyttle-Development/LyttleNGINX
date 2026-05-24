@@ -181,29 +181,39 @@ export class ClusterController {
    */
   @Get('leader/status')
   async getLeaderStatus() {
-    const dbLeader = await this.clusterHeartbeat.getLeaderNode();
+    const leaderState = await this.clusterHeartbeat.getLeaderLeaseState();
+    const dbLeader = leaderState.activeLeaderNode;
     const lockStatus = this.distributedLock.getLeaderLockStatus();
-    const lease = await this.distributedLock.getLeaderLeaseSnapshot();
-    const allLeaders = await this.clusterHeartbeat
-      .getClusterStats()
-      .then((stats) => stats.leaders);
+    const lease = leaderState.lease;
+    const allLeaders = dbLeader ? [dbLeader] : [];
 
-    const hasActiveLease = Boolean(
-      lease && !lease.isExpired && lease.ownerNodeId,
-    );
+    const hasActiveLease = leaderState.hasActiveLease;
     const dbMatchesLease = Boolean(
       dbLeader && hasActiveLease && lease?.ownerNodeId === dbLeader.instanceId,
     );
+    const issues = [
+      ...leaderState.issues,
+      !hasActiveLease && 'NO_ACTIVE_LEASE',
+      hasActiveLease && !dbLeader && 'LEASE_WITHOUT_ACTIVE_NODE',
+      hasActiveLease && dbLeader && !dbMatchesLease && 'LEASE_DB_MISMATCH',
+      lockStatus.isLeader &&
+        lease &&
+        lockStatus.generation !== lease.generation &&
+        'LOCAL_LEASE_STALE',
+      lockStatus.isLeader &&
+        lease?.ownerNodeId &&
+        lockStatus.ownerNodeId !== lease.ownerNodeId &&
+        'LOCAL_OWNER_MISMATCH',
+    ].filter(Boolean);
     const isConsistent =
-      allLeaders.length === 1 &&
-      hasActiveLease &&
-      dbMatchesLease &&
-      (!lockStatus.isLeader ||
-        (lockStatus.ownerNodeId === lease?.ownerNodeId &&
-          lockStatus.generation === lease?.generation));
+      issues.length === 0 && hasActiveLease && dbMatchesLease;
 
     return {
-      status: isConsistent ? 'healthy' : 'inconsistent',
+      status: isConsistent
+        ? 'healthy'
+        : hasActiveLease
+          ? 'degraded'
+          : 'no-leader',
       lease: lease
         ? {
             leaseName: lease.leaseName,
@@ -228,6 +238,18 @@ export class ClusterController {
             expiresAt: lockStatus.expiresAt,
           }
         : null,
+      leaseOwnerRecord: leaderState.ownerNode
+        ? {
+            hostname: leaderState.ownerNode.hostname,
+            instanceId: leaderState.ownerNode.instanceId,
+            ipAddress: leaderState.ownerNode.ipAddress,
+            controlPlane: getClusterNodeControlPlaneEndpoint(
+              leaderState.ownerNode,
+            ),
+            status: leaderState.ownerNode.status,
+            lastHeartbeat: leaderState.ownerNode.lastHeartbeat,
+          }
+        : null,
       dbLeader: dbLeader
         ? {
             hostname: dbLeader.hostname,
@@ -246,22 +268,7 @@ export class ClusterController {
         status: l.status,
         lastHeartbeat: l.lastHeartbeat,
       })),
-      issues: [
-        allLeaders.length === 0 && 'NO_LEADER',
-        allLeaders.length > 1 && 'MULTIPLE_LEADERS',
-        !hasActiveLease && 'NO_ACTIVE_LEASE',
-        lease?.isExpired && 'LEASE_EXPIRED',
-        hasActiveLease && !dbLeader && 'LEASE_WITHOUT_DB_ENTRY',
-        !hasActiveLease && dbLeader && 'DB_ENTRY_WITHOUT_LEASE',
-        lockStatus.isLeader &&
-          lease &&
-          lockStatus.generation !== lease.generation &&
-          'LOCAL_LEASE_STALE',
-        hasActiveLease &&
-          dbLeader &&
-          dbLeader.instanceId !== lease?.ownerNodeId &&
-          'LEASE_DB_MISMATCH',
-      ].filter(Boolean),
+      issues,
     };
   }
 
