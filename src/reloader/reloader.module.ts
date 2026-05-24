@@ -5,9 +5,10 @@ import { NginxModule } from '../nginx/nginx.module';
 import { NginxService } from '../nginx/nginx.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CertificateModule } from '../certificate/certificate.module';
+import { HealthModule } from '../health/health.module';
 
 @Module({
-  imports: [PrismaModule, NginxModule, CertificateModule],
+  imports: [PrismaModule, NginxModule, CertificateModule, HealthModule],
   providers: [ReloaderService, NginxService, PrismaService],
   exports: [ReloaderService],
 })

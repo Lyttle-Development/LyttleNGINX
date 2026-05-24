@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 1 — Emergency hardening and correctness fixes
-- Most recently completed session: Session 3 — Lock down public mutating endpoints
-- Next recommended session from the roadmap: Session 4 — Fix health, readiness, liveness, and startup semantics
+- Most recently completed session: Session 4 — Fix health, readiness, liveness, and startup semantics
+- Next recommended session from the roadmap: Session 5 — Fix container and process auto-recovery behavior
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -114,13 +114,36 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - removed the previous development-mode auth bypass so write endpoints no longer become public when `API_KEY` is unset
 
 ## Session 4 — Fix health, readiness, liveness, and startup semantics
-- Status: not started
+- Status: done
 - Objective: make health signaling reliable for orchestration and recovery
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: current readiness semantics can mask unhealthy states
-- Follow-up sessions: Session 5, Session 25, Session 27
-- Notes: should include `healthcheck.sh` alignment
+- Files touched:
+  - `README.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `healthcheck.sh`
+  - `src/health/health.controller.ts`
+  - `src/health/health.module.ts`
+  - `src/health/health.service.ts`
+  - `src/reloader/reloader.module.ts`
+  - `src/reloader/reloader.service.ts`
+  - `src/certificate/certificate.module.ts`
+  - `src/certificate/certificate.service.ts`
+  - `test/session4/health-semantics.test.js`
+- Tests added/updated:
+  - added `test/session4/health-semantics.test.js` to verify explicit liveness/startup/readiness routes and their HTTP status semantics
+  - validated the focused Session 4 test suite locally with the repository test runner
+- Risks:
+  - readiness still relies on in-memory timestamps for config apply and certificate sync, so state is reset on process restart until the first successful post-boot operations complete
+  - cluster communication health and deeper dependency reporting remain future work for Session 6 and Session 25
+- Follow-up sessions:
+  - Session 5 — fix container and process auto-recovery behavior
+  - Session 6 — fix inter-node addressing and Swarm communication model
+  - Session 25 — expand metrics and alerting
+  - Session 27 — add chaos and fault-injection validation
+- Notes:
+  - added explicit `GET /health/live`, `GET /health/startup`, and `GET /health/ready` endpoints while keeping `/health` and `/ready` as compatibility aliases
+  - readiness now returns non-200 when PostgreSQL, NGINX master health, recent config apply, or recent certificate sync checks fail
+  - `healthcheck.sh` now inspects both the readiness HTTP status and the JSON body instead of trusting status code alone
 
 ## Session 5 — Fix container and process auto-recovery behavior
 - Status: not started

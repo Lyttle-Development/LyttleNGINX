@@ -22,6 +22,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-004 | Deployment mode expectations | accepted | Session 1 | 2026-05-24 |
 | ADR-005 | Secret material stays out of git | accepted | Session 2 | 2026-05-24 |
 | ADR-006 | Authenticated-by-default control-plane API | accepted | Session 3 | 2026-05-24 |
+| ADR-007 | Explicit probe endpoints with dependency-aware readiness | accepted | Session 4 | 2026-05-24 |
 
 ---
 
@@ -202,4 +203,38 @@ Adopt an authenticated-by-default API policy for the NestJS control plane:
 - operators must configure `API_KEY` even in local evaluation when they need to access admin endpoints
 - public observability and ACME flows remain available, but all other current API surfaces should be treated as admin/control-plane endpoints
 - Session 7 and Session 8 can build on this deny-by-default posture when introducing richer identity and RBAC models
+
+---
+
+## ADR-007 — Explicit probe endpoints with dependency-aware readiness
+
+- Status: accepted
+- Session: Session 4 — Fix health, readiness, liveness, and startup semantics
+- Date: 2026-05-24
+
+### Context
+
+The previous health model exposed only `/health` and `/ready`, always returned HTTP 200 for readiness, and did not validate the database or recent control-plane convergence. That allowed orchestration layers to keep routing traffic to nodes that had lost PostgreSQL connectivity, had stale config/certificate state, or had not finished startup.
+
+### Decision
+
+Adopt explicit probe semantics for the NestJS control plane:
+
+1. expose `GET /health/live` for liveness
+2. expose `GET /health/startup` for startup completion
+3. expose `GET /health/ready` for readiness
+4. keep `GET /health` and `GET /ready` as temporary compatibility aliases for liveness and readiness respectively
+5. make readiness return HTTP 503 when any critical dependency check fails
+6. require readiness to validate at least:
+   - PostgreSQL connectivity
+   - NGINX master-process health
+   - a recent successful config apply
+   - a recent successful certificate sync
+7. update the container healthcheck script to inspect both the readiness HTTP status and the JSON body
+
+### Consequences
+
+- orchestrators can now distinguish “process alive” from “safe to receive traffic”
+- the service stays unready after restart until config apply and certificate sync have completed successfully at least once
+- later sessions should persist and broaden health signals beyond the current in-memory freshness tracking, especially for cluster-wide convergence and richer observability
 

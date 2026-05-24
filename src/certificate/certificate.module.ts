@@ -12,9 +12,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AlertModule } from '../alert/alert.module';
 import { AuthModule } from '../auth/auth.module';
+import { HealthModule } from '../health/health.module';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), AlertModule, AuthModule],
+  imports: [ScheduleModule.forRoot(), AlertModule, AuthModule, HealthModule],
   controllers: [
     CertificateController,
     TlsController,

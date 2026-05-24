@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import { CertificateService } from '../certificate/certificate.service';
 import { TlsConfigService } from '../certificate/tls-config.service';
 import { lookup } from 'dns/promises'; // <-- Added
+import { HealthService } from '../health/health.service';
 
 const NGINX_ETC_DIR = '/etc/nginx';
 const NGINX_SOURCE_DIR = join(process.cwd(), 'nginx');
@@ -49,6 +50,7 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
     private nginx: NginxService,
     private certificate: CertificateService,
     private tlsConfig: TlsConfigService,
+    private healthService: HealthService,
   ) {}
 
   async onModuleInit() {
@@ -173,12 +175,18 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         'Nginx config and directories replaced/reloaded successfully.',
       );
+      this.healthService.recordConfigApplySuccess(
+        `reloaded ${entries.length} proxy entr${entries.length === 1 ? 'y' : 'ies'}`,
+      );
       return { ok: true };
     } catch (error: any) {
       this.logger.error(
         'Failed to reload Nginx config',
         error instanceof Error ? error.stack : String(error),
         JSON.stringify({ error, time: new Date().toISOString() }),
+      );
+      this.healthService.recordConfigApplyFailure(
+        error.message || String(error),
       );
       return { ok: false, error: error.message || String(error) };
     }

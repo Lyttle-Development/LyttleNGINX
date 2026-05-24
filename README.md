@@ -353,19 +353,32 @@ npm run prisma:migrate
 
 ## 📚 API Documentation
 
-### Session 3 access policy
+### Session 3/4 access policy
 
-As of Session 3, the control-plane API is **authenticated by default**.
+As of Sessions 3 and 4, the control-plane API is **authenticated by default**, with a small public probe allowlist.
 
 The current explicit public allowlist is limited to:
 
-- `GET /health`
-- `GET /ready`
+- `GET /health/live`
+- `GET /health/startup`
+- `GET /health/ready`
 - `GET /metrics`
 - `GET /metrics/json`
 - `GET /.well-known/acme-challenge/:token`
 
+Legacy compatibility aliases currently remain available for:
+
+- `GET /health` → liveness
+- `GET /ready` → readiness
+
 All other endpoints should be treated as admin or internal control-plane endpoints and require `X-API-Key` (or `Authorization: ApiKey <key>`).
+
+Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The readiness body also reports the status of:
+
+- PostgreSQL connectivity
+- NGINX master-process health
+- last successful config apply
+- last successful certificate sync
 
 ### Certificate Endpoints
 
@@ -419,11 +432,14 @@ All other endpoints should be treated as admin or internal control-plane endpoin
 
 ### Health Endpoints
 
-| Method | Endpoint         | Description         | Auth   |
-|--------|------------------|---------------------|--------|
-| GET    | `/health`        | Health check        | Public |
-| GET    | `/ready`         | Readiness check     | Public |
-| POST   | `/reload`        | Reload NGINX config | Required |
+| Method | Endpoint          | Description                                                  | Auth     |
+|--------|-------------------|--------------------------------------------------------------|----------|
+| GET    | `/health/live`    | Liveness probe; returns 200 while the process is alive       | Public   |
+| GET    | `/health/startup` | Startup probe; returns 503 until first config apply + cert sync succeed | Public   |
+| GET    | `/health/ready`   | Readiness probe; returns 503 when DB/NGINX/config/cert state is unhealthy | Public   |
+| GET    | `/health`         | Legacy alias for `/health/live`                              | Public   |
+| GET    | `/ready`          | Legacy alias for `/health/ready`                             | Public   |
+| POST   | `/reload`         | Reload NGINX config                                          | Required |
 
 ### ACME Challenge Endpoint
 

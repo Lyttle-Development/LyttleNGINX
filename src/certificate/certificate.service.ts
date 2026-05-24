@@ -16,6 +16,7 @@ import { addDays } from 'date-fns';
 import { hashDomains, joinDomains, parseDomains } from '../utils/domain-utils';
 import { AlertService } from '../alert/alert.service';
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
+import { HealthService } from '../health/health.service';
 
 const exec = promisify(execCb);
 
@@ -42,6 +43,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     private prisma: PrismaService,
     private alertService: AlertService,
     private distributedLock: DistributedLockService,
+    private healthService: HealthService,
     @Inject(
       forwardRef(
         () =>
@@ -197,6 +199,10 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           const errorMsg =
             reloadErr instanceof Error ? reloadErr.message : String(reloadErr);
           this.logger.error(`[Sync] Failed to reload NGINX: ${errorMsg}`);
+          errors.push({
+            domain: '__nginx_reload__',
+            error: `Failed to reload NGINX after sync: ${errorMsg}`,
+          });
 
           // Send alert for critical NGINX reload failure
           await this.alertService
@@ -240,12 +246,23 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           );
       }
 
+      if (errors.length > 0) {
+        this.healthService.recordCertificateSyncFailure(
+          `encountered ${errors.length} certificate sync error(s)`,
+        );
+      } else {
+        this.healthService.recordCertificateSyncSuccess(
+          `synced ${syncedCount} certificate(s)`,
+        );
+      }
+
       return { success: true, syncedCount, errors };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(
         `[Sync] Certificate synchronization failed: ${errorMsg}`,
       );
+      this.healthService.recordCertificateSyncFailure(errorMsg);
 
       // Send critical alert
       await this.alertService
