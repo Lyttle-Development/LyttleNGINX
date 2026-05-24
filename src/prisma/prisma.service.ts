@@ -19,10 +19,18 @@ export class PrismaService
     const databaseUrl = process.env.DATABASE_URL;
     if (databaseUrl) {
       const url = new URL(databaseUrl);
+      const configuredPoolSize = Number.parseInt(
+        url.searchParams.get('pool_size') || '',
+        10,
+      );
+      const resolvedConnectionLimit =
+        Number.isFinite(configuredPoolSize) && configuredPoolSize > 0
+          ? String(configuredPoolSize)
+          : '1';
 
       // Set connection pool limits if not already configured
       if (!url.searchParams.has('connection_limit')) {
-        url.searchParams.set('connection_limit', '1'); // Max 1 connection per instance
+        url.searchParams.set('connection_limit', resolvedConnectionLimit);
       }
       if (!url.searchParams.has('pool_timeout')) {
         url.searchParams.set('pool_timeout', '10'); // 10 second timeout
