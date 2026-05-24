@@ -24,6 +24,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-006 | Authenticated-by-default control-plane API | accepted | Session 3 | 2026-05-24 |
 | ADR-007 | Explicit probe endpoints with dependency-aware readiness | accepted | Session 4 | 2026-05-24 |
 | ADR-008 | Fail-fast container supervision and restart-friendly deployment policies | accepted | Session 5 | 2026-05-24 |
+| ADR-009 | Explicit advertised control-plane endpoints for cluster communication | accepted | Session 6 | 2026-05-24 |
 
 ---
 
@@ -275,4 +276,38 @@ Adopt a fail-fast supervision model for the current single-container runtime:
 - Node or NGINX crashes now translate into observable container failures instead of hidden partial outages
 - graceful container stops still terminate both supervised processes cleanly without turning normal shutdown into a failure
 - the current architecture still relies on a shell-based two-process container, so later sessions may still choose to split the control plane from the edge runtime or adopt a dedicated supervisor
+
+---
+
+## ADR-009 — Explicit advertised control-plane endpoints for cluster communication
+
+- Status: accepted
+- Session: Session 6 — Fix inter-node addressing and Swarm communication model
+- Date: 2026-05-24
+
+### Context
+
+The production-readiness assessment identified two related cluster-communication flaws:
+
+- nodes tried to discover their identity through third-party public-IP services
+- inter-node requests assumed `process.env.PORT` matched the peer-facing reachable port in Swarm
+
+That made peer communication fragile, leaked topology information to public services, and broke the distinction between the container's internal listen port and the port other nodes must actually call.
+
+### Decision
+
+Adopt an explicit advertised control-plane endpoint model:
+
+1. each node advertises a routable control-plane address using `CLUSTER_CONTROL_ADDRESS` or `CLUSTER_CONTROL_URL`
+2. each node advertises a peer-facing control-plane port using `CLUSTER_CONTROL_PORT`
+3. `PORT` remains the local NestJS listen port and must not be reused implicitly for peer URL construction
+4. cluster registration stores the advertised control-plane endpoint in node metadata
+5. inter-node reload and certificate-sync broadcasts build their URLs from the registered endpoint, not from public-IP discovery or hard-coded port assumptions
+6. loopback or otherwise non-routable advertised endpoints are rejected for peer use in production-mode registration
+
+### Consequences
+
+- Swarm and other clustered deployments must now provide explicit control-plane addressing configuration
+- operators can inspect the registered peer endpoint for each node through cluster metadata instead of inferring behavior from logs or container internals
+- inter-node communication remains HTTP + API-key authenticated for now; Session 7, Session 8, and later security work still need to introduce stronger node identity and transport security
 

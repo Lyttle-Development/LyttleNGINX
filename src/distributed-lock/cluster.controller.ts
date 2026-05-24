@@ -10,6 +10,10 @@ import { ClusterHeartbeatService } from './cluster-heartbeat.service';
 import { DistributedLockService } from './distributed-lock.service';
 import { ReloaderService } from '../reloader/reloader.service';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import {
+  buildClusterNodeUrl,
+  getClusterNodeControlPlaneEndpoint,
+} from '../utils/network-utils';
 
 @Controller('cluster')
 @UseGuards(ApiKeyGuard)
@@ -28,6 +32,12 @@ export class ClusterController {
   @Post('reload')
   async reload(@Query('broadcast') broadcast: string) {
     const shouldBroadcast = broadcast !== 'false';
+    const broadcastSummary = {
+      requested: shouldBroadcast,
+      attemptedNodes: 0,
+      skippedNodes: [] as string[],
+      authenticated: false,
+    };
 
     this.logger.log(`[Reload] Triggered. Broadcast: ${shouldBroadcast}`);
 
@@ -39,50 +49,71 @@ export class ClusterController {
       const nodes = await this.clusterHeartbeat.getActiveNodes();
       const thisInstanceId = this.distributedLock.getInstanceId();
 
-      const otherNodes = nodes.filter(
-        (n) => n.instanceId !== thisInstanceId && n.ipAddress,
-      );
+      const otherNodes = nodes.filter((n) => n.instanceId !== thisInstanceId);
 
       this.logger.log(
         `[Reload] Broadcasting to ${otherNodes.length} other nodes...`,
       );
 
       // Get API key from environment for inter-node communication
-      const apiKey = process.env.API_KEY?.split(',')[0]; // Use first API key
+      const apiKey = process.env.API_KEY?.split(',')[0]?.trim();
 
-      // Fire and forget broadcast
-      otherNodes.forEach(async (node) => {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 5000);
+      if (!apiKey) {
+        this.logger.warn(
+          '[Reload] Skipping inter-node broadcast because no API key is configured for authenticated peer requests',
+        );
+        broadcastSummary.skippedNodes = otherNodes.map(
+          (node) => node.hostname ?? node.instanceId,
+        );
+      } else {
+        broadcastSummary.authenticated = true;
 
-          // Assuming default port 3000 if not specified in env
-          // In a real scenario, we might want to store the port in ClusterNode metadata
-          const port = process.env.PORT || 3000;
-          const url = `http://${node.ipAddress}:${port}/cluster/reload?broadcast=false`;
+        await Promise.allSettled(
+          otherNodes.map(async (node) => {
+            const url = buildClusterNodeUrl(node, '/cluster/reload', {
+              broadcast: 'false',
+            });
 
-          this.logger.debug(`[Reload] Calling ${url}`);
+            if (!url) {
+              const nodeLabel = node.hostname ?? node.instanceId;
+              broadcastSummary.skippedNodes.push(nodeLabel);
+              this.logger.warn(
+                `[Reload] Skipping ${nodeLabel} because it does not have a valid registered control-plane endpoint`,
+              );
+              return;
+            }
 
-          await fetch(url, {
-            method: 'POST',
-            headers: {
-              'X-API-Key': apiKey || '',
-            },
-            signal: controller.signal,
-          });
+            try {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-          clearTimeout(timeoutId);
-        } catch (e) {
-          this.logger.error(
-            `[Reload] Failed to broadcast to ${node.hostname} (${node.ipAddress}): ${e.message}`,
-          );
-        }
-      });
+              broadcastSummary.attemptedNodes += 1;
+              this.logger.debug(`[Reload] Calling ${url}`);
+
+              try {
+                await fetch(url, {
+                  method: 'POST',
+                  headers: {
+                    'X-API-Key': apiKey,
+                  },
+                  signal: controller.signal,
+                });
+              } finally {
+                clearTimeout(timeoutId);
+              }
+            } catch (error) {
+              this.logger.error(
+                `[Reload] Failed to broadcast to ${node.hostname} (${node.instanceId}): ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+          }),
+        );
+      }
     }
 
     return {
       local: result,
-      broadcast: shouldBroadcast,
+      broadcast: broadcastSummary,
     };
   }
 
@@ -99,6 +130,7 @@ export class ClusterController {
         hostname: node.hostname,
         instanceId: node.instanceId,
         ipAddress: node.ipAddress,
+        controlPlane: getClusterNodeControlPlaneEndpoint(node),
         isLeader: node.isLeader,
         status: node.status,
         lastHeartbeat: node.lastHeartbeat,
@@ -131,6 +163,7 @@ export class ClusterController {
         hostname: leader.hostname,
         instanceId: leader.instanceId,
         ipAddress: leader.ipAddress,
+        controlPlane: getClusterNodeControlPlaneEndpoint(leader),
         lastHeartbeat: leader.lastHeartbeat,
         version: leader.version,
         metadata: leader.metadata,
@@ -167,6 +200,7 @@ export class ClusterController {
             hostname: dbLeader.hostname,
             instanceId: dbLeader.instanceId,
             ipAddress: dbLeader.ipAddress,
+            controlPlane: getClusterNodeControlPlaneEndpoint(dbLeader),
             lastHeartbeat: dbLeader.lastHeartbeat,
             status: dbLeader.status,
           }
@@ -175,6 +209,7 @@ export class ClusterController {
         hostname: l.hostname,
         instanceId: l.instanceId,
         ipAddress: l.ipAddress,
+        controlPlane: getClusterNodeControlPlaneEndpoint(l),
         status: l.status,
         lastHeartbeat: l.lastHeartbeat,
       })),

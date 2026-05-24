@@ -7,7 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { DistributedLockService } from './distributed-lock.service';
 import * as os from 'os';
-import { getNodeIpAddress } from '../utils/network-utils';
+import { getLocalControlPlaneRegistration } from '../utils/network-utils';
 
 /**
  * Service to track cluster nodes and their health status
@@ -127,7 +127,18 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
   private async registerNode() {
     const instanceId = this.distributedLock.getInstanceId();
     const hostname = os.hostname();
-    const ipAddress = await getNodeIpAddress();
+    const controlPlane = getLocalControlPlaneRegistration();
+    const ipAddress = controlPlane.endpoint?.address ?? null;
+
+    if (!controlPlane.endpoint) {
+      this.logger.warn(
+        `[Register] Node ${hostname} does not have a valid control-plane endpoint configured: ${controlPlane.issues.join('; ')}`,
+      );
+    } else if (controlPlane.issues.length > 0) {
+      this.logger.warn(
+        `[Register] Node ${hostname} control-plane configuration warnings: ${controlPlane.issues.join('; ')}`,
+      );
+    }
 
     try {
       await this.prisma.clusterNode.upsert({
@@ -145,6 +156,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
             nodeVersion: process.version,
             cpus: os.cpus().length,
             totalMemory: os.totalmem(),
+            controlPlane: this.serializeControlPlaneRegistration(controlPlane),
           },
         },
         update: {
@@ -153,6 +165,14 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
           lastHeartbeat: new Date(),
           status: 'active',
           version: process.env.npm_package_version || 'unknown',
+          metadata: {
+            platform: os.platform(),
+            arch: os.arch(),
+            nodeVersion: process.version,
+            cpus: os.cpus().length,
+            totalMemory: os.totalmem(),
+            controlPlane: this.serializeControlPlaneRegistration(controlPlane),
+          },
         },
       });
 
@@ -171,7 +191,8 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
    */
   private async sendHeartbeat() {
     const instanceId = this.distributedLock.getInstanceId();
-    const ipAddress = await getNodeIpAddress();
+    const controlPlane = getLocalControlPlaneRegistration();
+    const ipAddress = controlPlane.endpoint?.address ?? null;
 
     try {
       const isLeader = await this.distributedLock.isLeader();
@@ -215,6 +236,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
             freeMemory: os.freemem(),
             uptime: os.uptime(),
             loadAverage: os.loadavg(),
+            controlPlane: this.serializeControlPlaneRegistration(controlPlane),
           },
         },
       });
@@ -708,5 +730,19 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
     this.logger.log('[ManualEnforce] Triggered by admin');
     await this.enforceOneLeader();
     return { success: true, message: 'Leader enforcement completed' };
+  }
+
+  private serializeControlPlaneRegistration(
+    registration: ReturnType<typeof getLocalControlPlaneRegistration>,
+  ) {
+    return {
+      configured: registration.endpoint !== null,
+      address: registration.endpoint?.address ?? null,
+      port: registration.endpoint?.port ?? null,
+      protocol: registration.endpoint?.protocol ?? null,
+      baseUrl: registration.endpoint?.baseUrl ?? null,
+      source: registration.endpoint?.source ?? null,
+      issues: registration.issues,
+    };
   }
 }

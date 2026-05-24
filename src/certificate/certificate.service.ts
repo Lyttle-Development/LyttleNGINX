@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { addDays } from 'date-fns';
 import { hashDomains, joinDomains, parseDomains } from '../utils/domain-utils';
+import { buildClusterNodeUrl } from '../utils/network-utils';
 import { AlertService } from '../alert/alert.service';
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
 import { HealthService } from '../health/health.service';
@@ -1716,9 +1717,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       const nodes = await this.clusterHeartbeat.getActiveNodes();
       const thisInstanceId = this.distributedLock.getInstanceId();
 
-      const otherNodes = nodes.filter(
-        (n) => n.instanceId !== thisInstanceId && n.ipAddress,
-      );
+      const otherNodes = nodes.filter((n) => n.instanceId !== thisInstanceId);
 
       if (otherNodes.length === 0) {
         this.logger.log('[Reload] No other nodes to notify');
@@ -1729,33 +1728,53 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         `[Reload] Broadcasting certificate sync to ${otherNodes.length} other nodes...`,
       );
 
+      const apiKey = process.env.API_KEY?.split(',')[0]?.trim();
+      if (!apiKey) {
+        this.logger.warn(
+          '[Reload] Skipping remote certificate sync because no API key is configured for authenticated peer requests',
+        );
+        this.syncCertificates().catch((err) =>
+          this.logger.error(`[Reload] Local sync failed: ${err.message}`),
+        );
+        return;
+      }
+
       // Trigger sync on other nodes using the dedicated sync endpoint
       // Fire and forget - don't wait for responses
-      const port = process.env.PORT || 3000;
-
       await Promise.allSettled(
         otherNodes.map(async (node) => {
+          const url = buildClusterNodeUrl(node, '/certificates/sync');
+
+          if (!url) {
+            this.logger.warn(
+              `[Reload] Skipping ${node.hostname} (${node.instanceId}) because it does not have a valid registered control-plane endpoint`,
+            );
+            return;
+          }
+
           try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-            // Call the sync endpoint on the other node
-            const url = `http://${node.ipAddress}:${port}/certificates/sync`;
-
-            const response = await fetch(url, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              signal: controller.signal,
-            });
-
-            clearTimeout(timeoutId);
+            const response = await (async () => {
+              try {
+                return await fetch(url, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': apiKey,
+                  },
+                  signal: controller.signal,
+                });
+              } finally {
+                clearTimeout(timeoutId);
+              }
+            })();
 
             if (response.ok) {
               const result = await response.json();
               this.logger.debug(
-                `[Reload] Synced ${result.syncedCount || 0} cert(s) on ${node.hostname} (${node.ipAddress})`,
+                `[Reload] Synced ${result.syncedCount || 0} cert(s) on ${node.hostname} (${node.instanceId})`,
               );
             } else {
               this.logger.warn(

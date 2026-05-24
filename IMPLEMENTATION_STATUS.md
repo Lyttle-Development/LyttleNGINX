@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 1 — Emergency hardening and correctness fixes
-- Most recently completed session: Session 5 — Fix container and process auto-recovery behavior
-- Next recommended session from the roadmap: Session 6 — Fix inter-node address/port model
+- Most recently completed session: Session 6 — Fix inter-node address/port model
+- Next recommended session from the roadmap: Session 7 — Introduce a real auth foundation
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -173,13 +173,39 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - the Swarm manifest now favors continued recovery by restarting on any exit without a hard `max_attempts` cap and by allowing a graceful stop window
 
 ## Session 6 — Fix inter-node addressing and Swarm communication model
-- Status: not started
+- Status: done
 - Objective: use explicit internal control-plane addressing instead of fragile discovery assumptions
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: incorrect address and port selection can break node-to-node coordination
-- Follow-up sessions: Session 10, Session 11, Session 12
-- Notes: public IP discovery must be removed from cluster comms
+- Files touched:
+  - `src/utils/network-utils.ts`
+  - `src/distributed-lock/cluster-heartbeat.service.ts`
+  - `src/distributed-lock/cluster.controller.ts`
+  - `src/certificate/certificate.service.ts`
+  - `prisma/schema.prisma`
+  - `docker-compose.yml`
+  - `docker-compose.swarm.yml`
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session6/inter-node-addressing.test.js`
+- Tests added/updated:
+  - added `test/session6/inter-node-addressing.test.js` to cover explicit control-plane endpoint parsing, peer URL construction, and manifest/documentation regressions
+  - verified the focused Session 6 regression suite locally with the repository test runner
+  - verified type-checking for the edited TypeScript files after migrating peer URL construction away from `process.env.PORT`
+- Risks:
+  - the current peer transport is still plain HTTP with shared API keys; mTLS and per-node identity remain future work
+  - Swarm hostname reachability is environment-specific, so operators must override `CLUSTER_CONTROL_ADDRESS` where node hostnames are not resolvable or routable on the internal network
+  - cluster-wide operations are still best-effort broadcasts without durable ACK tracking until Sessions 10-12
+- Follow-up sessions:
+  - Session 7 — introduce a real auth foundation
+  - Session 10 — add lease-based coordination primitives
+  - Session 11 — move heartbeat and leader flows onto leases
+  - Session 12 — add cluster operations and per-node ACK tracking
+- Notes:
+  - removed all public-IP discovery from `src/utils/network-utils.ts` and replaced it with explicit `CLUSTER_CONTROL_ADDRESS` / `CLUSTER_CONTROL_PORT` or `CLUSTER_CONTROL_URL` registration
+  - node heartbeats now persist the advertised control-plane endpoint in cluster metadata so operators and peer workflows can inspect what each node registered
+  - inter-node reload and certificate-sync broadcasts now build URLs from the registered endpoint instead of assuming the peer-facing port matches the local `PORT`
+  - authenticated peer requests now attach the configured API key to certificate sync broadcasts so the Session 3 lockdown does not silently break cluster propagation
 
 ---
 

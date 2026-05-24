@@ -286,7 +286,13 @@ docker-compose logs -f app
 DATABASE_URL=postgresql://user:<db-password>@host:5432/db
 ADMIN_EMAIL=admin@example.com        # For Let's Encrypt
 NODE_ENV=production                  # production | development
+PORT=3000                            # Internal NestJS listen port inside the container
+CLUSTER_CONTROL_ADDRESS=node-a.internal
+CLUSTER_CONTROL_PORT=3003            # Peer-facing control-plane port; do not assume it matches PORT
+CLUSTER_CONTROL_PROTOCOL=http
 ```
+
+For Session 6 and later, inter-node traffic should be configured from these explicit control-plane settings rather than from public-IP discovery or implicit `PORT` assumptions. If you prefer a single variable, you can provide `CLUSTER_CONTROL_URL=http://node-a.internal:3003` instead of the address/port pair.
 
 ### Secret handling policy
 
@@ -672,10 +678,20 @@ docker stack deploy -c docker-compose.swarm.yml lyttlenginx
 **Current caveats:**
 
 - global mode is the intended target architecture
-- the current assessment still identifies P0/P1 blockers in auth depth, cluster comms, certificate lifecycle hardening, and transactional config rollout even after the completed health and auto-recovery sessions
+- Session 6 replaces public-IP autodiscovery with explicit `CLUSTER_CONTROL_ADDRESS` / `CLUSTER_CONTROL_PORT` registration, but inter-node auth is still API-key based and mTLS remains future work
+- the current assessment still identifies remaining P0/P1 blockers in auth depth, certificate lifecycle hardening, and transactional config rollout even after the completed health, auto-recovery, and inter-node addressing sessions
 - use the swarm manifest for evaluation and development feedback, not as a final production deployment contract yet
 
 The current container model is intentionally **fail-fast**: if either the NestJS control-plane process or the foreground NGINX master exits unexpectedly, the container exits non-zero so Docker or Swarm can restart it instead of leaving the node wedged.
+
+The current Swarm manifest now treats peer communication as an **advertised control-plane endpoint** problem:
+
+- `PORT` remains the internal NestJS listen port inside the container (`3000` by default)
+- `CLUSTER_CONTROL_PORT` is the peer-facing port other nodes should call (`3003` in the current host-published Swarm example)
+- `CLUSTER_CONTROL_ADDRESS` is the routable hostname/address peers should use for this node (`{{.Node.Hostname}}` in the current example)
+- nodes register that advertised endpoint in the database and cluster broadcasts now use that registration instead of building URLs from discovered public IPs
+
+If your Swarm nodes are not mutually reachable by node hostname, override `CLUSTER_CONTROL_ADDRESS` with a routable internal DNS name or address per node before treating cluster operations as healthy.
 
 **View cluster status:**
 
