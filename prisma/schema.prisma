@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model ProxyEntry {
@@ -73,6 +72,38 @@ model AcmeChallenge {
   @@index([token])
   @@index([domain])
   @@index([expiresAt])
+}
+
+model AuditEvent {
+  id               String   @id @default(uuid())
+  action           String
+  targetType       String?
+  targetId         String?
+  targetDisplay    String?
+  outcome          String
+  result           String
+  correlationId    String
+  actorId          String?
+  actorSubject     String?
+  actorType        String?
+  actorDisplayName String?
+  actorAuthMethod  String?
+  actorRoles       String?
+  requestMethod    String
+  requestPath      String
+  responseStatus   Int
+  nodeId           String?
+  ipAddress        String?
+  errorCode        String?
+  errorMessage     String?
+  metadata         Json?
+  occurredAt       DateTime @default(now())
+
+  @@index([occurredAt])
+  @@index([action])
+  @@index([outcome])
+  @@index([actorSubject])
+  @@index([correlationId])
 }
 
 

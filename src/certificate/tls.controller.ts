@@ -13,6 +13,7 @@ import { CertificatePemDto } from './dto/certificate-pem.dto';
 import { ValidateCertChainDto } from './dto/validate-cert-chain.dto';
 import { AuthorizeAdmin } from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import { Audit } from '../audit/decorators/audit.decorator';
 
 @Controller('tls')
 @AuthorizeAdmin('viewer')
@@ -32,6 +33,7 @@ export class TlsController {
   @Post('dhparam')
   @HttpCode(HttpStatus.ACCEPTED)
   @AuthorizeAdmin('security-admin')
+  @Audit({ action: 'tls.dhparam.generate' })
   async generateDhParams(@Body() body: { bits?: number }) {
     // Run in background as this can take a long time
     this.tlsConfigService.generateDhParams(body.bits || 2048).catch((err) => {
@@ -54,6 +56,7 @@ export class TlsController {
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
   @AuthorizeAdmin('security-admin')
+  @Audit({ action: 'tls.certificate.inspect' })
   async getCertificateInfo(@Body() dto: CertificatePemDto) {
     return this.tlsConfigService.getCertificateInfo(dto.certPem);
   }
@@ -62,6 +65,7 @@ export class TlsController {
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
   @AuthorizeAdmin('security-admin')
+  @Audit({ action: 'tls.certificate.validate-chain' })
   async validateChain(@Body() dto: ValidateCertChainDto) {
     return this.tlsConfigService.validateCertificateChain(
       dto.certPem,

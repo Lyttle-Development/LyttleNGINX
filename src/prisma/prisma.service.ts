@@ -16,26 +16,25 @@ export class PrismaService
   constructor() {
     // Configure connection pool to prevent connection leaks
     // Parse DATABASE_URL and add connection pool parameters if not present
-    const databaseUrl = process.env.DATABASE_URL || '';
-    const url = new URL(databaseUrl);
+    const databaseUrl = process.env.DATABASE_URL;
+    if (databaseUrl) {
+      const url = new URL(databaseUrl);
 
-    // Set connection pool limits if not already configured
-    if (!url.searchParams.has('connection_limit')) {
-      url.searchParams.set('connection_limit', '1'); // Max 1 connection per instance
-    }
-    if (!url.searchParams.has('pool_timeout')) {
-      url.searchParams.set('pool_timeout', '10'); // 10 second timeout
-    }
-    if (!url.searchParams.has('connect_timeout')) {
-      url.searchParams.set('connect_timeout', '10'); // 10 second connect timeout
+      // Set connection pool limits if not already configured
+      if (!url.searchParams.has('connection_limit')) {
+        url.searchParams.set('connection_limit', '1'); // Max 1 connection per instance
+      }
+      if (!url.searchParams.has('pool_timeout')) {
+        url.searchParams.set('pool_timeout', '10'); // 10 second timeout
+      }
+      if (!url.searchParams.has('connect_timeout')) {
+        url.searchParams.set('connect_timeout', '10'); // 10 second connect timeout
+      }
+
+      process.env.DATABASE_URL = url.toString();
     }
 
     super({
-      datasources: {
-        db: {
-          url: url.toString(),
-        },
-      },
       log: [
         { level: 'warn', emit: 'event' },
         { level: 'error', emit: 'event' },

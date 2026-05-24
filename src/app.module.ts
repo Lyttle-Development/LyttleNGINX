@@ -13,9 +13,11 @@ import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './auth/auth.module';
 import { DistributedLockModule } from './distributed-lock/distributed-lock.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
+    AuditModule,
     AuthModule,
     RateLimitModule,
     MetricsModule,

@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 2 — Security model foundation
-- Most recently completed session: Session 8 — Add RBAC and authorization policies
-- Next recommended session from the roadmap: Session 9 — Add audit logging for privileged and mutating operations
+- Most recently completed session: Session 9 — Add audit logging for privileged and mutating operations
+- Next recommended session from the roadmap: Session 10 — Add lease-based coordination primitives
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -19,6 +19,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 0 — Delivery setup and guardrails
 
 ## Session 1 — Delivery scaffolding and progress tracking
+
 - Status: done
 - Objective: create a consistent delivery scaffold for future sessions
 - Files touched:
@@ -42,6 +43,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - documented current expectations for local, single-node, and swarm deployment modes in `README.md`
 
 ## Session 2 — Dependency hygiene and secret-handling cleanup
+
 - Status: done
 - Objective: remove immediate supply-chain and secret risks
 - Files touched:
@@ -78,6 +80,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 1 — Emergency hardening and correctness fixes
 
 ## Session 3 — Lock down public mutating endpoints
+
 - Status: done
 - Objective: require auth on all mutating endpoints and define the public allowlist
 - Files touched:
@@ -114,6 +117,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - removed the previous development-mode auth bypass so write endpoints no longer become public when `API_KEY` is unset
 
 ## Session 4 — Fix health, readiness, liveness, and startup semantics
+
 - Status: done
 - Objective: make health signaling reliable for orchestration and recovery
 - Files touched:
@@ -146,6 +150,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - `healthcheck.sh` now inspects both the readiness HTTP status and the JSON body instead of trusting status code alone
 
 ## Session 5 — Fix container and process auto-recovery behavior
+
 - Status: done
 - Objective: ensure process failure leads to correct container recovery
 - Files touched:
@@ -173,6 +178,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - the Swarm manifest now favors continued recovery by restarting on any exit without a hard `max_attempts` cap and by allowing a graceful stop window
 
 ## Session 6 — Fix inter-node addressing and Swarm communication model
+
 - Status: done
 - Objective: use explicit internal control-plane addressing instead of fragile discovery assumptions
 - Files touched:
@@ -212,6 +218,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 2 — Security model foundation
 
 ## Session 7 — Introduce a real auth foundation
+
 - Status: done
 - Objective: move from shared API keys toward a real identity model
 - Files touched:
@@ -244,6 +251,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - `POST /auth/token` now provides a migration bridge from API-key clients to short-lived bearer tokens when `AUTH_JWT_SECRET` is configured
 
 ## Session 8 — Add RBAC and authorization policies
+
 - Status: done
 - Objective: make endpoint permissions explicit and enforceable
 - Files touched:
@@ -289,19 +297,67 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - fixed controller registration order so `/certificates/backup` resolves to the intended backup controller instead of being shadowed by `/certificates/:id`
 
 ## Session 9 — Add audit logging for privileged and mutating operations
-- Status: not started
+
+- Status: done
 - Objective: make sensitive actions attributable and reviewable
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: privileged actions are not yet durably auditable
-- Follow-up sessions: Session 20, Session 23, Session 24
-- Notes: requires schema and service changes
+- Files touched:
+  - `prisma.config.ts`
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20260524153000_session9_audit_events/migration.sql`
+  - `src/audit/audit.module.ts`
+  - `src/audit/audit.controller.ts`
+  - `src/audit/audit.interceptor.ts`
+  - `src/audit/audit.service.ts`
+  - `src/audit/audit-context.ts`
+  - `src/audit/audit-record.utils.ts`
+  - `src/audit/decorators/audit.decorator.ts`
+  - `src/audit/types/audit.types.ts`
+  - `src/app.module.ts`
+  - `src/app.controller.ts`
+  - `src/auth/auth.module.ts`
+  - `src/auth/auth.controller.ts`
+  - `src/auth/guards/api-key.guard.ts`
+  - `src/auth/guards/authorization.guard.ts`
+  - `src/auth/interfaces/authenticated-request.interface.ts`
+  - `src/certificate/certificate.controller.ts`
+  - `src/certificate/backup.controller.ts`
+  - `src/certificate/certificate-backup.service.ts`
+  - `src/certificate/tls.controller.ts`
+  - `src/certificate/certificate.service.ts`
+  - `src/distributed-lock/cluster.controller.ts`
+  - `src/logs/logs.controller.ts`
+  - `src/prisma/prisma.service.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session9/audit-logging.test.js`
+  - `tsconfig.json`
+- Tests added/updated:
+  - added `test/session9/audit-logging.test.js` to verify successful mutating audit events, denied privileged attempts, controller-level failures, and the new audit review endpoint
+  - re-ran the repository test suite so Sessions 3-9 continue to pass together after the new global interceptor and guard changes
+  - regenerated the Prisma client after adding the `AuditEvent` model so TypeScript and runtime code resolve the new table correctly
+- Risks:
+  - audit persistence currently shares the primary application database, so a database outage can still block durable audit writes until later resilience work lands
+  - audit retention, redaction, export controls, and long-term reporting remain future work for Sessions 20, 23, and 24
+  - audit payloads intentionally avoid request bodies by default, which reduces secret exposure but means some targets are represented by IDs or labels rather than full change diffs
+- Follow-up sessions:
+  - Session 20 — harden backup, export, import, and restore flows
+  - Session 23 — add security administration APIs
+  - Session 24 — replace ad hoc logging with structured operational and audit logging
+  - Session 28 — upgrade CI/CD and release gating
+- Notes:
+  - added a Prisma-backed `AuditEvent` model and migration for durable audit persistence
+  - introduced a global audit interceptor plus explicit `@Audit(...)` route metadata so all protected mutating routes are audited by default and privileged GET-style maintenance actions can opt in explicitly
+  - updated the authentication and authorization guards to record denied attempts before controller execution, closing the gap for failed privileged actions
+  - added `GET /audit` for security-admin review workflows and propagated per-request `X-Correlation-Id` headers for audited requests
+  - aligned the repo with Prisma 7 generation and typing requirements so the new audit-event schema can be generated and type-checked cleanly in this workspace
 
 ---
 
 ## Phase 3 — Cluster coordination redesign
 
 ## Session 10 — Add lease-based coordination primitives
+
 - Status: not started
 - Objective: replace advisory-lock-centric leadership with durable leases and fencing tokens
 - Files touched: none yet
@@ -311,6 +367,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: central coordination semantics remain to be implemented
 
 ## Session 11 — Move heartbeat and leader flows onto leases
+
 - Status: not started
 - Objective: align membership and leadership around the new lease model
 - Files touched: none yet
@@ -320,6 +377,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: should simplify stale-node handling
 
 ## Session 12 — Add cluster operations and per-node ACK tracking
+
 - Status: not started
 - Objective: represent cluster-wide mutations as tracked async operations
 - Files touched: none yet
@@ -333,6 +391,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 4 — Configuration rollout and rollback safety
 
 ## Session 13 — Implement staged NGINX config generation and atomic activation
+
 - Status: not started
 - Objective: make config rollout transactional and rollbackable
 - Files touched: none yet
@@ -342,6 +401,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: last-known-good config handling is still pending
 
 ## Session 14 — Restrict or redesign `nginx_custom_code`
+
 - Status: not started
 - Objective: remove arbitrary config injection risk while preserving advanced extensibility
 - Files touched: none yet
@@ -355,6 +415,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 5 — Certificate lifecycle redesign
 
 ## Session 15 — Add strict domain validation and safe process execution
+
 - Status: not started
 - Objective: reject malformed domains early and stop using unsafe shell interpolation
 - Files touched: none yet
@@ -364,6 +425,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: domain normalization rules need to become explicit
 
 ## Session 16 — Add certificate order state machine
+
 - Status: not started
 - Objective: model certificate issuance as a durable workflow
 - Files touched: none yet
@@ -373,6 +435,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: retry and history persistence are still pending
 
 ## Session 17 — Rework cluster certificate distribution and activation
+
 - Status: not started
 - Objective: separate issuance from activation and track per-node rollout state
 - Files touched: none yet
@@ -382,6 +445,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: rollback to prior artifact version remains open
 
 ## Session 18 — Harden the ACME strategy for clustered production
+
 - Status: not started
 - Objective: make challenge handling explicit, durable, and cluster-safe
 - Files touched: none yet
@@ -395,6 +459,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 6 — Secrets, backups, and data protection
 
 ## Session 19 — Encrypt private key material at rest
+
 - Status: not started
 - Objective: protect private keys in storage with application-layer encryption
 - Files touched: none yet
@@ -404,6 +469,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: KMS/Vault integration design remains open
 
 ## Session 20 — Harden backup, export, import, and restore flows
+
 - Status: not started
 - Objective: make backup and recovery flows encrypted, validated, and authorized
 - Files touched: none yet
@@ -417,6 +483,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 7 — Operational API expansion
 
 ## Session 21 — Add proxy management API
+
 - Status: not started
 - Objective: manage proxy config through authenticated API endpoints instead of direct DB mutation
 - Files touched: none yet
@@ -426,6 +493,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: validation endpoints should ship with CRUD APIs
 
 ## Session 22 — Add cluster operations and node-status admin APIs
+
 - Status: not started
 - Objective: expose cluster coordination state through operator-facing APIs
 - Files touched: none yet
@@ -435,6 +503,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: async operation response contracts remain to be defined
 
 ## Session 23 — Add security administration APIs
+
 - Status: not started
 - Objective: support operational security maintenance safely and audibly
 - Files touched: none yet
@@ -448,6 +517,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 8 — Logging, metrics, and SRE readiness
 
 ## Session 24 — Replace ad hoc logging with structured operational and audit logging
+
 - Status: not started
 - Objective: make logs machine-parseable, traceable, and safe for centralized collection
 - Files touched: none yet
@@ -457,6 +527,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: request IDs and redaction remain open
 
 ## Session 25 — Expand metrics and alerting
+
 - Status: not started
 - Objective: add observability for leases, config apply, cert orders, backups, and DB health
 - Files touched: none yet
@@ -470,6 +541,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 9 — Test harness and release gates
 
 ## Session 26 — Add automated test harness and baseline coverage
+
 - Status: not started
 - Objective: create unit, integration, and e2e test foundations for critical flows
 - Files touched: none yet
@@ -479,6 +551,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: this session will replace the current `test` placeholder with a real harness
 
 ## Session 27 — Add chaos and fault-injection validation
+
 - Status: not started
 - Objective: prove recovery and coordination claims with reproducible failure tests
 - Files touched: none yet
@@ -488,6 +561,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: should cover DB outage, leader crash, NGINX crash, bad config, and node comms failure
 
 ## Session 28 — Upgrade CI/CD and release gating
+
 - Status: not started
 - Objective: block insecure or broken releases from shipping
 - Files touched: none yet
@@ -501,6 +575,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Phase 10 — Documentation and final validation
 
 ## Session 29 — Reconcile README, architecture docs, and runbooks with reality
+
 - Status: not started
 - Objective: make operator-facing documentation accurate and practical
 - Files touched: none yet
@@ -510,6 +585,7 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Notes: runbooks for leader failure, rollback, restore, issuance failure, and credential rotation remain open
 
 ## Session 30 — Final production-readiness validation pass
+
 - Status: not started
 - Objective: reconcile the assessment, roadmap, and shipped implementation into a final go-live checklist
 - Files touched: none yet
@@ -517,4 +593,3 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Risks: production-readiness cannot be claimed until every assessment item is accounted for
 - Follow-up sessions: none
 - Notes: final checklist and deferment register remain to be created
-

@@ -12,6 +12,7 @@ import { Authorize, AuthorizeAdmin } from './decorators/authorize.decorator';
 import { ApiKeyGuard } from './guards/api-key.guard';
 import { CurrentIdentity } from './decorators/current-identity.decorator';
 import { AuthIdentity } from './types/auth-identity';
+import { Audit } from '../audit/decorators/audit.decorator';
 
 @Controller('auth')
 @AuthorizeAdmin('viewer')
@@ -50,6 +51,7 @@ export class AuthController {
   @Post('token')
   @HttpCode(HttpStatus.OK)
   @Authorize({ actorTypes: ['admin'] })
+  @Audit({ action: 'auth.token.exchange' })
   async exchangeLegacyApiKey(@CurrentIdentity() identity: AuthIdentity) {
     if (identity.authMethod !== 'api-key') {
       throw new BadRequestException(

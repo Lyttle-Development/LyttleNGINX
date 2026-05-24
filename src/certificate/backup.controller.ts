@@ -15,6 +15,7 @@ import { Response } from 'express';
 import { CertificateBackupService } from './certificate-backup.service';
 import { AuthorizeAdmin } from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import { Audit } from '../audit/decorators/audit.decorator';
 
 @Controller('certificates/backup')
 @AuthorizeAdmin('security-admin')
@@ -24,6 +25,7 @@ export class BackupController {
   @Post()
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.CREATED)
+  @Audit({ action: 'certificate.backup.create' })
   async createBackup() {
     const result = await this.backupService.createBackup();
     return {
@@ -34,12 +36,14 @@ export class BackupController {
 
   @Get()
   @UseGuards(ApiKeyGuard)
+  @Audit({ action: 'certificate.backup.list' })
   async listBackups() {
     return this.backupService.listBackups();
   }
 
   @Get(':filename')
   @UseGuards(ApiKeyGuard)
+  @Audit({ action: 'certificate.backup.download' })
   async downloadBackup(
     @Param('filename') filename: string,
     @Res({ passthrough: true }) res: Response,
@@ -55,6 +59,7 @@ export class BackupController {
   @Delete(':filename')
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @Audit({ action: 'certificate.backup.delete' })
   async deleteBackup(@Param('filename') filename: string) {
     await this.backupService.deleteBackup(filename);
   }
@@ -62,12 +67,14 @@ export class BackupController {
   @Post('import')
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
+  @Audit({ action: 'certificate.backup.import' })
   async importCertificates(@Body() data: any) {
     return this.backupService.importCertificates(data.certificates);
   }
 
   @Get('export/:id')
   @UseGuards(ApiKeyGuard)
+  @Audit({ action: 'certificate.export' })
   async exportCertificate(@Param('id') id: string) {
     return this.backupService.exportCertificate(id);
   }

@@ -15,6 +15,7 @@ import {
   buildClusterNodeUrl,
   getClusterNodeControlPlaneEndpoint,
 } from '../utils/network-utils';
+import { Audit } from '../audit/decorators/audit.decorator';
 
 @Controller('cluster')
 @UseGuards(ApiKeyGuard)
@@ -33,6 +34,7 @@ export class ClusterController {
    */
   @Post('reload')
   @AuthorizeAdmin('operator')
+  @Audit({ action: 'cluster.reload' })
   async reload(@Query('broadcast') broadcast: string) {
     const shouldBroadcast = broadcast !== 'false';
     const broadcastSummary = {
@@ -234,6 +236,7 @@ export class ClusterController {
    */
   @Get('admin/cleanup')
   @AuthorizeAdmin('platform-admin')
+  @Audit({ action: 'cluster.cleanup' })
   async manualCleanup() {
     return this.clusterHeartbeat.manualCleanup();
   }
@@ -243,6 +246,7 @@ export class ClusterController {
    */
   @Get('admin/enforce-leader')
   @AuthorizeAdmin('platform-admin')
+  @Audit({ action: 'cluster.enforce-leader' })
   async manualEnforceLeader() {
     return this.clusterHeartbeat.manualEnforceLeader();
   }
@@ -252,6 +256,7 @@ export class ClusterController {
    */
   @Get('admin/ensure-leader')
   @AuthorizeAdmin('platform-admin')
+  @Audit({ action: 'cluster.ensure-leader' })
   async ensureLeader() {
     try {
       await this.clusterHeartbeat.ensureLeaderExists();
@@ -282,6 +287,7 @@ export class ClusterController {
    */
   @Get('admin/become-leader')
   @AuthorizeAdmin('platform-admin')
+  @Audit({ action: 'cluster.become-leader' })
   async tryBecomeLeader() {
     try {
       const success = await this.clusterHeartbeat.tryBecomeLeader();

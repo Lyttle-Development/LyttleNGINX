@@ -4,9 +4,10 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { ApiKeyGuard } from './guards/api-key.guard';
 import { AuthorizationGuard } from './guards/authorization.guard';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
-  imports: [],
+  imports: [AuditModule],
   controllers: [AuthController],
   providers: [
     AuthService,

@@ -14,19 +14,20 @@ This file records repository-level architectural and delivery decisions so futur
 
 ## Decision index
 
-| ID | Title | Status | Session | Date |
-| --- | --- | --- | --- | --- |
-| ADR-001 | Production-readiness source of truth | accepted | Session 1 | 2026-05-24 |
-| ADR-002 | Session-based delivery model | accepted | Session 1 | 2026-05-24 |
-| ADR-003 | Standard repository verification contract | accepted | Session 1 | 2026-05-24 |
-| ADR-004 | Deployment mode expectations | accepted | Session 1 | 2026-05-24 |
-| ADR-005 | Secret material stays out of git | accepted | Session 2 | 2026-05-24 |
-| ADR-006 | Authenticated-by-default control-plane API | accepted | Session 3 | 2026-05-24 |
-| ADR-007 | Explicit probe endpoints with dependency-aware readiness | accepted | Session 4 | 2026-05-24 |
-| ADR-008 | Fail-fast container supervision and restart-friendly deployment policies | accepted | Session 5 | 2026-05-24 |
-| ADR-009 | Explicit advertised control-plane endpoints for cluster communication | accepted | Session 6 | 2026-05-24 |
+| ID      | Title                                                                                     | Status   | Session   | Date       |
+| ------- | ----------------------------------------------------------------------------------------- | -------- | --------- | ---------- |
+| ADR-001 | Production-readiness source of truth                                                      | accepted | Session 1 | 2026-05-24 |
+| ADR-002 | Session-based delivery model                                                              | accepted | Session 1 | 2026-05-24 |
+| ADR-003 | Standard repository verification contract                                                 | accepted | Session 1 | 2026-05-24 |
+| ADR-004 | Deployment mode expectations                                                              | accepted | Session 1 | 2026-05-24 |
+| ADR-005 | Secret material stays out of git                                                          | accepted | Session 2 | 2026-05-24 |
+| ADR-006 | Authenticated-by-default control-plane API                                                | accepted | Session 3 | 2026-05-24 |
+| ADR-007 | Explicit probe endpoints with dependency-aware readiness                                  | accepted | Session 4 | 2026-05-24 |
+| ADR-008 | Fail-fast container supervision and restart-friendly deployment policies                  | accepted | Session 5 | 2026-05-24 |
+| ADR-009 | Explicit advertised control-plane endpoints for cluster communication                     | accepted | Session 6 | 2026-05-24 |
 | ADR-010 | Identity-aware auth foundation with bearer-token support and legacy API-key compatibility | accepted | Session 7 | 2026-05-24 |
-| ADR-011 | Explicit RBAC policies with a global authorization guard | accepted | Session 8 | 2026-05-24 |
+| ADR-011 | Explicit RBAC policies with a global authorization guard                                  | accepted | Session 8 | 2026-05-24 |
+| ADR-012 | Durable audit events for privileged and mutating operations                               | accepted | Session 9 | 2026-05-24 |
 
 ---
 
@@ -399,3 +400,40 @@ Adopt an explicit RBAC model enforced by a global authorization guard:
 - later sessions can add audit logging, service accounts, and finer-grained operational APIs without first reworking the basic authorization model again
 - legacy API keys remain a compatibility bridge rather than a destination state; future security work should continue pushing operators toward short-lived bearer identities and narrower role assignment
 
+---
+
+## ADR-012 — Durable audit events for privileged and mutating operations
+
+- Status: accepted
+- Session: Session 9 — Add audit logging for privileged and mutating operations
+- Date: 2026-05-24
+
+### Context
+
+Sessions 7 and 8 introduced stable request identity and explicit RBAC, but the control plane still lacked a durable record of who attempted sensitive operations, what they targeted, whether they succeeded, and how to correlate those actions across logs and client-visible failures.
+
+The production-readiness assessment explicitly called for audit logging of privileged and mutating operations, including failed privileged attempts.
+
+### Decision
+
+Adopt a durable audit-event model with request correlation for the current NestJS control plane:
+
+1. persist audit records in a new Prisma-backed `AuditEvent` table
+2. record at least:
+   - actor identity metadata when available
+   - action name
+   - target identifier or label when available
+   - outcome (`success`, `failure`, or `denied`)
+   - request method/path and HTTP status
+   - correlation ID and timestamp
+3. generate or propagate a correlation ID for audited requests and return it via `X-Correlation-Id`
+4. audit all protected mutating routes by default through a global interceptor
+5. allow explicit `@Audit(...)` metadata on routes that need stable action names or auditing despite using non-mutating HTTP verbs
+6. record denied attempts directly from the authentication and authorization guards so failed privileged requests are not lost before controller execution
+7. expose a minimal privileged audit-review endpoint at `GET /audit`
+
+### Consequences
+
+- successful writes, controller/service failures, and denied privileged attempts are now durably attributable even before the later structured-logging work lands
+- route authors can opt into clearer action naming and target extraction without reworking the global audit pipeline
+- audit storage currently shares the main application database, so later sessions should still harden retention, redaction, export controls, and long-term operational reporting

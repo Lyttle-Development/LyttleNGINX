@@ -25,8 +25,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 2 in progress
-- **Completed in Sessions 1-8 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, and explicit RBAC authorization policies across the current API surface
-- **Next recommended implementation session:** Session 9 — add audit logging for privileged and mutating operations
+- **Completed in Sessions 1-9 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, and durable audit logging for privileged and mutating operations
+- **Next recommended implementation session:** Session 10 — add lease-based coordination primitives
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -35,11 +35,11 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 🧭 Deployment Mode Expectations
 
-| Mode | Use it for | Current expectation |
-| --- | --- | --- |
-| Local development | coding, manual verification, exploratory testing | best-supported workflow today |
-| Single-node Compose | demos, operator evaluation, non-HA environments | usable for local/single-node evaluation, **not** yet positioned as hardened production |
-| Docker Swarm global mode | target cluster architecture | roadmap target only; use for controlled testing until P0/P1 hardening sessions are complete |
+| Mode                     | Use it for                                       | Current expectation                                                                         |
+| ------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| Local development        | coding, manual verification, exploratory testing | best-supported workflow today                                                               |
+| Single-node Compose      | demos, operator evaluation, non-HA environments  | usable for local/single-node evaluation, **not** yet positioned as hardened production      |
+| Docker Swarm global mode | target cluster architecture                      | roadmap target only; use for controlled testing until P0/P1 hardening sessions are complete |
 
 ## ✅ Repository Verification Commands
 
@@ -59,7 +59,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-8 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, and RBAC authorization policy enforcement. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-9 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, and audit-logging regressions. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -364,9 +364,9 @@ npm run prisma:migrate
 
 ## 📚 API Documentation
 
-### Session 3-8 access policy
+### Session 3-9 access policy
 
-As of Sessions 3-8, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, and explicit RBAC authorization policies on protected endpoints.
+As of Sessions 3-9, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, explicit RBAC authorization policies on protected endpoints, and durable audit logging for privileged and mutating operations.
 
 The current explicit public allowlist is limited to:
 
@@ -388,7 +388,7 @@ All other endpoints should be treated as admin or internal control-plane endpoin
 - `X-API-Key: <key>`
 - `Authorization: ApiKey <key>`
 
-Session 7 introduced a JWT bearer-token foundation that attaches actor identity to each authenticated request. Session 8 builds on that with explicit RBAC policies. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
+Session 7 introduced a JWT bearer-token foundation that attaches actor identity to each authenticated request. Session 8 builds on that with explicit RBAC policies. Session 9 adds durable audit logging for privileged and mutating operations, including successful writes, denied privileged attempts, and controller/service failures on protected routes. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
 
 Current identity model:
 
@@ -419,6 +419,15 @@ The resolved identity now carries:
 - scopes
 - issuer/audience metadata
 
+Protected privileged and mutating requests now also receive an `X-Correlation-Id` response header. Audit events persist:
+
+- actor identity
+- action name
+- target identifier or label when available
+- outcome (`success`, `failure`, or `denied`)
+- HTTP status and request path
+- correlation ID and timestamp
+
 Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The readiness body also reports the status of:
 
 - PostgreSQL connectivity
@@ -428,34 +437,34 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 
 ### Current authorization matrix
 
-| Role / actor | Intended scope |
-| --- | --- |
-| Public | health probes, metrics, ACME challenge serving |
-| `viewer` | read-only admin inspection endpoints |
-| `operator` | runtime operations such as reload, renew, and log inspection |
-| `security-admin` | certificate/key management, backup/export/import, TLS hardening |
-| `platform-admin` | full admin access including cluster maintenance endpoints |
-| `internal-node` | internal certificate sync and future node-only control-plane actions |
+| Role / actor     | Intended scope                                                       |
+| ---------------- | -------------------------------------------------------------------- |
+| Public           | health probes, metrics, ACME challenge serving                       |
+| `viewer`         | read-only admin inspection endpoints                                 |
+| `operator`       | runtime operations such as reload, renew, and log inspection         |
+| `security-admin` | certificate/key management, backup/export/import, TLS hardening      |
+| `platform-admin` | full admin access including cluster maintenance endpoints            |
+| `internal-node`  | internal certificate sync and future node-only control-plane actions |
 
 ### Certificate Endpoints
 
-| Method | Endpoint                             | Description                       | Required role / actor |
-|--------|--------------------------------------|-----------------------------------|-----------------------|
-| GET    | `/certificates`                      | List all certificates with status | `viewer` |
-| GET    | `/certificates/:id`                  | Get certificate details           | `viewer` |
-| POST   | `/certificates/upload`               | Upload custom certificate         | `security-admin` |
-| POST   | `/certificates/generate-self-signed` | Generate self-signed cert         | `security-admin` |
-| POST   | `/certificates/renew/:id`            | Renew specific certificate        | `operator` |
-| POST   | `/certificates/renew-all`            | Renew all certificates            | `operator` |
-| DELETE | `/certificates/:id`                  | Delete certificate                | `security-admin` |
-| GET    | `/certificates/validate/:domain`     | Validate domain                   | `viewer` |
-| GET    | `/certificates/health/ocsp-check`    | Inspect OCSP support status       | `viewer` |
+| Method | Endpoint                             | Description                       | Required role / actor               |
+| ------ | ------------------------------------ | --------------------------------- | ----------------------------------- |
+| GET    | `/certificates`                      | List all certificates with status | `viewer`                            |
+| GET    | `/certificates/:id`                  | Get certificate details           | `viewer`                            |
+| POST   | `/certificates/upload`               | Upload custom certificate         | `security-admin`                    |
+| POST   | `/certificates/generate-self-signed` | Generate self-signed cert         | `security-admin`                    |
+| POST   | `/certificates/renew/:id`            | Renew specific certificate        | `operator`                          |
+| POST   | `/certificates/renew-all`            | Renew all certificates            | `operator`                          |
+| DELETE | `/certificates/:id`                  | Delete certificate                | `security-admin`                    |
+| GET    | `/certificates/validate/:domain`     | Validate domain                   | `viewer`                            |
+| GET    | `/certificates/health/ocsp-check`    | Inspect OCSP support status       | `viewer`                            |
 | POST   | `/certificates/sync`                 | Trigger certificate sync          | `internal-node` or `platform-admin` |
 
 ### Backup Endpoints
 
-| Method | Endpoint                          | Description         | Required role |
-|--------|-----------------------------------|---------------------|---------------|
+| Method | Endpoint                          | Description         | Required role    |
+| ------ | --------------------------------- | ------------------- | ---------------- |
 | POST   | `/certificates/backup`            | Create backup       | `security-admin` |
 | GET    | `/certificates/backup`            | List backups        | `security-admin` |
 | GET    | `/certificates/backup/:filename`  | Download backup     | `security-admin` |
@@ -466,29 +475,36 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 ### Metrics Endpoints
 
 | Method | Endpoint        | Description        | Auth   |
-|--------|-----------------|--------------------|--------|
+| ------ | --------------- | ------------------ | ------ |
 | GET    | `/metrics`      | Prometheus metrics | Public |
 | GET    | `/metrics/json` | JSON metrics       | Public |
 
 ### TLS Configuration Endpoints
 
-| Method | Endpoint                          | Description         | Required role |
-|--------|-----------------------------------|---------------------|---------------|
-| GET    | `/tls/config/:domain`             | Get TLS config      | `viewer` |
-| GET    | `/tls/test/:domain`               | Test TLS connection | `viewer` |
+| Method | Endpoint                          | Description         | Required role    |
+| ------ | --------------------------------- | ------------------- | ---------------- |
+| GET    | `/tls/config/:domain`             | Get TLS config      | `viewer`         |
+| GET    | `/tls/test/:domain`               | Test TLS connection | `viewer`         |
 | POST   | `/tls/dhparam`                    | Generate DH params  | `security-admin` |
-| GET    | `/tls/dhparam/status`             | Check DH params     | `viewer` |
+| GET    | `/tls/dhparam/status`             | Check DH params     | `viewer`         |
 | POST   | `/tls/certificate/info`           | Parse certificate   | `security-admin` |
 | POST   | `/tls/certificate/validate-chain` | Validate chain      | `security-admin` |
 
 ### Authentication Endpoints
 
-| Method | Endpoint       | Description                                                       | Required role / actor |
-|--------|----------------|-------------------------------------------------------------------|-----------------------|
+| Method | Endpoint       | Description                                                        | Required role / actor                        |
+| ------ | -------------- | ------------------------------------------------------------------ | -------------------------------------------- |
 | GET    | `/auth/status` | Check authentication status and return the resolved actor identity | any authenticated `admin` or `internal-node` |
-| GET    | `/auth/info`   | Get auth capability/configuration info                            | `viewer` |
-| GET    | `/auth/me`     | Inspect the current request identity                              | any authenticated `admin` or `internal-node` |
-| POST   | `/auth/token`  | Exchange a legacy API-key-authenticated request for a bearer token | any authenticated `admin` |
+| GET    | `/auth/info`   | Get auth capability/configuration info                             | `viewer`                                     |
+| POST   | `/auth/token`  | Exchange a legacy API key identity for a short-lived bearer token  | authenticated `admin`                        |
+
+### Audit Endpoints
+
+| Method | Endpoint      | Description                                                        | Required role                                |
+| ------ | ------------- | ------------------------------------------------------------------ | -------------------------------------------- |
+| GET    | `/audit`      | List recent audit events with optional filters                     | `security-admin`                             |
+| GET    | `/auth/me`    | Inspect the current request identity                               | any authenticated `admin` or `internal-node` |
+| POST   | `/auth/token` | Exchange a legacy API-key-authenticated request for a bearer token | any authenticated `admin`                    |
 
 ### Auth configuration
 
@@ -516,19 +532,19 @@ curl http://localhost:3000/auth/me \
 
 ### Health Endpoints
 
-| Method | Endpoint          | Description                                                  | Auth     |
-|--------|-------------------|--------------------------------------------------------------|----------|
-| GET    | `/health/live`    | Liveness probe; returns 200 while the process is alive       | Public   |
-| GET    | `/health/startup` | Startup probe; returns 503 until first config apply + cert sync succeed | Public   |
-| GET    | `/health/ready`   | Readiness probe; returns 503 when DB/NGINX/config/cert state is unhealthy | Public   |
-| GET    | `/health`         | Legacy alias for `/health/live`                              | Public   |
-| GET    | `/ready`          | Legacy alias for `/health/ready`                             | Public   |
-| POST   | `/reload`         | Reload NGINX config                                          | `operator` |
+| Method | Endpoint          | Description                                                               | Auth       |
+| ------ | ----------------- | ------------------------------------------------------------------------- | ---------- |
+| GET    | `/health/live`    | Liveness probe; returns 200 while the process is alive                    | Public     |
+| GET    | `/health/startup` | Startup probe; returns 503 until first config apply + cert sync succeed   | Public     |
+| GET    | `/health/ready`   | Readiness probe; returns 503 when DB/NGINX/config/cert state is unhealthy | Public     |
+| GET    | `/health`         | Legacy alias for `/health/live`                                           | Public     |
+| GET    | `/ready`          | Legacy alias for `/health/ready`                                          | Public     |
+| POST   | `/reload`         | Reload NGINX config                                                       | `operator` |
 
 ### ACME Challenge Endpoint
 
 | Method | Endpoint                             | Description               | Auth   |
-|--------|--------------------------------------|---------------------------|--------|
+| ------ | ------------------------------------ | ------------------------- | ------ |
 | GET    | `/.well-known/acme-challenge/:token` | Serve ACME challenge data | Public |
 
 **📖 API documentation status:** a refreshed API reference is still pending; for now, use the controller source under `src/`, `IMPLEMENTATION_STATUS.md`, and `PRODUCTION_READINESS_ASSESSMENT.md` as the current references.
@@ -628,7 +644,7 @@ curl http://localhost:3000/metrics/json
 scrape_configs:
   - job_name: 'lyttlenginx'
     static_configs:
-      - targets: [ 'app:3000' ]
+      - targets: ['app:3000']
     metrics_path: '/metrics'
     scrape_interval: 30s
 ```
@@ -917,16 +933,19 @@ npm run docker:setup       # Setup for Docker
 ### Adding a New Feature
 
 1. **Create service:**
+
    ```bash
    nest g service feature
    ```
 
 2. **Create controller:**
+
    ```bash
    nest g controller feature
    ```
 
 3. **Create module:**
+
    ```bash
    nest g module feature
    ```
@@ -936,7 +955,7 @@ npm run docker:setup       # Setup for Docker
    imports: [
      // ... existing imports
      FeatureModule,
-   ]
+   ];
    ```
 
 ### Testing
@@ -1065,23 +1084,23 @@ For issues and questions:
 
 ## 🏆 Features at a Glance
 
-| Feature           | Status | Description                   |
-|-------------------|--------|-------------------------------|
-| 🔐 Auto SSL       | ✅      | Let's Encrypt integration     |
-| 📤 Upload Cert    | ✅      | Custom certificate upload     |
-| 🔧 Self-Signed    | ✅      | Development certificates      |
-| 🔄 Auto Renew     | ✅      | Automatic renewal (12h check) |
-| 🚦 HTTP→HTTPS     | ✅      | Automatic redirect            |
-| 📊 Prometheus     | ✅      | Metrics export                |
-| 📧 Email Alerts   | ✅      | SMTP notifications            |
-| 💬 Slack/Discord  | ✅      | Webhook alerts                |
-| 💾 Backup/Restore | ✅      | Complete backup solution      |
-| ⚡ Rate Limiting   | ✅      | 3-tier protection             |
-| ✅ Validation      | ✅      | Input validation              |
-| 🛡️ TLS 1.3       | ✅      | Modern protocols only         |
-| 🔒 OCSP Stapling  | ✅      | Enhanced performance          |
-| 📈 Monitoring     | ✅      | Daily health checks           |
-| 🐳 Docker         | ⚠️      | Evaluation-ready, hardening in progress |
+| Feature           | Status | Description                             |
+| ----------------- | ------ | --------------------------------------- |
+| 🔐 Auto SSL       | ✅     | Let's Encrypt integration               |
+| 📤 Upload Cert    | ✅     | Custom certificate upload               |
+| 🔧 Self-Signed    | ✅     | Development certificates                |
+| 🔄 Auto Renew     | ✅     | Automatic renewal (12h check)           |
+| 🚦 HTTP→HTTPS     | ✅     | Automatic redirect                      |
+| 📊 Prometheus     | ✅     | Metrics export                          |
+| 📧 Email Alerts   | ✅     | SMTP notifications                      |
+| 💬 Slack/Discord  | ✅     | Webhook alerts                          |
+| 💾 Backup/Restore | ✅     | Complete backup solution                |
+| ⚡ Rate Limiting  | ✅     | 3-tier protection                       |
+| ✅ Validation     | ✅     | Input validation                        |
+| 🛡️ TLS 1.3        | ✅     | Modern protocols only                   |
+| 🔒 OCSP Stapling  | ✅     | Enhanced performance                    |
+| 📈 Monitoring     | ✅     | Daily health checks                     |
+| 🐳 Docker         | ⚠️     | Evaluation-ready, hardening in progress |
 
 ---
 

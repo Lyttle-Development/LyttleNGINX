@@ -10,6 +10,7 @@ import { Response } from 'express';
 import { ReloaderService } from './reloader/reloader.service';
 import { AuthorizeAdmin } from './auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from './auth/guards/api-key.guard';
+import { Audit } from './audit/decorators/audit.decorator';
 
 @Controller()
 export class AppController {
@@ -19,6 +20,7 @@ export class AppController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(ApiKeyGuard)
   @AuthorizeAdmin('operator')
+  @Audit({ action: 'config.reload.local' })
   async reload(@Res() res: Response) {
     const result = await this.reloader.reloadConfig();
     if (result.ok) {

@@ -19,6 +19,7 @@ import {
   AuthorizeInternalNodeOrAdmin,
 } from '../auth/decorators/authorize.decorator';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import { Audit } from '../audit/decorators/audit.decorator';
 
 @Controller('certificates')
 @AuthorizeAdmin('viewer')
@@ -38,6 +39,25 @@ export class CertificateController {
   @Post('upload')
   @HttpCode(HttpStatus.CREATED)
   @AuthorizeAdmin('security-admin')
+  @Audit({
+    action: 'certificate.upload',
+    target: (request, responseBody) => ({
+      type: 'certificate',
+      id:
+        typeof (responseBody as Record<string, unknown> | undefined)?.['id'] ===
+        'string'
+          ? ((responseBody as Record<string, unknown>)['id'] as string)
+          : undefined,
+      label: Array.isArray(request.body?.['domains'])
+        ? request.body['domains']
+            .filter(
+              (domain): domain is string =>
+                typeof domain === 'string' && domain.trim().length > 0,
+            )
+            .join(',')
+        : undefined,
+    }),
+  })
   async uploadCertificate(@Body() dto: UploadCertificateDto) {
     try {
       return await this.certificateService.uploadCertificate(dto);
@@ -51,6 +71,25 @@ export class CertificateController {
   @Post('generate-self-signed')
   @HttpCode(HttpStatus.CREATED)
   @AuthorizeAdmin('security-admin')
+  @Audit({
+    action: 'certificate.generate-self-signed',
+    target: (request, responseBody) => ({
+      type: 'certificate',
+      id:
+        typeof (responseBody as Record<string, unknown> | undefined)?.['id'] ===
+        'string'
+          ? ((responseBody as Record<string, unknown>)['id'] as string)
+          : undefined,
+      label: Array.isArray(request.body?.['domains'])
+        ? request.body['domains']
+            .filter(
+              (domain): domain is string =>
+                typeof domain === 'string' && domain.trim().length > 0,
+            )
+            .join(',')
+        : undefined,
+    }),
+  })
   async generateSelfSigned(@Body() dto: GenerateSelfSignedDto) {
     try {
       return await this.certificateService.generateSelfSignedCertificate(
@@ -69,6 +108,7 @@ export class CertificateController {
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
   @AuthorizeAdmin('operator')
+  @Audit({ action: 'certificate.renew' })
   async renewCertificate(@Param('id') id: string) {
     return this.certificateService.renewCertificateById(id);
   }
@@ -77,6 +117,7 @@ export class CertificateController {
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
   @AuthorizeAdmin('operator')
+  @Audit({ action: 'certificate.renew-all' })
   async renewAllCertificates() {
     await this.certificateService.renewAllCertificates();
     return { message: 'Certificate renewal process initiated' };
@@ -86,6 +127,7 @@ export class CertificateController {
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @AuthorizeAdmin('security-admin')
+  @Audit({ action: 'certificate.delete' })
   async deleteCertificate(@Param('id') id: string) {
     await this.certificateService.deleteCertificate(id);
   }
@@ -108,6 +150,7 @@ export class CertificateController {
   @Post('sync')
   @HttpCode(HttpStatus.OK)
   @AuthorizeInternalNodeOrAdmin('platform-admin')
+  @Audit({ action: 'certificate.sync' })
   async syncCertificates() {
     return this.certificateService.syncCertificates();
   }

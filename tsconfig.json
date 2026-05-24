@@ -11,6 +11,9 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "baseUrl": "./",
+    "paths": {
+      "@prisma/client": ["node_modules/.prisma/client"]
+    },
     "ignoreDeprecations": "6.0",
     "incremental": true,
     "skipLibCheck": true,
@@ -20,7 +23,5 @@
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false
   },
-  "include": [
-    "src/**/*"
-  ]
+  "include": ["src/**/*"]
 }

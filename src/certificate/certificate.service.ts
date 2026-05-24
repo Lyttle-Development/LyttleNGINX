@@ -1193,7 +1193,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       },
     });
     const domainGroups = Array.from(
-      new Set(entries.map((e) => joinDomains(parseDomains(e.domains)))),
+      new Set<string>(entries.map((e) => joinDomains(parseDomains(e.domains)))),
     ).map((group) => parseDomains(group));
 
     this.logger.log(

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import * as archiver from 'archiver';
+import archiver from 'archiver';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Readable } from 'stream';
