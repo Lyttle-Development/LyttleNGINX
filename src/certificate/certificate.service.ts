@@ -936,6 +936,30 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           this.logger.log(`[FS] Reading key file: ${keyPath}`);
           const keyPem = fs.readFileSync(keyPath, 'utf8');
 
+          // Defensive checks: ensure we actually read PEM content before proceeding
+          this.logger.debug(
+            `[DB] Read cert length=${certPem.length}, key length=${keyPem.length}`,
+          );
+
+          // Ensure PEM markers are present - fail fast with clear log if not
+          const certLooksValid =
+            typeof certPem === 'string' &&
+            certPem.includes('BEGIN CERTIFICATE');
+          const keyLooksValid =
+            typeof keyPem === 'string' &&
+            (keyPem.includes('BEGIN PRIVATE KEY') ||
+              keyPem.includes('BEGIN RSA PRIVATE KEY'));
+
+          if (!certLooksValid || !keyLooksValid) {
+            this.logger.error(
+              `[DB] Invalid or missing PEM data after certbot for ${primaryDomain} — certLooksValid=${certLooksValid}, keyLooksValid=${keyLooksValid}`,
+            );
+            // Throw to trigger the existing failure path (which records failure & schedules retry)
+            throw new Error(
+              'Certificate or private key missing/invalid after certbot execution',
+            );
+          }
+
           // Validate certificate before saving
           this.logger.log(`[Validate] Validating certificate integrity...`);
           const validation = await this.validateCertificate(
@@ -970,6 +994,10 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             throw new Error(errorMsg);
           }
 
+          this.logger.debug(
+            `[DB] Certificate validated; expiresAt=${validation.expiresAt}`,
+          );
+
           this.logger.log(`[DB] Saving certificate to database...`);
           const certRecord = await this.prisma.certificate.upsert({
             where: { domainsHash } as any,
@@ -1001,6 +1029,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           });
 
           this.logger.log(
+            `[DB] Upsert complete for domainsHash=${domainsHash} id=${certRecord.id}`,
+          );
+          this.logger.log(
             `[DB] Certificate saved (id: ${certRecord.id}, expires: ${certRecord.expiresAt.toISOString()}). Writing to FS...`,
           );
           this.writeCertToFs(primaryDomain, certPem, keyPem);
@@ -1017,31 +1048,43 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           );
           const retryAfter = new Date(Date.now() + nextRetryMs);
 
-          await this.prisma.certificate.upsert({
-            where: { domainsHash } as any,
-            update: {
-              status: 'failed',
-              failureReason: message,
-              retryAfter,
-              failureCount: { increment: 1 },
-              issuedByNode: this.distributedLock.getInstanceId(),
-            } as any,
-            create: {
-              domains: domainsStr,
-              domainsHash,
-              certPem: '',
-              keyPem: '',
-              expiresAt: now,
-              issuedAt: now,
-              lastUsedAt: now,
-              isOrphaned: false,
-              status: 'failed',
-              failureReason: message,
-              retryAfter,
-              failureCount: 1,
-              issuedByNode: this.distributedLock.getInstanceId(),
-            } as any,
-          });
+          // Avoid overwriting existing certPem/keyPem with empty strings.
+          // If a certificate record already exists for this domainsHash, update failure fields only.
+          const existingCert = await this.prisma.certificate.findUnique({
+            where: { domainsHash },
+          } as any);
+
+          if (existingCert) {
+            await this.prisma.certificate.update({
+              where: { domainsHash } as any,
+              data: {
+                status: 'failed',
+                failureReason: message,
+                retryAfter,
+                failureCount: { increment: 1 },
+                issuedByNode: this.distributedLock.getInstanceId(),
+              } as any,
+            });
+          } else {
+            // No existing record - create a failed placeholder (certs unknown)
+            await this.prisma.certificate.create({
+              data: {
+                domains: domainsStr,
+                domainsHash,
+                certPem: '',
+                keyPem: '',
+                expiresAt: now,
+                issuedAt: now,
+                lastUsedAt: now,
+                isOrphaned: false,
+                status: 'failed',
+                failureReason: message,
+                retryAfter,
+                failureCount: 1,
+                issuedByNode: this.distributedLock.getInstanceId(),
+              },
+            });
+          }
 
           await this.alertService
             .sendAlert({
@@ -1604,9 +1647,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
         return {
           id: cert.id,
-          domains,
+          domains: parseDomains(cert.domains),
           primaryDomain: domains[0],
-          hasOcspSupport: analysis.hasOcsp,
+          hasOcsp: analysis.hasOcsp,
           certificateType: analysis.type,
           issuer: analysis.issuer,
           expiresAt: cert.expiresAt,
@@ -1614,8 +1657,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       }),
     );
 
-    const withOcsp = results.filter((r) => r.hasOcspSupport);
-    const withoutOcsp = results.filter((r) => !r.hasOcspSupport);
+    const withOcsp = results.filter((r) => r.hasOcsp);
+    const withoutOcsp = results.filter((r) => !r.hasOcsp);
 
     return {
       total: results.length,
