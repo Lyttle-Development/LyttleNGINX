@@ -37,10 +37,89 @@ model Certificate {
   retryAfter    DateTime?
   failureCount  Int       @default(0)
   issuedByNode  String?
+  orders        CertificateOrder[]
+  artifactVersions CertificateArtifactVersion[]
 
   @@unique([domainsHash])
   @@index([domainsHash])
   @@index([retryAfter])
+}
+
+model CertificateOrder {
+  id                   String                     @id @default(uuid())
+  domains              String // ';'-joined list of domains for this order
+  domainsHash          String
+  primaryDomain        String
+  sourceType           String                     @default("acme") // acme, uploaded, self-signed, imported
+  status               String                     @default("requested") // requested, challenge-published, validating, issued, distributing, activated, failed, revoked
+  attemptCount         Int                        @default(1)
+  retryCount           Int                        @default(0)
+  nextRetryAt          DateTime?
+  lastError            String?
+  requestedByNode      String?
+  certificateId        String?
+  requestedAt          DateTime                   @default(now())
+  startedAt            DateTime?
+  challengePublishedAt DateTime?
+  validatingAt         DateTime?
+  issuedAt             DateTime?
+  distributingAt       DateTime?
+  activatedAt          DateTime?
+  failedAt             DateTime?
+  revokedAt            DateTime?
+  completedAt          DateTime?
+  metadata             Json?
+  certificate          Certificate?               @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  events               CertificateOrderEvent[]
+  artifacts            CertificateArtifactVersion[]
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+
+  @@index([domainsHash, createdAt])
+  @@index([status, nextRetryAt])
+  @@index([certificateId])
+}
+
+model CertificateOrderEvent {
+  id            String            @id @default(uuid())
+  orderId       String
+  eventType     String
+  fromStatus    String?
+  toStatus      String?
+  message       String?
+  attemptNumber Int?
+  retryAt       DateTime?
+  details       Json?
+  order         CertificateOrder  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  occurredAt    DateTime          @default(now())
+
+  @@index([orderId, occurredAt])
+  @@index([toStatus, occurredAt])
+}
+
+model CertificateArtifactVersion {
+  id            String            @id @default(uuid())
+  orderId       String?
+  certificateId String?
+  domains       String // ';'-joined list of domains represented by this artifact
+  domainsHash   String
+  version       Int
+  sourceType    String            @default("acme") // acme, uploaded, self-signed, imported
+  certPem       String
+  keyPem        String
+  issuedAt      DateTime
+  expiresAt     DateTime
+  activatedAt   DateTime?
+  createdByNode String?
+  metadata      Json?
+  order         CertificateOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  certificate   Certificate?      @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  createdAt     DateTime          @default(now())
+
+  @@unique([domainsHash, version])
+  @@index([orderId])
+  @@index([certificateId, createdAt])
+  @@index([domainsHash, createdAt])
 }
 
 model ClusterNode {

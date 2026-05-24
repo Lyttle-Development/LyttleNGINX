@@ -7,6 +7,7 @@ import { AcmeController } from './acme.controller';
 import { CertificateCleanupService } from './certificate-cleanup.service';
 import { CertificateMonitorService } from './certificate-monitor.service';
 import { CertificateBackupService } from './certificate-backup.service';
+import { CertificateOrderService } from './certificate-order.service';
 import { TlsConfigService } from './tls-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -24,6 +25,7 @@ import { HealthModule } from '../health/health.module';
   ],
   providers: [
     CertificateService,
+    CertificateOrderService,
     CertificateCleanupService,
     CertificateMonitorService,
     CertificateBackupService,

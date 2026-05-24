@@ -18,6 +18,10 @@ import { UploadCertificateDto } from './dto/upload-certificate.dto';
 import { GenerateSelfSignedDto } from './dto/generate-self-signed.dto';
 import { CertificateInfoDto } from './dto/certificate-info.dto';
 import {
+  CertificateOrderDetailDto,
+  CertificateOrderSummaryDto,
+} from './dto/certificate-order.dto';
+import {
   AuthorizeAdmin,
   AuthorizeInternalNodeOrAdmin,
 } from '../auth/decorators/authorize.decorator';
@@ -35,9 +39,32 @@ export class CertificateController {
     return this.certificateService.listCertificates();
   }
 
-  @Get(':id')
-  async getCertificate(@Param('id') id: string): Promise<CertificateInfoDto> {
-    return this.certificateService.getCertificateInfo(id);
+  @Get('orders')
+  async listCertificateOrders(
+    @Query('limit') limit?: string,
+  ): Promise<{ count: number; orders: CertificateOrderSummaryDto[] }> {
+    const parsedLimit =
+      typeof limit === 'string' && limit.trim().length > 0
+        ? Number.parseInt(limit, 10)
+        : undefined;
+
+    if (
+      parsedLimit !== undefined &&
+      (!Number.isFinite(parsedLimit) || parsedLimit <= 0)
+    ) {
+      throw new BadRequestException(
+        'Query parameter "limit" must be a positive integer',
+      );
+    }
+
+    return this.certificateService.listCertificateOrders(parsedLimit);
+  }
+
+  @Get('orders/:id')
+  async getCertificateOrder(
+    @Param('id') id: string,
+  ): Promise<CertificateOrderDetailDto> {
+    return this.certificateService.getCertificateOrder(id);
   }
 
   @Post('upload')
@@ -108,6 +135,24 @@ export class CertificateController {
     }
   }
 
+  @Post('orders/:id/retry')
+  @HttpCode(HttpStatus.OK)
+  @AuthorizeAdmin('operator')
+  @Audit({ action: 'certificate.order.retry' })
+  async retryCertificateOrder(
+    @Param('id') id: string,
+  ): Promise<CertificateOrderDetailDto> {
+    try {
+      return await this.certificateService.retryCertificateOrder(id);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error
+          ? error.message
+          : 'Failed to retry certificate order',
+      );
+    }
+  }
+
   @Post('renew/:id')
   @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK)
@@ -146,6 +191,11 @@ export class CertificateController {
   @Get('health/ocsp-check')
   async checkOcspSupport() {
     return this.certificateService.checkAllCertificatesOcspSupport();
+  }
+
+  @Get(':id')
+  async getCertificate(@Param('id') id: string): Promise<CertificateInfoDto> {
+    return this.certificateService.getCertificateInfo(id);
   }
 
   /**

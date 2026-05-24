@@ -22,6 +22,8 @@ import {
   parseDomains,
 } from '../utils/domain-utils';
 import { AlertService } from '../alert/alert.service';
+import { CertificateOrderService } from './certificate-order.service';
+import { CertificateOrderSourceType } from './certificate-order.constants';
 import { ClusterHeartbeatService } from '../distributed-lock/cluster-heartbeat.service';
 import { ClusterOperationsService } from '../distributed-lock/cluster-operations.service';
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
@@ -50,6 +52,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   constructor(
     private prisma: PrismaService,
     private alertService: AlertService,
+    private certificateOrders: CertificateOrderService,
     private clusterOperations: ClusterOperationsService,
     private distributedLock: DistributedLockService,
     private healthService: HealthService,
@@ -518,6 +521,16 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     );
   }
 
+  private calculateRetryDelayMs(attemptNumber: number): number {
+    const cappedAttempt = Math.max(1, attemptNumber);
+
+    return Math.min(
+      1000 * 60 * 60 * 24,
+      1000 * 60 * 2 ** Math.min(5, cappedAttempt) +
+        Math.floor(Math.random() * 30000),
+    );
+  }
+
   /**
    * Check Let's Encrypt rate limits before certificate issuance
    * Let's Encrypt limits: 50 certificates per registered domain per week
@@ -810,13 +823,21 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  async ensureCertificate(domainsInput: string[] | string): Promise<void> {
+  async ensureCertificate(
+    domainsInput: string[] | string,
+    options: {
+      orderId?: string;
+      sourceType?: CertificateOrderSourceType;
+    } = {},
+  ): Promise<void> {
     if (process.env.NODE_ENV === 'development') {
       this.logger.log(
         '[Dev] Skipping certificate issuance in development mode.',
       );
       return;
     }
+
+    const sourceType = options.sourceType ?? 'acme';
     const domains = Array.isArray(domainsInput)
       ? normalizeDomains(domainsInput as string[], { allowWildcard: true })
       : parseDomains(domainsInput as string, { allowWildcard: true });
@@ -827,6 +848,18 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     const domainsStr = joinDomains(domains, { allowWildcard: true });
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
+    const instanceId = this.distributedLock.getInstanceId();
+
+    const order = await this.certificateOrders.getOrCreateOrder({
+      domains,
+      sourceType,
+      requestedByNode: instanceId,
+      existingOrderId: options.orderId,
+      metadata: {
+        flow: 'certificate.ensure',
+        renewBeforeDays: RENEW_BEFORE_DAYS,
+      },
+    });
 
     this.logger.log(
       `[Cert] Ensuring certificate for [${domainsStr}] (hash: ${hash})`,
@@ -857,6 +890,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       this.logger.log(
         `[DB] Updated lastUsedAt for certificate id: ${certEntry.id}`,
       );
+      await this.certificateOrders.completeWithCertificate(order.id, {
+        certificateId: certEntry.id,
+        message: 'Reused existing valid certificate from the database',
+        details: {
+          reusedExistingCertificate: true,
+          expiresAt: certEntry.expiresAt.toISOString(),
+        },
+      });
       return;
     }
 
@@ -865,6 +906,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     if (!rateLimitOk) {
       const errorMsg = `Rate limit check failed for ${primaryDomain}. Too many certificates issued recently.`;
       this.logger.error(`[RateLimit] ${errorMsg}`);
+      const retryAfter = new Date(
+        Date.now() + this.calculateRetryDelayMs(order.attemptCount),
+      );
+
+      await this.certificateOrders.markFailure(order.id, errorMsg, retryAfter, {
+        rateLimited: true,
+        sourceType,
+      });
 
       await this.alertService
         .sendAlert({
@@ -874,8 +923,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           metadata: {
             domain: primaryDomain,
             allDomains: domainsStr,
-            instanceId: this.distributedLock.getInstanceId(),
+            instanceId,
             timestamp: new Date().toISOString(),
+            retryAfter: retryAfter.toISOString(),
           },
         })
         .catch((alertErr) =>
@@ -918,6 +968,15 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             where: { id: recheck.id },
             data: { lastUsedAt: now },
           });
+          await this.certificateOrders.completeWithCertificate(order.id, {
+            certificateId: recheck.id,
+            message:
+              'Another node completed the order before the local issuance lock executed',
+            details: {
+              reusedExistingCertificate: true,
+              lockName,
+            },
+          });
           return recheck;
         }
 
@@ -927,6 +986,19 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         );
 
         try {
+          await this.certificateOrders.transitionOrder(
+            order.id,
+            'challenge-published',
+            {
+              message:
+                'Starting ACME manual challenge publication and certificate issuance',
+              details: {
+                lockName,
+                sourceType,
+              },
+            },
+          );
+
           // Use shell script hooks that directly interact with PostgreSQL
           // These scripts are copied into the container at /certbot-auth-hook.sh and /certbot-cleanup-hook.sh
           const authHookPath = '/certbot-auth-hook.sh';
@@ -951,7 +1023,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
                 message: errorMsg,
                 metadata: {
                   domains: domainsStr,
-                  instanceId: this.distributedLock.getInstanceId(),
+                  instanceId,
                   timestamp: new Date().toISOString(),
                 },
               })
@@ -998,6 +1070,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           this.logger.log(
             `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
           );
+
+          await this.certificateOrders.transitionOrder(order.id, 'validating', {
+            message:
+              'ACME order completed; validating generated certificate artifacts',
+          });
 
           // Read the cert/key files produced by certbot
           const certPath = path.join(
@@ -1080,6 +1157,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             `[DB] Certificate validated; expiresAt=${validation.expiresAt}`,
           );
 
+          await this.certificateOrders.transitionOrder(order.id, 'issued', {
+            message:
+              'Validated certificate and private key produced by ACME flow',
+            details: {
+              expiresAt: validation.expiresAt?.toISOString() ?? null,
+            },
+          });
+
           this.logger.log(`[DB] Saving certificate to database...`);
           const certRecord = await this.prisma.certificate.upsert({
             where: { domainsHash } as any,
@@ -1094,7 +1179,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
               failureReason: null,
               retryAfter: null,
               failureCount: 0,
-              issuedByNode: this.distributedLock.getInstanceId(),
+              issuedByNode: instanceId,
             } as any,
             create: {
               domains: domainsStr,
@@ -1106,7 +1191,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
               lastUsedAt: now,
               isOrphaned: false,
               status: 'active',
-              issuedByNode: this.distributedLock.getInstanceId(),
+              issuedByNode: instanceId,
             } as any,
           });
 
@@ -1116,25 +1201,59 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           this.logger.log(
             `[DB] Certificate saved (id: ${certRecord.id}, expires: ${certRecord.expiresAt.toISOString()}). Writing to FS...`,
           );
+          await this.certificateOrders.transitionOrder(
+            order.id,
+            'distributing',
+            {
+              message:
+                'Persisted certificate in the database and preparing local activation',
+              details: {
+                certificateId: certRecord.id,
+              },
+            },
+          );
           this.writeCertToFs(primaryDomain, certPem, keyPem);
+
+          await this.certificateOrders.recordArtifact({
+            orderId: order.id,
+            certificateId: certRecord.id,
+            domains,
+            sourceType,
+            certPem,
+            keyPem,
+            issuedAt: certRecord.issuedAt,
+            expiresAt: certRecord.expiresAt,
+            activatedAt: new Date(),
+            createdByNode: instanceId,
+            metadata: {
+              activation: 'local-filesystem',
+            },
+          });
+
+          await this.certificateOrders.completeWithCertificate(order.id, {
+            certificateId: certRecord.id,
+            message:
+              'Certificate activated on the local node after ACME issuance',
+            details: {
+              primaryDomain,
+              lockName,
+            },
+          });
           return certRecord;
         } catch (err) {
           // Persist failure with backoff
           const message = err instanceof Error ? err.message : String(err);
           const stack = err instanceof Error ? err.stack : undefined;
-          const failureCountInc = 1;
-          const nextRetryMs = Math.min(
-            1000 * 60 * 60 * 24,
-            1000 * 60 * 2 ** Math.min(5, failureCountInc) +
-              Math.floor(Math.random() * 30000),
-          );
-          const retryAfter = new Date(Date.now() + nextRetryMs);
 
           // Avoid overwriting existing certPem/keyPem with empty strings.
           // If a certificate record already exists for this domainsHash, update failure fields only.
           const existingCert = await this.prisma.certificate.findUnique({
             where: { domainsHash },
           } as any);
+          const nextFailureCount = (existingCert?.failureCount ?? 0) + 1;
+          const retryAfter = new Date(
+            Date.now() + this.calculateRetryDelayMs(order.attemptCount),
+          );
 
           if (existingCert) {
             await this.prisma.certificate.update({
@@ -1144,7 +1263,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
                 failureReason: message,
                 retryAfter,
                 failureCount: { increment: 1 },
-                issuedByNode: this.distributedLock.getInstanceId(),
+                issuedByNode: instanceId,
               } as any,
             });
           } else {
@@ -1163,10 +1282,22 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
                 failureReason: message,
                 retryAfter,
                 failureCount: 1,
-                issuedByNode: this.distributedLock.getInstanceId(),
+                issuedByNode: instanceId,
               },
             });
           }
+
+          await this.certificateOrders.markFailure(
+            order.id,
+            message,
+            retryAfter,
+            {
+              failureCount: nextFailureCount,
+              lockName,
+              sourceType,
+              stack,
+            },
+          );
 
           await this.alertService
             .sendAlert({
@@ -1177,7 +1308,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
                 domains: domainsStr,
                 error: message,
                 stack,
-                instanceId: this.distributedLock.getInstanceId(),
+                instanceId,
                 retryAfter: retryAfter.toISOString(),
               },
             })
@@ -1216,11 +1347,28 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           `[DB] Found certificate created by another node (id: ${certEntry.id}). Using it.`,
         );
         this.writeCertToFs(primaryDomain, certEntry.certPem, certEntry.keyPem);
+        await this.certificateOrders.completeWithCertificate(order.id, {
+          certificateId: certEntry.id,
+          message:
+            'Used certificate created by another node after local lock contention',
+          details: {
+            lockName,
+            reusedExistingCertificate: true,
+          },
+        });
         return;
       }
 
       const errorMsg = `Failed to acquire lock for certificate issuance and no certificate found in DB`;
       this.logger.error(`[Lock] ${errorMsg}`);
+      const retryAfter = new Date(
+        Date.now() + this.calculateRetryDelayMs(order.attemptCount),
+      );
+
+      await this.certificateOrders.markFailure(order.id, errorMsg, retryAfter, {
+        lockName,
+        sourceType,
+      });
 
       // Send alert for lock acquisition failure
       await this.alertService
@@ -1231,8 +1379,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           metadata: {
             domains: domainsStr,
             lockName,
-            instanceId: this.distributedLock.getInstanceId(),
+            instanceId,
             timestamp: new Date().toISOString(),
+            retryAfter: retryAfter.toISOString(),
           },
         })
         .catch((alertErr) =>
@@ -1283,24 +1432,26 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       }
     }
 
-    // Backoff-aware: also retry failed certs whose retryAfter has passed
-    const failedCerts = await this.prisma.certificate.findMany({
+    // Backoff-aware: retry failed ACME orders whose retry window has opened.
+    const retryableOrders = await this.prisma.certificateOrder.findMany({
       where: {
-        retryAfter: { lte: retryableAfter },
-        isOrphaned: false,
+        sourceType: 'acme',
+        status: 'failed',
+        nextRetryAt: { lte: retryableAfter },
       },
-    } as any);
+      orderBy: { nextRetryAt: 'asc' },
+    });
 
-    for (const cert of failedCerts) {
-      const domains = parseDomains(cert.domains, { allowWildcard: true });
+    for (const order of retryableOrders) {
+      const domains = parseDomains(order.domains, { allowWildcard: true });
       try {
         this.logger.log(
-          `[Renewal] Retrying failed certificate for [${cert.domains}] (failureCount=${(cert as any).failureCount ?? 0})`,
+          `[Renewal] Retrying failed certificate order ${order.id} for [${order.domains}] (attempt=${order.attemptCount})`,
         );
-        await this.ensureCertificate(domains);
+        await this.ensureCertificate(domains, { orderId: order.id });
       } catch (err) {
         this.logger.error(
-          `[Renewal] Retry failed for [${cert.domains}]: ${err instanceof Error ? err.message : String(err)}`,
+          `[Renewal] Retry failed for order ${order.id} [${order.domains}]: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1335,6 +1486,15 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     chainPem?: string;
   }) {
     const domains = normalizeDomains(dto.domains, { allowWildcard: true });
+    const instanceId = this.distributedLock.getInstanceId();
+    const order = await this.certificateOrders.getOrCreateOrder({
+      domains,
+      sourceType: 'uploaded',
+      requestedByNode: instanceId,
+      metadata: {
+        flow: 'certificate.upload',
+      },
+    });
     this.logger.log(
       `[Upload] Uploading custom certificate for domains: [${joinDomains(domains, { allowWildcard: true })}]`,
     );
@@ -1357,6 +1517,13 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         ? `${dto.certPem}\n${dto.chainPem}`
         : dto.certPem;
 
+      await this.certificateOrders.transitionOrder(order.id, 'issued', {
+        message: 'Validated uploaded certificate material',
+        details: {
+          expiresAt: expiresAt.toISOString(),
+        },
+      });
+
       // Write to filesystem
       this.writeCertToFs(primaryDomain, fullChainPem, dto.keyPem);
 
@@ -1371,6 +1538,36 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           issuedAt: new Date(),
           lastUsedAt: new Date(),
           isOrphaned: false,
+          status: 'active',
+          issuedByNode: instanceId,
+        },
+      });
+
+      await this.certificateOrders.transitionOrder(order.id, 'distributing', {
+        message: 'Persisted uploaded certificate and activated it locally',
+        details: {
+          certificateId: certRecord.id,
+        },
+      });
+
+      await this.certificateOrders.recordArtifact({
+        orderId: order.id,
+        certificateId: certRecord.id,
+        domains,
+        sourceType: 'uploaded',
+        certPem: fullChainPem,
+        keyPem: dto.keyPem,
+        issuedAt: certRecord.issuedAt,
+        expiresAt: certRecord.expiresAt,
+        activatedAt: new Date(),
+        createdByNode: instanceId,
+      });
+
+      await this.certificateOrders.completeWithCertificate(order.id, {
+        certificateId: certRecord.id,
+        message: 'Uploaded certificate activated on the local node',
+        details: {
+          primaryDomain,
         },
       });
 
@@ -1378,6 +1575,12 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         `[Upload] Successfully uploaded certificate (id: ${certRecord.id})`,
       );
       return certRecord;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.certificateOrders.markFailure(order.id, message, null, {
+        sourceType: 'uploaded',
+      });
+      throw error;
     } finally {
       // Clean up temp file
       try {
@@ -1391,9 +1594,22 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   /**
    * Generate a self-signed certificate for testing/development
    */
-  async generateSelfSignedCertificate(domains: string[]) {
+  async generateSelfSignedCertificate(
+    domains: string[],
+    options: { orderId?: string } = {},
+  ) {
     const normalizedDomains = normalizeDomains(domains, {
       allowWildcard: true,
+    });
+    const instanceId = this.distributedLock.getInstanceId();
+    const order = await this.certificateOrders.getOrCreateOrder({
+      domains: normalizedDomains,
+      sourceType: 'self-signed',
+      requestedByNode: instanceId,
+      existingOrderId: options.orderId,
+      metadata: {
+        flow: 'certificate.generate-self-signed',
+      },
     });
     this.logger.log(
       `[Self-Signed] Generating self-signed certificate for domains: [${joinDomains(normalizedDomains, { allowWildcard: true })}]`,
@@ -1434,6 +1650,13 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       const certPem = fs.readFileSync(certFile, 'utf8');
       const keyPem = fs.readFileSync(keyFile, 'utf8');
 
+      await this.certificateOrders.transitionOrder(order.id, 'issued', {
+        message: 'Generated self-signed certificate material successfully',
+        details: {
+          primaryDomain,
+        },
+      });
+
       // Write to filesystem
       this.writeCertToFs(primaryDomain, certPem, keyPem);
 
@@ -1448,6 +1671,36 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           issuedAt: new Date(),
           lastUsedAt: new Date(),
           isOrphaned: false,
+          status: 'active',
+          issuedByNode: instanceId,
+        },
+      });
+
+      await this.certificateOrders.transitionOrder(order.id, 'distributing', {
+        message: 'Persisted self-signed certificate and activated it locally',
+        details: {
+          certificateId: certRecord.id,
+        },
+      });
+
+      await this.certificateOrders.recordArtifact({
+        orderId: order.id,
+        certificateId: certRecord.id,
+        domains: normalizedDomains,
+        sourceType: 'self-signed',
+        certPem,
+        keyPem,
+        issuedAt: certRecord.issuedAt,
+        expiresAt: certRecord.expiresAt,
+        activatedAt: new Date(),
+        createdByNode: instanceId,
+      });
+
+      await this.certificateOrders.completeWithCertificate(order.id, {
+        certificateId: certRecord.id,
+        message: 'Self-signed certificate activated on the local node',
+        details: {
+          primaryDomain,
         },
       });
 
@@ -1455,6 +1708,12 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         `[Self-Signed] Successfully generated certificate (id: ${certRecord.id})`,
       );
       return certRecord;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.certificateOrders.markFailure(order.id, message, null, {
+        sourceType: 'self-signed',
+      });
+      throw error;
     } finally {
       // Clean up temp files
       try {
@@ -1538,6 +1797,42 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       issuer: certAnalysis.issuer,
       certificateType: certAnalysis.type,
     };
+  }
+
+  async listCertificateOrders(limit?: number) {
+    return this.certificateOrders.listOrders(limit);
+  }
+
+  async getCertificateOrder(orderId: string) {
+    return this.certificateOrders.getOrder(orderId);
+  }
+
+  async retryCertificateOrder(orderId: string) {
+    const order = await this.certificateOrders.validateRetryableOrder(orderId);
+
+    if (order.sourceType === 'uploaded' || order.sourceType === 'imported') {
+      throw new Error(
+        `Certificate order ${orderId} cannot be retried automatically for source type ${order.sourceType}`,
+      );
+    }
+
+    await this.certificateOrders.resumeOrder(orderId, {
+      reason: 'Manual operator retry requested',
+      force: true,
+    });
+
+    const domains = parseDomains(order.domains, { allowWildcard: true });
+
+    if (order.sourceType === 'self-signed') {
+      await this.generateSelfSignedCertificate(domains, { orderId });
+    } else {
+      await this.ensureCertificate(domains, {
+        orderId,
+        sourceType: 'acme',
+      });
+    }
+
+    return this.certificateOrders.getOrder(orderId);
   }
 
   /**

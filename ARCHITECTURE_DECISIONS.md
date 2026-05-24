@@ -34,6 +34,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-016 | Staged NGINX runtime releases with atomic activation and rollback                         | accepted | Session 13 | 2026-05-24 |
 | ADR-017 | Validated allowlisted `nginx_custom_code` fragments                                       | accepted | Session 14 | 2026-05-24 |
 | ADR-018 | Strict normalized certificate domains and argument-array process execution                | accepted | Session 15 | 2026-05-24 |
+| ADR-019 | Durable certificate orders with artifact history and retryable lifecycle state            | accepted | Session 16 | 2026-05-24 |
 
 ---
 
@@ -625,3 +626,45 @@ Adopt the following certificate-domain and certificate-process policy:
 - wildcard certificate issuance remains intentionally unavailable in the current HTTP-01 flow, which makes the limitation explicit until Session 18 lands a wildcard-safe ACME strategy
 - generated NGINX certificate paths, local certificate directories, and backup archive paths no longer depend on raw domain text, reducing path-confusion risk
 - future certificate lifecycle work should build on the shared normalized-domain utilities and safe process helper instead of reintroducing ad hoc validation or shell command construction
+
+---
+
+## ADR-019 — Durable certificate orders with artifact history and retryable lifecycle state
+
+- Status: accepted
+- Session: Session 16 — Add certificate order state machine
+- Date: 2026-05-24
+
+### Context
+
+The production-readiness assessment called out that certificate issuance was still modeled mostly as transient process execution plus the final `Certificate` row. That left the system with weak visibility into mid-flight state, poor retry history, and no durable artifact-version trail for later activation/rollback work.
+
+### Decision
+
+Adopt a certificate-order lifecycle model with three persistent record types:
+
+1. `CertificateOrder`
+   - captures the workflow intent, normalized domains, source type, current state, attempt counters, retry schedule, and final linked certificate
+2. `CertificateOrderEvent`
+   - records state transitions and retry/backoff history for each order without relying on ephemeral logs
+3. `CertificateArtifactVersion`
+   - stores versioned certificate artifacts so future distribution and rollback work can build on stable artifact history instead of only the latest active certificate row
+
+The initial Session 16 state vocabulary is:
+
+- `requested`
+- `challenge-published`
+- `validating`
+- `issued`
+- `distributing`
+- `activated`
+- `failed`
+- `revoked`
+
+### Consequences
+
+- ACME issuance, uploaded certificates, and self-signed certificates now create durable workflow records that can be queried through dedicated order APIs instead of being inferred from logs alone
+- failed ACME orders now persist retry/backoff history and can be resumed safely through an explicit retry path rather than only by hoping a later scheduled renewal happens to recreate context
+- certificate artifact metadata is now versioned, which gives Session 17 a concrete foundation for separating issuance from cluster-wide activation and for adding rollback-aware distribution state
+- artifact history currently stores the same PEM material as the existing certificate table, so Session 19 must build encryption-at-rest on top of this new lifecycle model before it is suitable for hardened production key storage
+

@@ -92,6 +92,13 @@ function createCertificateService() {
   const alertService = {
     sendAlert: async () => undefined,
   };
+  const certificateOrders = {
+    getOrCreateOrder: async () => ({ id: 'order-1', attemptCount: 1 }),
+    transitionOrder: async () => undefined,
+    markFailure: async () => undefined,
+    recordArtifact: async () => ({ id: 'artifact-1', version: 1 }),
+    completeWithCertificate: async () => undefined,
+  };
   const clusterOperations = {
     enqueueBroadcastOperation: async () => ({ operationId: 'op-1' }),
   };
@@ -111,6 +118,7 @@ function createCertificateService() {
   return new CertificateService(
     prisma,
     alertService,
+    certificateOrders,
     clusterOperations,
     distributedLock,
     healthService,

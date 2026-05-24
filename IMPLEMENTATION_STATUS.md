@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 5 — Certificate lifecycle redesign
-- Most recently completed session: Session 15 — Add strict domain validation and safe process execution
-- Next recommended session from the roadmap: Session 16 — Add certificate order state machine
+- Most recently completed session: Session 16 — Add certificate order state machine
+- Next recommended session from the roadmap: Session 17 — Rework cluster certificate distribution and activation
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -574,13 +574,40 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 16 — Add certificate order state machine
 
-- Status: not started
+- Status: done
 - Objective: model certificate issuance as a durable workflow
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: certificate lifecycle remains weakly modeled and hard to resume safely
-- Follow-up sessions: Session 17, Session 18, Session 25
-- Notes: retry and history persistence are still pending
+- Files touched:
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20260524191500_session16_certificate_orders/migration.sql`
+  - `src/certificate/certificate-order.constants.ts`
+  - `src/certificate/certificate-order.service.ts`
+  - `src/certificate/dto/certificate-order.dto.ts`
+  - `src/certificate/certificate.service.ts`
+  - `src/certificate/certificate.controller.ts`
+  - `src/certificate/certificate.module.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session15/domain-validation-and-safe-process.test.js`
+  - `test/session16/certificate-order-state-machine.test.js`
+- Tests added/updated:
+  - added `test/session16/certificate-order-state-machine.test.js` to verify durable self-signed order history, artifact-version tracking, failed ACME order persistence, and manual retry/resume behavior
+  - updated the Session 15 certificate-service harness for the new order-service dependency
+  - ran `npm run prisma:generate`, `npm run typecheck`, the focused Session 16 regression, the full `npm test` suite, and `npm run build` successfully after landing the new workflow models and APIs
+- Risks:
+  - order activation is still local-first and immediate; Session 17 remains responsible for separating issuance from cluster-wide distribution and ACK-driven activation
+  - uploaded/imported orders are queryable but not automatically retryable because replaying those workflows safely still requires operator-supplied certificate material and later restore hardening
+  - certificate artifact versions currently store plaintext PEMs alongside the existing certificate table, so Session 19 remains responsible for encryption-at-rest before this history is suitable for production key storage
+- Follow-up sessions:
+  - Session 17 — rework cluster certificate distribution and activation
+  - Session 18 — harden the ACME strategy for clustered production
+  - Session 19 — encrypt private key material at rest
+  - Session 25 — expand metrics and alerting
+- Notes:
+  - added durable `CertificateOrder`, `CertificateOrderEvent`, and `CertificateArtifactVersion` models so certificate workflows now persist their lifecycle, retry/backoff history, and artifact-version metadata
+  - ACME issuance, uploaded certificates, and self-signed certificates now create order records and transition through explicit lifecycle states instead of relying only on ephemeral logs and the final `Certificate` row
+  - failed ACME issuance now records per-order retry scheduling, and operators can inspect or manually retry orders through the new `GET /certificates/orders`, `GET /certificates/orders/:id`, and `POST /certificates/orders/:id/retry` APIs
+  - order read APIs intentionally omit raw PEM payloads even though artifact history is now persisted, keeping lifecycle observability separate from private-key export flows
 
 ## Session 17 — Rework cluster certificate distribution and activation
 

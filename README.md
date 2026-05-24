@@ -17,6 +17,8 @@
   <img src="https://img.shields.io/badge/session%2012-complete-blue" alt="Session 12" />
   <img src="https://img.shields.io/badge/session%2013-complete-blue" alt="Session 13" />
   <img src="https://img.shields.io/badge/session%2014-complete-blue" alt="Session 14" />
+  <img src="https://img.shields.io/badge/session%2015-complete-blue" alt="Session 15" />
+  <img src="https://img.shields.io/badge/session%2016-complete-blue" alt="Session 16" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -31,8 +33,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 5 in progress
-- **Completed in Sessions 1-15 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, and strict certificate-domain validation with safe process execution
-- **Next recommended implementation session:** Session 16 — add certificate order state machine
+- **Completed in Sessions 1-16 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, and durable certificate-order state tracking with artifact history and retryable workflows
+- **Next recommended implementation session:** Session 17 — rework cluster certificate distribution and activation
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -65,7 +67,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-14 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, and guarded `nginx_custom_code` validation. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-16 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, guarded `nginx_custom_code` validation, strict domain/process safety, and durable certificate-order lifecycle tracking. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -601,6 +603,48 @@ Certificate domain input is now normalized and validated strictly before any fil
 - wildcard domains must use the left-most `*.` form
 - path separators, whitespace, control characters, and shell metacharacter tricks are rejected early
 - wildcard issuance is currently rejected for the built-in ACME flow because the current implementation is still HTTP-01-based and DNS-01 support has not landed yet
+
+### Certificate order state machine
+
+Session 16 adds a durable certificate-order workflow so issuance is no longer just an ephemeral `certbot` run plus a best-effort database write.
+
+Current order states are:
+
+- `requested`
+- `challenge-published`
+- `validating`
+- `issued`
+- `distributing`
+- `activated`
+- `failed`
+- `revoked`
+
+Each order now stores:
+
+- normalized domains and primary domain
+- source type (`acme`, `uploaded`, `self-signed`, `imported`)
+- attempt and retry counters
+- next retry time for failed ACME orders
+- per-order event history
+- certificate artifact versions linked to the order
+
+The order read APIs intentionally return metadata and history only; they do **not** expose raw certificate private keys.
+
+```bash
+# List recent certificate orders
+curl http://localhost:3000/certificates/orders \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Inspect one order, its state transitions, and artifact-version history
+curl http://localhost:3000/certificates/orders/<order-id> \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Retry a failed ACME or self-signed order
+curl -X POST http://localhost:3000/certificates/orders/<order-id>/retry \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+> Current limitation: activation is still local-first today. Session 17 remains responsible for separating issuance from cluster-wide distribution/activation ACKs.
 
 ### Upload Custom Certificate
 
