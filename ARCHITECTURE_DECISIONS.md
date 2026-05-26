@@ -39,6 +39,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-021 | Explicit ACME strategy selection with Nest-managed cluster-safe HTTP-01 challenge orchestration | accepted | Session 18 | 2026-05-26 |
 | ADR-022 | Envelope encryption for persisted certificate private keys                               | accepted | Session 19 | 2026-05-26 |
 | ADR-023 | Encrypted backup envelopes with signed manifests and platform-admin-only raw certificate export | accepted | Session 20 | 2026-05-26 |
+| ADR-024 | Validation-first proxy management API with reload-required desired-state hints          | accepted | Session 21 | 2026-05-26 |
 
 ---
 
@@ -803,4 +804,38 @@ Adopt the following Session 20 backup and recovery model:
 - operators gain a safer recovery workflow through `POST /certificates/backup/:filename/verify` and `POST /certificates/backup/:filename/restore`
 - raw `GET /certificates/backup/export/:id` remains available for emergency use, but it is now intentionally narrower than the rest of the backup surface and should be monitored as a higher-risk audited action
 - legacy plaintext `.zip` backups are no longer trusted by the hardened restore path; future operator documentation should steer users toward regenerating encrypted artifacts where possible
+
+---
+
+## ADR-024 — Validation-first proxy management API with reload-required desired-state hints
+
+- Status: accepted
+- Session: Session 21 — Add proxy management API
+- Date: 2026-05-26
+
+### Context
+
+Until Session 21, proxy configuration was effectively managed by direct `ProxyEntry` database mutation. That bypassed the authenticated API surface, made RBAC/audit coverage uneven, and allowed invalid upstream/domain/custom-fragment combinations to reach the desired-state store without any operator-facing validation workflow.
+
+### Decision
+
+Adopt a dedicated proxy-management API under `/proxies` with the following rules:
+
+1. expose authenticated CRUD endpoints for proxy entries instead of treating direct database writes as the primary operator workflow
+2. require explicit RBAC:
+   - `viewer` for read-only inspection
+   - `operator` for validation and upstream-diagnostic endpoints
+   - `platform-admin` for create, update, and delete mutations
+3. validate proxy mutations before persistence, including:
+   - normalized domain parsing with duplicate/wildcard-overlap ownership checks
+   - upstream target validation for proxy and redirect entry types
+   - guarded `nginx_custom_code` sanitization
+   - NGINX config rendering preview generation
+4. return a lightweight `configChange` / `reloadRequired` hint from mutating responses so operators can hand off the desired-state change to the existing reload/cluster-operation workflows until later config-version APIs arrive
+
+### Consequences
+
+- proxy state is now managed through the same authenticated, authorized, and auditable control-plane surface as the rest of the system
+- malformed upstream targets and conflicting domain ownership are rejected before they reach persistent desired state, reducing the chance of broken config rollouts later
+- proxy mutations still need an explicit follow-up reload or cluster rollout today, so Session 22 and later config-version work should build on the new `reloadRequired` response contract instead of reintroducing silent direct DB writes
 

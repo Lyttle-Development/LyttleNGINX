@@ -22,6 +22,8 @@
   <img src="https://img.shields.io/badge/session%2017-complete-blue" alt="Session 17" />
   <img src="https://img.shields.io/badge/session%2018-complete-blue" alt="Session 18" />
   <img src="https://img.shields.io/badge/session%2019-complete-blue" alt="Session 19" />
+  <img src="https://img.shields.io/badge/session%2020-complete-blue" alt="Session 20" />
+  <img src="https://img.shields.io/badge/session%2021-complete-blue" alt="Session 21" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -35,9 +37,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 6 in progress
-- **Completed in Sessions 1-19 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, and application-layer envelope encryption for certificate private keys stored in PostgreSQL
-- **Next recommended implementation session:** Session 20 — harden backup, export, import, and restore flows
+- **Roadmap status:** Phase 7 in progress
+- **Completed in Sessions 1-21 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, and an authenticated proxy management API with validation-first CRUD workflows
+- **Next recommended implementation session:** Session 22 — add cluster operations and node-status admin APIs
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -90,6 +92,7 @@ npm -v    # expected: 11.15.0
 ### 🚀 NGINX Proxy Management
 
 - **Dynamic Configuration** - Database-driven proxy configuration
+- **Proxy Management API** - Authenticated CRUD, validation, and upstream test endpoints for proxy entries
 - **HTTP to HTTPS Redirect** - Automatic when SSL is enabled
 - **Reverse Proxy** - Full reverse proxy support
 - **URL Redirects** - 301/302 redirect support
@@ -419,9 +422,9 @@ npm run prisma:migrate
 
 ## 📚 API Documentation
 
-### Session 3-20 access policy
+### Session 3-21 access policy
 
-As of Sessions 3-20, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, explicit RBAC authorization policies on protected endpoints, durable audit logging for privileged and mutating operations, and hardened backup/restore/export flows.
+As of Sessions 3-21, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, explicit RBAC authorization policies on protected endpoints, durable audit logging for privileged and mutating operations, hardened backup/restore/export flows, and a validated proxy-management surface that replaces direct proxy-table mutation as the preferred operator workflow.
 
 The current explicit public allowlist is limited to:
 
@@ -535,6 +538,49 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 | ------ | --------------- | ------------------ | ------ |
 | GET    | `/metrics`      | Prometheus metrics | Public |
 | GET    | `/metrics/json` | JSON metrics       | Public |
+
+### Proxy Management Endpoints
+
+| Method | Endpoint                     | Description                                                     | Required role    |
+| ------ | ---------------------------- | --------------------------------------------------------------- | ---------------- |
+| GET    | `/proxies`                   | List proxy entries                                              | `viewer`         |
+| GET    | `/proxies/:id`               | Get one proxy entry                                             | `viewer`         |
+| POST   | `/proxies`                   | Create a proxy entry                                            | `platform-admin` |
+| PATCH  | `/proxies/:id`               | Update a proxy entry                                            | `platform-admin` |
+| DELETE | `/proxies/:id`               | Delete a proxy entry                                            | `platform-admin` |
+| POST   | `/proxies/validate`          | Validate a draft proxy payload and render a config preview      | `operator`       |
+| POST   | `/proxies/:id/validate`      | Re-validate a stored proxy entry                                | `operator`       |
+| POST   | `/proxies/:id/test-upstream` | Resolve and inspect the configured upstream hostname for a proxy | `operator`       |
+
+Proxy mutations now return a small `configChange` object with `reloadRequired: true` and a suggested `/cluster/reload` follow-up. This is the current desired-state hook until later sessions add broader config-version orchestration.
+
+Example create + validate flow:
+
+```bash
+# Validate a draft proxy definition before persisting it
+curl http://localhost:3000/proxies/validate \
+  -X POST \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domains": ["api.example.com"],
+    "proxyPassHost": "http://backend.internal:8080",
+    "type": "PROXY",
+    "ssl": true
+  }'
+
+# Persist the proxy entry once validation looks correct
+curl http://localhost:3000/proxies \
+  -X POST \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domains": ["api.example.com"],
+    "proxyPassHost": "http://backend.internal:8080",
+    "type": "PROXY",
+    "ssl": true
+  }'
+```
 
 ### TLS Configuration Endpoints
 

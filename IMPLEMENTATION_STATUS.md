@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 6 — Secrets, backups, and data protection
-- Most recently completed session: Session 20 — Harden backup, export, import, and restore flows
-- Next recommended session from the roadmap: Session 21 — Add proxy management API
+- Current phase: Phase 7 — Operational API expansion
+- Most recently completed session: Session 21 — Add proxy management API
+- Next recommended session from the roadmap: Session 22 — Add cluster operations and node-status admin APIs
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -766,13 +766,35 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 21 — Add proxy management API
 
-- Status: not started
+- Status: done
 - Objective: manage proxy config through authenticated API endpoints instead of direct DB mutation
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: proxy management is still a major operational gap
-- Follow-up sessions: Session 13, Session 14, Session 26
-- Notes: validation endpoints should ship with CRUD APIs
+- Files touched:
+  - `src/app.module.ts`
+  - `src/proxy/proxy.module.ts`
+  - `src/proxy/proxy.controller.ts`
+  - `src/proxy/proxy.service.ts`
+  - `src/proxy/dto/create-proxy-entry.dto.ts`
+  - `src/proxy/dto/update-proxy-entry.dto.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session21/proxy-management-api.test.js`
+- Tests added/updated:
+  - added `test/session21/proxy-management-api.test.js` to verify authenticated proxy CRUD access rules, validation-first create/update behavior, duplicate-domain rejection, stored/draft validation endpoints, and upstream-resolution diagnostics
+  - validated the focused Session 21 regression locally together with repository type-check/build verification after wiring the new module into `AppModule`
+- Risks:
+  - proxy changes now surface a `reloadRequired` desired-state hook, but they still rely on operators or later orchestration to trigger the existing cluster reload flow explicitly
+  - proxy ownership conflict checks currently protect direct and wildcard-overlap domain collisions, but broader rollout-policy/versioning semantics remain future work for Session 22 and Session 25
+- Follow-up sessions:
+  - Session 22 — add cluster operations and node-status admin APIs
+  - Session 24 — replace ad hoc logging with structured operational and audit logging
+  - Session 25 — expand metrics and alerting
+  - Session 26 — add automated test harness and baseline coverage
+- Notes:
+  - added `GET /proxies`, `GET /proxies/:id`, `POST /proxies`, `PATCH /proxies/:id`, and `DELETE /proxies/:id` with explicit RBAC (`viewer` for reads, `platform-admin` for config mutations)
+  - added `POST /proxies/validate`, `POST /proxies/:id/validate`, and `POST /proxies/:id/test-upstream` so operators can validate proxy payloads and inspect upstream reachability before rollout
+  - proxy writes now validate domains, upstream target shape, guarded custom NGINX fragments, and conflicting domain ownership before persistence, reducing the chance of invalid config entering the desired state store
+  - mutating responses now include a lightweight `configChange` hint that points operators to `/cluster/reload` until later sessions add fuller desired-state versioning and rollout APIs
 
 ## Session 22 — Add cluster operations and node-status admin APIs
 

@@ -14,6 +14,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './auth/auth.module';
 import { DistributedLockModule } from './distributed-lock/distributed-lock.module';
 import { AuditModule } from './audit/audit.module';
+import { ProxyModule } from './proxy/proxy.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AuditModule } from './audit/audit.module';
     MetricsModule,
     PrismaModule,
     DistributedLockModule,
+    ProxyModule,
     ReloaderModule,
     NginxModule,
     CertificateModule,
