@@ -17,6 +17,7 @@ import { CertificateService } from './certificate.service';
 import { UploadCertificateDto } from './dto/upload-certificate.dto';
 import { GenerateSelfSignedDto } from './dto/generate-self-signed.dto';
 import { CertificateInfoDto } from './dto/certificate-info.dto';
+import { AcmeChallengeInfoDto } from './dto/acme-challenge.dto';
 import {
   CertificateOrderDetailDto,
   CertificateOrderSummaryDto,
@@ -65,6 +66,31 @@ export class CertificateController {
     @Param('id') id: string,
   ): Promise<CertificateOrderDetailDto> {
     return this.certificateService.getCertificateOrder(id);
+  }
+
+  @Get('challenges')
+  async listAcmeChallenges(
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+  ): Promise<{ count: number; challenges: AcmeChallengeInfoDto[] }> {
+    const parsedLimit =
+      typeof limit === 'string' && limit.trim().length > 0
+        ? Number.parseInt(limit, 10)
+        : undefined;
+
+    if (
+      parsedLimit !== undefined &&
+      (!Number.isFinite(parsedLimit) || parsedLimit <= 0)
+    ) {
+      throw new BadRequestException(
+        'Query parameter "limit" must be a positive integer',
+      );
+    }
+
+    return this.certificateService.listAcmeChallenges({
+      status,
+      limit: parsedLimit,
+    });
   }
 
   @Post('upload')

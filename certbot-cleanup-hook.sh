@@ -32,11 +32,14 @@ echo "[Cleanup Hook] Database: $DB_USER@$DB_HOST:$DB_PORT/$DB_NAME"
 # Escape single quotes in token
 TOKEN_ESC="${TOKEN//\'/\'\'}"
 
-# Remove challenge from database
-echo "[Cleanup Hook] Deleting challenge from database..."
+# Mark challenge as cleaned up in the database
+echo "[Cleanup Hook] Marking challenge as cleaned up in database..."
 
 SQL_OUTPUT=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 2>&1 <<EOSQL
-DELETE FROM "AcmeChallenge" WHERE token = '$TOKEN_ESC';
+UPDATE "AcmeChallenge"
+SET status = 'cleaned-up',
+    "cleanedUpAt" = NOW()
+WHERE token = '$TOKEN_ESC';
 EOSQL
 )
 
@@ -46,10 +49,10 @@ echo "[Cleanup Hook] SQL exit code: $SQL_EXIT_CODE"
 echo "[Cleanup Hook] SQL output: $SQL_OUTPUT"
 
 if [ $SQL_EXIT_CODE -eq 0 ]; then
-    echo "[Cleanup Hook] Challenge removed successfully"
+    echo "[Cleanup Hook] Challenge marked as cleaned up successfully"
     exit 0
 else
-    echo "[Cleanup Hook] ERROR: Failed to remove challenge (exit code: $SQL_EXIT_CODE)"
+    echo "[Cleanup Hook] ERROR: Failed to update challenge lifecycle state (exit code: $SQL_EXIT_CODE)"
     exit 1
 fi
 

@@ -29,11 +29,46 @@ export class AcmeController {
     this.logger.log(`[ACME] Challenge request received for token: ${token}`);
 
     try {
+      const acmeChallengeDelegate = (this.prisma as unknown as {
+        acmeChallenge?: {
+          findFirst?: (args: unknown) => Promise<{
+            id: string;
+            token: string;
+            keyAuth: string;
+            domain: string;
+            expiresAt: Date;
+          } | null>;
+          findUnique?: (args: unknown) => Promise<{
+            id: string;
+            token: string;
+            keyAuth: string;
+            domain: string;
+            expiresAt: Date;
+          } | null>;
+          update?: (args: unknown) => Promise<unknown>;
+          delete?: (args: unknown) => Promise<unknown>;
+        };
+      }).acmeChallenge;
+
+      if (!acmeChallengeDelegate) {
+        this.logger.error('[ACME] Prisma ACME challenge delegate is unavailable');
+        res.status(HttpStatus.INTERNAL_SERVER_ERROR).send('Internal error');
+        return;
+      }
+
       // Look up challenge in database
       this.logger.debug(`[ACME] Looking up challenge in database: ${token}`);
-      const challenge = await this.prisma.acmeChallenge.findUnique({
-        where: { token },
-      });
+      const challenge =
+        typeof acmeChallengeDelegate.findFirst === 'function'
+          ? await acmeChallengeDelegate.findFirst({
+              where: {
+                token,
+                status: 'presented',
+              },
+            })
+          : await acmeChallengeDelegate.findUnique?.({
+              where: { token },
+            });
 
       if (!challenge) {
         this.logger.warn(`[ACME] Challenge not found in database: ${token}`);
@@ -48,10 +83,19 @@ export class AcmeController {
         this.logger.warn(
           `[ACME] Challenge expired for token ${token} (expired at: ${challenge.expiresAt})`,
         );
-        // Clean up expired challenge
-        await this.prisma.acmeChallenge.delete({
-          where: { id: challenge.id },
-        });
+        if (typeof acmeChallengeDelegate.update === 'function') {
+          await acmeChallengeDelegate.update({
+            where: { id: challenge.id },
+            data: {
+              status: 'expired',
+              finalizedAt: new Date(),
+            },
+          });
+        } else if (typeof acmeChallengeDelegate.delete === 'function') {
+          await acmeChallengeDelegate.delete({
+            where: { id: challenge.id },
+          });
+        }
         res.status(HttpStatus.NOT_FOUND).send('Challenge expired');
         return;
       }
@@ -60,6 +104,12 @@ export class AcmeController {
       this.logger.log(
         `[ACME] Returning challenge response for ${challenge.domain} (keyAuth length: ${challenge.keyAuth.length})`,
       );
+      await acmeChallengeDelegate.update?.({
+        where: { id: challenge.id },
+        data: {
+          lastServedAt: new Date(),
+        },
+      });
       res
         .status(HttpStatus.OK)
         .contentType('text/plain')

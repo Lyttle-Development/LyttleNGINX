@@ -215,15 +215,26 @@ model ClusterOperationAck {
 }
 
 model AcmeChallenge {
-  id        String   @id @default(uuid())
-  token     String   @unique // The challenge token (filename)
-  keyAuth   String // The key authorization (file content)
-  domain    String // Domain this challenge is for
-  createdAt DateTime @default(now())
-  expiresAt DateTime // Challenges expire after 1 hour
+  id            String   @id @default(uuid())
+  orderId       String?
+  token         String   @unique // The challenge token (filename)
+  keyAuth       String // The key authorization (file content)
+  domain        String // Domain this challenge is for
+  challengeType String   @default("http-01")
+  provider      String?
+  status        String   @default("presented") // presented, cleaned-up, validated, failed, expired
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  presentedAt   DateTime @default(now())
+  cleanedUpAt   DateTime?
+  finalizedAt   DateTime?
+  lastServedAt  DateTime?
+  expiresAt     DateTime // Challenges expire after 1 hour
 
   @@index([token])
+  @@index([orderId, createdAt])
   @@index([domain])
+  @@index([status, expiresAt])
   @@index([expiresAt])
 }
 

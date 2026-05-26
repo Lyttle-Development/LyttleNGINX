@@ -36,6 +36,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-018 | Strict normalized certificate domains and argument-array process execution                | accepted | Session 15 | 2026-05-24 |
 | ADR-019 | Durable certificate orders with artifact history and retryable lifecycle state            | accepted | Session 16 | 2026-05-24 |
 | ADR-020 | ACK-backed certificate artifact activation with rollback to prior versions                | accepted | Session 17 | 2026-05-24 |
+| ADR-021 | Explicit ACME strategy selection with DB-backed HTTP-01 tracking and DNS-01 hook support | accepted | Session 18 | 2026-05-24 |
 
 ---
 
@@ -697,5 +698,39 @@ Separate issuance from activation and make activation an ACK-backed cluster oper
 - a certificate order now becomes `activated` only after the cluster rollout succeeds, not merely after local issuance succeeds
 - per-node distribution status is inspectable through the linked cluster operation and exposed on order detail responses
 - failed activations leave the previously active certificate row unchanged, preserving a safe rollback target and letting later reconciliation flows restore drifted nodes from the durable active state
+
+---
+
+## ADR-021 — Explicit ACME strategy selection with DB-backed HTTP-01 tracking and DNS-01 hook support
+
+- Status: accepted
+- Session: Session 18 — Harden the ACME strategy for clustered production
+- Date: 2026-05-24
+
+### Context
+
+By the end of Session 17, certificate activation and rollback were cluster-aware, but the pre-issuance ACME flow still relied on an implicit HTTP-01-only certbot invocation. That left three gaps called out in the production-readiness assessment:
+
+1. wildcard issuance still had no supported path
+2. challenge publication / cleanup / finalization was not explicit or inspectable enough for operators
+3. the repository had no clear operator-facing contract for when to use shared HTTP challenge serving versus external DNS provider hooks
+
+### Decision
+
+Adopt an explicit ACME strategy layer with the following rules:
+
+1. introduce `ACME_CHALLENGE_STRATEGY` with `auto`, `http-01`, and `dns-01` modes
+2. keep the built-in cluster-safe HTTP-01 path for non-wildcard orders by writing challenge state into PostgreSQL and serving it from every node through `/.well-known/acme-challenge/:token`
+3. preserve HTTP-01 challenge rows through cleanup/finalization so operators can inspect challenge lifecycle state instead of losing it immediately on cleanup
+4. support DNS-01 through operator-supplied manual hook scripts configured by absolute-path env vars (`ACME_DNS_AUTH_HOOK`, `ACME_DNS_CLEANUP_HOOK`) plus an explicit provider label (`ACME_DNS_PROVIDER`)
+5. in `auto` mode, resolve wildcard orders to DNS-01 and non-wildcard orders to the built-in HTTP-01 path
+6. expose recent built-in HTTP-01 challenge records through an authenticated inspection API (`GET /certificates/challenges`)
+
+### Consequences
+
+- wildcard issuance is now supported when DNS-01 hooks are configured, without weakening the existing safe-domain validation rules
+- the built-in HTTP-01 flow remains cluster-safe because any node can serve the shared challenge record, while challenge publication / cleanup / validation state is now queryable afterward
+- DNS-01 provider behavior remains intentionally pluggable: the application defines the hook contract and metadata, while provider-specific DNS mutations stay outside the main codebase until a later provider integration session is justified
+- future certificate, observability, and operator-API sessions should build on this explicit ACME strategy metadata instead of assuming a single hard-coded HTTP-01 flow
 - later sessions can build richer activation policies, operator APIs, and certificate-distribution observability on top of artifact-level rollout state instead of inferring activation from local filesystem writes alone
 

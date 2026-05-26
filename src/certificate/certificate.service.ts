@@ -13,7 +13,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { addDays } from 'date-fns';
 import {
-  containsWildcardDomain,
   getCertificateStorageName,
   hashDomains,
   joinDomains,
@@ -29,6 +28,11 @@ import { ClusterOperationsService } from '../distributed-lock/cluster-operations
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
 import { HealthService } from '../health/health.service';
 import { runCommand } from '../utils/process-utils';
+import { AcmeChallengeInfoDto } from './dto/acme-challenge.dto';
+import {
+  buildAcmeCertbotPlan,
+  resolveAcmeStrategy,
+} from './acme-strategy';
 
 // Validate ADMIN_EMAIL is set (required by Let's Encrypt)
 const adminEmail = process.env.ADMIN_EMAIL;
@@ -47,6 +51,23 @@ class ArtifactActivationError extends Error {
     this.name = 'ArtifactActivationError';
   }
 }
+
+type AcmeChallengeRecord = {
+  id: string;
+  orderId: string | null;
+  token: string;
+  domain: string;
+  challengeType: string;
+  provider: string | null;
+  status: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: Date;
+  presentedAt: Date;
+  cleanedUpAt: Date | null;
+  finalizedAt: Date | null;
+  lastServedAt: Date | null;
+  expiresAt: Date;
+};
 
 @Injectable()
 export class CertificateService implements OnModuleInit, OnApplicationShutdown {
@@ -518,13 +539,85 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     return stdout.trim();
   }
 
-  private assertWildcardIssuanceSupported(domains: string[]): void {
-    if (!containsWildcardDomain(domains)) {
+  private getAcmeChallengeDelegate(): {
+    findMany?: (args: unknown) => Promise<AcmeChallengeRecord[]>;
+    update?: (args: unknown) => Promise<unknown>;
+  } | null {
+    const delegate = (this.prisma as unknown as {
+      acmeChallenge?: {
+        findMany?: (args: unknown) => Promise<AcmeChallengeRecord[]>;
+        update?: (args: unknown) => Promise<unknown>;
+      };
+    }).acmeChallenge;
+
+    return delegate ?? null;
+  }
+
+  private toAcmeChallengeDto(
+    challenge: AcmeChallengeRecord,
+  ): AcmeChallengeInfoDto {
+    return {
+      id: challenge.id,
+      orderId: challenge.orderId,
+      token: challenge.token,
+      domain: challenge.domain,
+      challengeType: challenge.challengeType,
+      provider: challenge.provider,
+      status: challenge.status,
+      presentedAt: challenge.presentedAt,
+      cleanedUpAt: challenge.cleanedUpAt,
+      finalizedAt: challenge.finalizedAt,
+      lastServedAt: challenge.lastServedAt,
+      expiresAt: challenge.expiresAt,
+      metadata: challenge.metadata,
+      createdAt: challenge.createdAt,
+    };
+  }
+
+  private async finalizeAcmeChallengesForOrder(
+    orderId: string,
+    params: {
+      status: 'validated' | 'failed';
+      error?: string | null;
+    },
+  ): Promise<void> {
+    const delegate = this.getAcmeChallengeDelegate();
+    if (!delegate?.findMany || !delegate.update) {
       return;
     }
 
-    throw new Error(
-      'Wildcard certificate issuance requires DNS-01 and is not supported by the current HTTP-01 ACME flow',
+    const challenges = await delegate.findMany({
+      where: {
+        orderId,
+        status: {
+          in: ['presented', 'cleaned-up'],
+        },
+      },
+      orderBy: [{ presentedAt: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    if (challenges.length === 0) {
+      return;
+    }
+
+    const finalizedAt = new Date();
+    await Promise.all(
+      challenges.map((challenge) =>
+        delegate.update?.({
+          where: { id: challenge.id },
+          data: {
+            status: params.status,
+            finalizedAt,
+            metadata: this.mergeMetadata(challenge.metadata, {
+              finalization: {
+                status: params.status,
+                error: params.error ?? null,
+                finalizedAt: finalizedAt.toISOString(),
+              },
+            }),
+          },
+        }),
+      ),
     );
   }
 
@@ -1141,7 +1234,6 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     const domains = Array.isArray(domainsInput)
       ? normalizeDomains(domainsInput as string[], { allowWildcard: true })
       : parseDomains(domainsInput as string, { allowWildcard: true });
-    this.assertWildcardIssuanceSupported(domains);
     const primaryDomain = domains[0];
     const hash = hashDomains(domains, { allowWildcard: true });
     const domainsHash = hash;
@@ -1149,6 +1241,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
     const instanceId = this.distributedLock.getInstanceId();
+    const acmeStrategy = resolveAcmeStrategy(domains);
 
     const order = await this.certificateOrders.getOrCreateOrder({
       domains,
@@ -1158,6 +1251,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       metadata: {
         flow: 'certificate.ensure',
         renewBeforeDays: RENEW_BEFORE_DAYS,
+        acme: acmeStrategy,
       },
     });
 
@@ -1286,6 +1380,13 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         );
 
         try {
+          const acmePlan = buildAcmeCertbotPlan({
+            domains,
+            adminEmail,
+            orderId: order.id,
+            instanceId,
+          });
+
           await this.certificateOrders.transitionOrder(
             order.id,
             'challenge-published',
@@ -1295,85 +1396,38 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
               details: {
                 lockName,
                 sourceType,
+                acme: acmePlan.metadata,
+              },
+              data: {
+                metadata: this.mergeMetadata(order.metadata, {
+                  acme: acmePlan.metadata,
+                }),
               },
             },
           );
 
-          // Use shell script hooks that directly interact with PostgreSQL
-          // These scripts are copied into the container at /certbot-auth-hook.sh and /certbot-cleanup-hook.sh
-          const authHookPath = '/certbot-auth-hook.sh';
-          const cleanupHookPath = '/certbot-cleanup-hook.sh';
-
-          // Parse DATABASE_URL to get connection details for psql in the hooks
-          const dbUrl = process.env.DATABASE_URL || '';
-          const dbMatch = dbUrl.match(
-            /postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/([^?]+)/,
-          );
-
-          if (!dbMatch) {
-            const errorMsg =
-              'Could not parse DATABASE_URL for certbot hooks. Expected format: postgresql://user:pass@host:port/dbname';
-            this.logger.error(`[Certbot] ${errorMsg}`);
-
-            // Send alert for configuration error
-            await this.alertService
-              .sendAlert({
-                type: 'error',
-                title: 'Certificate Issuance Configuration Error',
-                message: errorMsg,
-                metadata: {
-                  domains: domainsStr,
-                  instanceId,
-                  timestamp: new Date().toISOString(),
-                },
-              })
-              .catch((alertErr) =>
-                this.logger.error(
-                  `[Certbot] Failed to send alert: ${alertErr.message}`,
-                ),
-              );
-
-            throw new Error(errorMsg);
-          }
-
-          const [, dbUser, dbPassword, dbHost, dbPort, dbName] = dbMatch;
-          const certbotArgs = [
-            'certonly',
-            '--manual',
-            '--preferred-challenges=http',
-            `--manual-auth-hook=${authHookPath}`,
-            `--manual-cleanup-hook=${cleanupHookPath}`,
-            '--non-interactive',
-            '--agree-tos',
-            '--cert-name',
-            getCertificateStorageName(primaryDomain),
-            '-m',
-            adminEmail,
-            ...domains.flatMap((domain) => ['-d', domain]),
-          ];
-
           this.logger.log(
-            `[Certbot] Running command: certbot ${certbotArgs.join(' ')}`,
+            `[Certbot] Running ${acmePlan.challengeType} certificate flow for ${primaryDomain} via provider ${acmePlan.provider}`,
           );
 
-          // Use manual mode with shell hooks so all nodes can serve challenges from database
-          await runCommand('certbot', certbotArgs, {
-            env: {
-              DB_USER: dbUser,
-              DB_PASSWORD: dbPassword,
-              DB_HOST: dbHost,
-              DB_PORT: dbPort,
-              DB_NAME: dbName,
-            },
+          await runCommand('certbot', acmePlan.args, {
+            env: acmePlan.env,
             timeoutMs: 10 * 60 * 1000,
           });
           this.logger.log(
             `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
           );
 
+          await this.finalizeAcmeChallengesForOrder(order.id, {
+            status: 'validated',
+          });
+
           await this.certificateOrders.transitionOrder(order.id, 'validating', {
             message:
               'ACME order completed; validating generated certificate artifacts',
+            details: {
+              acme: acmePlan.metadata,
+            },
           });
 
           // Read the cert/key files produced by certbot
@@ -1492,6 +1546,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           // Persist failure with backoff
           const message = err instanceof Error ? err.message : String(err);
           const stack = err instanceof Error ? err.stack : undefined;
+
+          await this.finalizeAcmeChallengesForOrder(order.id, {
+            status: 'failed',
+            error: message,
+          });
 
           if (err instanceof ArtifactActivationError) {
             await this.alertService
@@ -2020,6 +2079,35 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
   async listCertificateOrders(limit?: number) {
     return this.certificateOrders.listOrders(limit);
+  }
+
+  async listAcmeChallenges(options: { status?: string; limit?: number } = {}) {
+    const delegate = this.getAcmeChallengeDelegate();
+    if (!delegate?.findMany) {
+      return {
+        count: 0,
+        challenges: [] as AcmeChallengeInfoDto[],
+      };
+    }
+
+    const take = Number.isFinite(options.limit)
+      ? Math.min(Math.max(options.limit ?? 25, 1), 100)
+      : 25;
+    const normalizedStatus = options.status?.trim();
+    const challenges = await delegate.findMany({
+      where: normalizedStatus
+        ? {
+            status: normalizedStatus,
+          }
+        : undefined,
+      take,
+      orderBy: [{ presentedAt: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    return {
+      count: challenges.length,
+      challenges: challenges.map((challenge) => this.toAcmeChallengeDto(challenge)),
+    };
   }
 
   async getCertificateOrder(orderId: string) {

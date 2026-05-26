@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 5 — Certificate lifecycle redesign
-- Most recently completed session: Session 17 — Rework cluster certificate distribution and activation
-- Next recommended session from the roadmap: Session 18 — Harden the ACME strategy for clustered production
+- Current phase: Phase 6 — Secrets, backups, and data protection
+- Most recently completed session: Session 18 — Harden the ACME strategy for clustered production
+- Next recommended session from the roadmap: Session 19 — Encrypt private key material at rest
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -648,13 +648,43 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 18 — Harden the ACME strategy for clustered production
 
-- Status: not started
+- Status: done
 - Objective: make challenge handling explicit, durable, and cluster-safe
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: current issuance coordination is still fragile in global mode
-- Follow-up sessions: Session 29
-- Notes: DNS-01 or a hardened HTTP-01 workflow must be decided
+- Files touched:
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20260524213000_session18_acme_strategy_hardening/migration.sql`
+  - `certbot-auth-hook.sh`
+  - `certbot-cleanup-hook.sh`
+  - `src/certificate/acme-strategy.ts`
+  - `src/certificate/acme.controller.ts`
+  - `src/certificate/certificate.controller.ts`
+  - `src/certificate/certificate.service.ts`
+  - `src/certificate/dto/acme-challenge.dto.ts`
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session15/domain-validation-and-safe-process.test.js`
+  - `test/session18/acme-strategy-hardening.test.js`
+- Tests added/updated:
+  - added `test/session18/acme-strategy-hardening.test.js` to verify built-in HTTP-01 planning, wildcard DNS-01 auto-selection, challenge inspection listing, and challenge-serving lifecycle behavior
+  - updated the Session 15 wildcard regression so it now asserts that wildcard issuance requires DNS-01 hook configuration rather than rejecting all wildcard ACME orders categorically
+  - re-ran the focused Session 15 and Session 18 suites locally after landing the strategy changes
+- Risks:
+  - DNS-01 is now supported through operator-supplied manual hooks, but first-class provider-specific integrations remain external to the app for now
+  - built-in challenge inspection currently covers the DB-backed HTTP-01 flow only; provider-managed DNS-01 challenge detail remains owned by the mounted provider hooks
+  - private keys and artifact history are still stored plaintext until Session 19 lands encryption-at-rest
+- Follow-up sessions:
+  - Session 19 — encrypt private key material at rest
+  - Session 20 — harden backup, export, import, and restore flows
+  - Session 22 — add cluster operations and node-status admin APIs
+  - Session 25 — expand metrics and alerting
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+- Notes:
+  - introduced an explicit ACME strategy layer that supports `auto`, `http-01`, and `dns-01` challenge modes instead of assuming one implicit certbot path
+  - the built-in HTTP-01 flow now stores publication, cleanup, expiry, and finalization state in `AcmeChallenge`, and operators can inspect recent challenge rows through `GET /certificates/challenges`
+  - wildcard orders now resolve to DNS-01 automatically when the required DNS hook configuration is present, while non-wildcard orders continue to use the cluster-safe database-backed HTTP-01 publication path by default
+  - certbot hook wiring now carries per-order metadata and propagation tuning through explicit environment variables instead of relying on ad hoc implicit behavior
 
 ---
 

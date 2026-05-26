@@ -265,12 +265,12 @@ describe('Session 15 strict domain validation and safe process execution', () =>
     ]);
   });
 
-  it('rejects wildcard ACME issuance until DNS-01 support exists', async () => {
+  it('rejects wildcard ACME issuance when DNS-01 hooks are not configured', async () => {
     const service = createCertificateService();
 
     await assert.rejects(
       () => service.ensureCertificate(['*.example.com', 'example.com']),
-      /DNS-01/i,
+      /ACME_DNS_AUTH_HOOK|ACME_DNS_CLEANUP_HOOK/i,
     );
   });
 

@@ -20,6 +20,7 @@
   <img src="https://img.shields.io/badge/session%2015-complete-blue" alt="Session 15" />
   <img src="https://img.shields.io/badge/session%2016-complete-blue" alt="Session 16" />
   <img src="https://img.shields.io/badge/session%2017-complete-blue" alt="Session 17" />
+  <img src="https://img.shields.io/badge/session%2018-complete-blue" alt="Session 18" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -34,8 +35,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 5 in progress
-- **Completed in Sessions 1-17 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, and ACK-backed cluster certificate activation with rollback to prior artifact versions
-- **Next recommended implementation session:** Session 18 — harden the ACME strategy for clustered production
+- **Completed in Sessions 1-18 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, and an explicit ACME strategy layer with built-in HTTP-01 challenge tracking plus DNS-01 hook support
+- **Next recommended implementation session:** Session 19 — encrypt private key material at rest
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -68,7 +69,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-17 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, guarded `nginx_custom_code` validation, strict domain/process safety, durable certificate-order lifecycle tracking, and ACK-backed certificate distribution plus rollback behavior. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-18 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, guarded `nginx_custom_code` validation, strict domain/process safety, durable certificate-order lifecycle tracking, ACK-backed certificate distribution plus rollback behavior, and the hardened ACME strategy. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -575,6 +576,12 @@ curl http://localhost:3000/auth/me \
 | ------ | ------------------------------------ | ------------------------- | ------ |
 | GET    | `/.well-known/acme-challenge/:token` | Serve ACME challenge data | Public |
 
+### ACME Challenge Operations
+
+| Method | Endpoint                  | Description                                                    | Auth     |
+| ------ | ------------------------- | -------------------------------------------------------------- | -------- |
+| GET    | `/certificates/challenges` | Inspect recent ACME challenge publication / cleanup lifecycle | `viewer` |
+
 **📖 API documentation status:** a refreshed API reference is still pending; for now, use the controller source under `src/`, `IMPLEMENTATION_STATUS.md`, and `PRODUCTION_READINESS_ASSESSMENT.md` as the current references.
 
 ---
@@ -605,7 +612,58 @@ Certificate domain input is now normalized and validated strictly before any fil
 - internationalized domains are normalized to ASCII/punycode
 - wildcard domains must use the left-most `*.` form
 - path separators, whitespace, control characters, and shell metacharacter tricks are rejected early
-- wildcard issuance is currently rejected for the built-in ACME flow because the current implementation is still HTTP-01-based and DNS-01 support has not landed yet
+- wildcard issuance now resolves to DNS-01 automatically when `ACME_CHALLENGE_STRATEGY=auto` and the required DNS hook configuration is present
+
+### ACME strategy selection
+
+Session 18 formalizes ACME challenge handling behind an explicit strategy layer.
+
+The runtime now supports three `ACME_CHALLENGE_STRATEGY` modes:
+
+- `auto` *(default)* — use built-in HTTP-01 for non-wildcard orders and DNS-01 for wildcard orders
+- `http-01` — force the built-in database-backed HTTP-01 flow
+- `dns-01` — force DNS-01 through operator-supplied manual hook scripts
+
+#### Built-in HTTP-01 strategy
+
+The hardened HTTP-01 flow is the default for non-wildcard orders and remains cluster-safe:
+
+1. the issuing node runs `certbot --manual --preferred-challenges=http`
+2. the built-in auth hook writes the challenge token + key authorization into PostgreSQL together with order/strategy metadata
+3. any node can answer `/.well-known/acme-challenge/:token` from the shared database record
+4. the cleanup hook marks the challenge as cleaned up instead of deleting it immediately
+5. the certificate service finalizes the challenge lifecycle as `validated` or `failed`, which makes challenge publication / finalization inspectable after the run
+
+The `GET /certificates/challenges` endpoint exposes recent built-in HTTP-01 challenge records with statuses such as `presented`, `cleaned-up`, `validated`, `failed`, and `expired`.
+
+#### DNS-01 strategy
+
+Wildcard orders and operator-selected DNS flows now use external manual hooks:
+
+- `ACME_DNS_AUTH_HOOK` — absolute path to the DNS challenge publication hook inside the container
+- `ACME_DNS_CLEANUP_HOOK` — absolute path to the DNS challenge cleanup hook inside the container
+- `ACME_DNS_PROVIDER` — operator-facing label for the DNS provider / hook implementation
+- `ACME_DNS_PROPAGATION_SECONDS` — provider-specific propagation wait hint passed to the hook environment
+
+DNS-01 challenge details are managed by the provider hook itself rather than the built-in DB-backed HTTP challenge table, so `GET /certificates/challenges` is intentionally focused on the built-in HTTP-01 publication path.
+
+Example configuration snippets:
+
+```bash
+# Default mixed strategy: HTTP-01 for normal domains, DNS-01 for wildcards
+ACME_CHALLENGE_STRATEGY=auto
+
+# Force the built-in database-backed HTTP-01 flow
+ACME_CHALLENGE_STRATEGY=http-01
+ACME_HTTP01_PROPAGATION_SECONDS=5
+
+# Force DNS-01 through mounted provider hooks
+ACME_CHALLENGE_STRATEGY=dns-01
+ACME_DNS_PROVIDER=route53-manual
+ACME_DNS_AUTH_HOOK=/opt/acme/dns-auth.sh
+ACME_DNS_CLEANUP_HOOK=/opt/acme/dns-cleanup.sh
+ACME_DNS_PROPAGATION_SECONDS=45
+```
 
 ### Certificate order state machine
 
@@ -647,7 +705,7 @@ curl -X POST http://localhost:3000/certificates/orders/<order-id>/retry \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-> Current limitation: activation is still local-first today. Session 17 remains responsible for separating issuance from cluster-wide distribution/activation ACKs.
+Session 17 already separates issuance from cluster-wide distribution / activation ACKs. Session 18 builds on that by making the pre-issuance challenge strategy explicit and operator-configurable.
 
 ### Upload Custom Certificate
 
