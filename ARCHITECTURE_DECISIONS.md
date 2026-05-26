@@ -37,6 +37,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-019 | Durable certificate orders with artifact history and retryable lifecycle state            | accepted | Session 16 | 2026-05-24 |
 | ADR-020 | ACK-backed certificate artifact activation with rollback to prior versions                | accepted | Session 17 | 2026-05-24 |
 | ADR-021 | Explicit ACME strategy selection with Nest-managed cluster-safe HTTP-01 challenge orchestration | accepted | Session 18 | 2026-05-26 |
+| ADR-022 | Envelope encryption for persisted certificate private keys                               | accepted | Session 19 | 2026-05-26 |
 
 ---
 
@@ -731,4 +732,40 @@ Adopt an explicit ACME strategy layer with the following rules:
 - wildcard requests now fail fast with an explicit message instead of falling into partial or operator-dependent DNS challenge workflows
 - future certificate, observability, and operator-API sessions should build on this explicit ACME strategy metadata instead of assuming a single hard-coded HTTP-01 flow
 - later sessions can build richer activation policies, operator APIs, and certificate-distribution observability on top of artifact-level rollout state instead of inferring activation from local filesystem writes alone
+
+---
+
+## ADR-022 — Envelope encryption for persisted certificate private keys
+
+- Status: accepted
+- Session: Session 19 — Encrypt private key material at rest
+- Date: 2026-05-26
+
+### Context
+
+By the end of Session 18, active certificate rows and certificate artifact history still stored private keys as plaintext PEM strings in PostgreSQL. That left both the current `Certificate` table and the newer `CertificateArtifactVersion` history unsuitable for production key custody, even though higher-level certificate workflows had become durable and cluster-aware.
+
+The production-readiness assessment also called for application-layer encryption that can evolve toward Vault/KMS/HSM-managed master keys over time.
+
+### Decision
+
+Adopt application-layer envelope encryption for stored certificate private keys:
+
+1. encrypt private keys before persisting them in both `Certificate` and `CertificateArtifactVersion`
+2. keep certificate PEM chains readable in the database for operational inspection, but treat private keys as encrypted payloads only
+3. store per-record encryption metadata in a companion `keyEncryption` JSON field so the system tracks:
+   - envelope scheme version
+   - provider type
+   - provider key ID / key version
+   - wrapped data-key material
+   - payload encryption parameters
+4. ship a local master-key envelope provider now, but expose that through a provider abstraction so later sessions can swap in Vault/KMS/HSM-backed implementations without rewriting certificate workflows
+5. migrate legacy plaintext rows on startup and re-encrypt them when the configured key version changes
+
+### Consequences
+
+- PostgreSQL no longer stores active certificate private keys or artifact-history private keys as plaintext once Session 19 migration has run
+- certificate issuance, activation, sync, backup, and export flows must explicitly decrypt private keys at the last responsible moment instead of assuming DB reads already return PEM text
+- changing `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` now creates a concrete upgrade path for future master-key rotation work, even though full operator-facing rotation APIs remain future work for Session 23
+- backup archives, export flows, and restore integrity are still separate concerns; Session 20 remains responsible for hardening those artifacts beyond the storage-layer protection introduced here
 

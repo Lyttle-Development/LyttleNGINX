@@ -8,6 +8,7 @@ import { CertificateCleanupService } from './certificate-cleanup.service';
 import { CertificateMonitorService } from './certificate-monitor.service';
 import { CertificateBackupService } from './certificate-backup.service';
 import { CertificateOrderService } from './certificate-order.service';
+import { PrivateKeyEncryptionService } from './private-key-encryption.service';
 import { AcmeService } from './acme.service';
 import { TlsConfigService } from './tls-config.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -31,6 +32,7 @@ import { HealthModule } from '../health/health.module';
     CertificateCleanupService,
     CertificateMonitorService,
     CertificateBackupService,
+    PrivateKeyEncryptionService,
     TlsConfigService,
     PrismaService,
   ],

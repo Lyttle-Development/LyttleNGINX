@@ -11,13 +11,32 @@ import {
   normalizeDomains,
   parseDomains,
 } from '../utils/domain-utils';
+import { PrivateKeyEncryptionService } from './private-key-encryption.service';
 
 @Injectable()
 export class CertificateBackupService {
   private readonly logger = new Logger(CertificateBackupService.name);
   private readonly backupDir = process.env.BACKUP_DIR || '/tmp/cert-backups';
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly privateKeyEncryption: PrivateKeyEncryptionService = new PrivateKeyEncryptionService(),
+  ) {}
+
+  private decryptCertificateKey(cert: {
+    keyPem: string;
+    keyEncryption?: unknown;
+    domainsHash: string;
+  }) {
+    return this.privateKeyEncryption.decryptPrivateKey(
+      cert.keyPem,
+      cert.keyEncryption ?? null,
+      {
+        scope: 'certificate',
+        domainsHash: cert.domainsHash,
+      },
+    );
+  }
 
   async createBackup(): Promise<{ filename: string; path: string }> {
     this.logger.log('[Backup] Creating certificate backup...');
@@ -53,11 +72,15 @@ export class CertificateBackupService {
       this.prisma.certificate
         .findMany()
         .then((certificates) => {
-          const data = JSON.stringify(certificates, null, 2);
+          const exportCertificates = certificates.map((cert) => ({
+            ...cert,
+            keyPem: this.decryptCertificateKey(cert),
+          }));
+          const data = JSON.stringify(exportCertificates, null, 2);
           archive.append(data, { name: 'certificates.json' });
 
           // Add individual certificate files
-          certificates.forEach((cert) => {
+          exportCertificates.forEach((cert) => {
             const domains = parseDomains(cert.domains, { allowWildcard: true });
             const prefix = `certs/${getCertificateStorageName(domains[0])}`;
 
@@ -93,7 +116,7 @@ export class CertificateBackupService {
 
     return {
       certPem: cert.certPem,
-      keyPem: cert.keyPem,
+      keyPem: this.decryptCertificateKey(cert),
       domains: parseDomains(cert.domains, { allowWildcard: true }),
     };
   }
@@ -116,6 +139,16 @@ export class CertificateBackupService {
         const normalizedDomains = normalizeDomains(cert.domains, {
           allowWildcard: true,
         });
+        const domainsHash = hashDomains(normalizedDomains, {
+          allowWildcard: true,
+        });
+        const encryptedKey = this.privateKeyEncryption.encryptPrivateKey(
+          cert.keyPem,
+          {
+            scope: 'certificate',
+            domainsHash,
+          },
+        );
 
         // Check if certificate already exists
         const domainsStr = joinDomains(normalizedDomains, {
@@ -137,17 +170,16 @@ export class CertificateBackupService {
         await this.prisma.certificate.create({
           data: {
             domains: domainsStr,
-            domainsHash: hashDomains(normalizedDomains, {
-              allowWildcard: true,
-            }),
+            domainsHash,
             certPem: cert.certPem,
-            keyPem: cert.keyPem,
+            keyPem: encryptedKey.keyPem,
+            keyEncryption: encryptedKey.keyEncryption ?? undefined,
             expiresAt: new Date(cert.expiresAt),
             issuedAt: new Date(cert.issuedAt),
             lastUsedAt: new Date(),
             isOrphaned: false,
           },
-        });
+        } as any);
 
         this.logger.log(`[Import] Imported cert: ${normalizedDomains[0]}`);
         results.imported++;

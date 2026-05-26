@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 6 — Secrets, backups, and data protection
-- Most recently completed session: Session 18 — Harden the ACME strategy for clustered production
-- Next recommended session from the roadmap: Session 19 — Encrypt private key material at rest
+- Most recently completed session: Session 19 — Encrypt private key material at rest
+- Next recommended session from the roadmap: Session 20 — Harden backup, export, import, and restore flows
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -692,13 +692,37 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 19 — Encrypt private key material at rest
 
-- Status: not started
+- Status: done
 - Objective: protect private keys in storage with application-layer encryption
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: private keys remain plaintext in the database today
-- Follow-up sessions: Session 20, Session 23
-- Notes: KMS/Vault integration design remains open
+- Files touched:
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20260526202000_session19_private_key_encryption/migration.sql`
+  - `src/certificate/private-key-encryption.service.ts`
+  - `src/certificate/certificate.module.ts`
+  - `src/certificate/certificate-order.service.ts`
+  - `src/certificate/certificate.service.ts`
+  - `src/certificate/certificate-backup.service.ts`
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session19/private-key-encryption-at-rest.test.js`
+- Tests added/updated:
+  - added `test/session19/private-key-encryption-at-rest.test.js` to verify legacy-plaintext backfill, key-version re-encryption, encrypted artifact/certificate storage, and decrypted export behavior
+  - ran the focused Session 19 regression with the repository's Node test runner and `ts-node/register/transpile-only`
+  - ran `npm run typecheck` after wiring the new encryption service through certificate issuance, activation, sync, and backup flows
+- Risks:
+  - backup ZIP files and explicit certificate-export responses still contain decrypted PEM material today; Session 20 remains responsible for encrypting artifacts and adding integrity validation around backup/restore flows
+  - the shipped provider abstraction currently implements only the local master-key envelope backend, so operator-facing Vault/KMS/HSM integrations and rotation APIs remain future work for Session 23
+  - production deployments must now supply `PRIVATE_KEY_ENCRYPTION_MASTER_KEY`; the development/test fallback should not be used for hardened environments
+- Follow-up sessions:
+  - Session 20 — harden backup, export, import, and restore flows
+  - Session 23 — add security administration APIs
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+- Notes:
+  - certificate private keys are now envelope-encrypted before persistence in both `Certificate` and `CertificateArtifactVersion`, with per-record `keyEncryption` metadata that stores scheme/provider/key-version details for future rotation
+  - startup now migrates legacy plaintext private keys already present in the database and re-encrypts stored material when `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` changes
+  - certificate sync, activation, backup, import, and export paths now decrypt private keys only at the moment they are needed instead of assuming the database returns plaintext PEMs
 
 ## Session 20 — Harden backup, export, import, and restore flows
 

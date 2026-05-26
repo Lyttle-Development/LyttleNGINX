@@ -30,6 +30,7 @@ import { HealthService } from '../health/health.service';
 import { runCommand } from '../utils/process-utils';
 import { resolveAcmeStrategy } from './acme-strategy';
 import { AcmeService } from './acme.service';
+import { PrivateKeyEncryptionService } from './private-key-encryption.service';
 
 // Validate ADMIN_EMAIL is set (required by Let's Encrypt)
 const adminEmail = process.env.ADMIN_EMAIL;
@@ -66,13 +67,24 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     private healthService: HealthService,
     @Inject(forwardRef(() => ClusterHeartbeatService))
     private clusterHeartbeat: ClusterHeartbeatService | null,
-    private readonly acmeService?: AcmeService,
+    private readonly acmeService: AcmeService | undefined = undefined,
+    private readonly privateKeyEncryption: PrivateKeyEncryptionService = new PrivateKeyEncryptionService(),
   ) {}
 
   async onModuleInit() {
     this.logger.log(
       `[Init] Instance ID: ${this.distributedLock.getInstanceId()}`,
     );
+
+    const migratedKeys = await this.privateKeyEncryption.migrateStoredPrivateKeys();
+    if (
+      migratedKeys.certificatesUpdated > 0 ||
+      migratedKeys.artifactsUpdated > 0
+    ) {
+      this.logger.log(
+        `[Init] Encrypted ${migratedKeys.certificatesUpdated} certificate key(s) and ${migratedKeys.artifactsUpdated} artifact key(s) already stored in the database`,
+      );
+    }
 
     // Start leader election process - only leader will renew certificates
     this.logger.log(
@@ -128,11 +140,12 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         try {
           const domains = parseDomains(cert.domains, { allowWildcard: true });
           const primaryDomain = domains[0];
+          const decryptedKeyPem = this.decryptStoredCertificateKey(cert);
 
           // Quick validation check
           const validation = await this.validateCertificate(
             cert.certPem,
-            cert.keyPem,
+            decryptedKeyPem,
             domains,
           );
           if (!validation.valid) {
@@ -176,7 +189,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             const currentCert = fs.readFileSync(certPath, 'utf8');
             const currentKey = fs.readFileSync(keyPath, 'utf8');
 
-            if (currentCert !== cert.certPem || currentKey !== cert.keyPem) {
+            if (currentCert !== cert.certPem || currentKey !== decryptedKeyPem) {
               needsWrite = true;
               this.logger.debug(
                 `[Sync] Certificate content mismatch for ${primaryDomain}`,
@@ -186,7 +199,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
           if (needsWrite) {
             this.logger.log(`[Sync] Updating certificate for ${primaryDomain}`);
-            this.writeCertToFs(primaryDomain, cert.certPem, cert.keyPem);
+            this.writeCertToFs(primaryDomain, cert.certPem, decryptedKeyPem);
             syncedCount++;
           }
         } catch (certError) {
@@ -846,6 +859,48 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     };
   }
 
+  private decryptStoredCertificateKey(record: {
+    keyPem: string;
+    keyEncryption?: unknown;
+    domainsHash: string;
+  }) {
+    return this.privateKeyEncryption.decryptPrivateKey(
+      record.keyPem,
+      record.keyEncryption ?? null,
+      {
+        scope: 'certificate',
+        domainsHash: record.domainsHash,
+      },
+    );
+  }
+
+  private decryptStoredArtifactKey(record: {
+    keyPem: string;
+    keyEncryption?: unknown;
+    domainsHash: string;
+    version: number;
+  }) {
+    return this.privateKeyEncryption.decryptPrivateKey(
+      record.keyPem,
+      record.keyEncryption ?? null,
+      {
+        scope: 'certificate-artifact',
+        domainsHash: record.domainsHash,
+        version: record.version,
+      },
+    );
+  }
+
+  private encryptPrivateKeyForCertificate(params: {
+    keyPem: string;
+    domainsHash: string;
+  }) {
+    return this.privateKeyEncryption.encryptPrivateKey(params.keyPem, {
+      scope: 'certificate',
+      domainsHash: params.domainsHash,
+    });
+  }
+
   private summarizeOperationFailure(operation: {
     status: string;
     acknowledgements: Array<{
@@ -883,9 +938,10 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
     const domains = parseDomains(artifact.domains, { allowWildcard: true });
     const primaryDomain = domains[0];
+    const artifactPrivateKeyPem = this.decryptStoredArtifactKey(artifact);
     const validation = await this.validateCertificate(
       artifact.certPem,
-      artifact.keyPem,
+      artifactPrivateKeyPem,
       domains,
     );
 
@@ -895,7 +951,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       );
     }
 
-    this.writeCertToFs(primaryDomain, artifact.certPem, artifact.keyPem);
+    this.writeCertToFs(primaryDomain, artifact.certPem, artifactPrivateKeyPem);
     await runCommand('nginx', ['-t']);
     await runCommand('nginx', ['-s', 'reload']);
 
@@ -919,6 +975,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     if (!artifact) {
       throw new Error(`Certificate artifact not found: ${params.artifactId}`);
     }
+    const artifactPrivateKeyPem = this.decryptStoredArtifactKey(artifact);
 
     const existingOrder = await this.prisma.certificateOrder.findUnique({
       where: { id: params.orderId },
@@ -1035,7 +1092,10 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           data: {
             domains: artifact.domains,
             certPem: artifact.certPem,
-            keyPem: artifact.keyPem,
+            ...this.encryptPrivateKeyForCertificate({
+              keyPem: artifactPrivateKeyPem,
+              domainsHash: artifact.domainsHash,
+            }),
             expiresAt: artifact.expiresAt,
             issuedAt: artifact.issuedAt,
             lastUsedAt: now,
@@ -1052,7 +1112,10 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             domains: artifact.domains,
             domainsHash: artifact.domainsHash,
             certPem: artifact.certPem,
-            keyPem: artifact.keyPem,
+            ...this.encryptPrivateKeyForCertificate({
+              keyPem: artifactPrivateKeyPem,
+              domainsHash: artifact.domainsHash,
+            }),
             expiresAt: artifact.expiresAt,
             issuedAt: artifact.issuedAt,
             lastUsedAt: now,
@@ -1172,10 +1235,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     });
 
     if (certEntry) {
+      const decryptedKeyPem = this.decryptStoredCertificateKey(certEntry);
       this.logger.log(
         `[DB] Found valid certificate (id: ${certEntry.id}, expires: ${certEntry.expiresAt.toISOString()}). Writing to FS.`,
       );
-      this.writeCertToFs(primaryDomain, certEntry.certPem, certEntry.keyPem);
+      this.writeCertToFs(primaryDomain, certEntry.certPem, decryptedKeyPem);
       await this.prisma.certificate.update({
         where: { id: certEntry.id },
         data: { lastUsedAt: now },
@@ -1253,10 +1317,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         });
 
         if (recheck) {
+          const decryptedKeyPem = this.decryptStoredCertificateKey(recheck);
           this.logger.log(
             `[Lock] Certificate was created by another node (id: ${recheck.id}). Using it.`,
           );
-          this.writeCertToFs(primaryDomain, recheck.certPem, recheck.keyPem);
+          this.writeCertToFs(primaryDomain, recheck.certPem, decryptedKeyPem);
           await this.prisma.certificate.update({
             where: { id: recheck.id },
             data: { lastUsedAt: now },
@@ -1547,10 +1612,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       });
 
       if (certEntry) {
+        const decryptedKeyPem = this.decryptStoredCertificateKey(certEntry);
         this.logger.log(
           `[DB] Found certificate created by another node (id: ${certEntry.id}). Using it.`,
         );
-        this.writeCertToFs(primaryDomain, certEntry.certPem, certEntry.keyPem);
+        this.writeCertToFs(primaryDomain, certEntry.certPem, decryptedKeyPem);
         await this.certificateOrders.completeWithCertificate(order.id, {
           certificateId: certEntry.id,
           message:

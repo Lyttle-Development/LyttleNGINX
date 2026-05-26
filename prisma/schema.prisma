@@ -26,6 +26,7 @@ model Certificate {
   domainsHash   String // SHA256 hash of sorted split domains
   certPem       String // Certificate PEM
   keyPem        String // Private Key PEM
+  keyEncryption Json?
   expiresAt     DateTime
   issuedAt      DateTime
   lastUsedAt    DateTime
@@ -107,6 +108,7 @@ model CertificateArtifactVersion {
   sourceType    String            @default("acme") // acme, uploaded, self-signed, imported
   certPem       String
   keyPem        String
+  keyEncryption Json?
   issuedAt      DateTime
   expiresAt     DateTime
   activatedAt   DateTime?

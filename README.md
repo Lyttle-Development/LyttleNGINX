@@ -21,6 +21,7 @@
   <img src="https://img.shields.io/badge/session%2016-complete-blue" alt="Session 16" />
   <img src="https://img.shields.io/badge/session%2017-complete-blue" alt="Session 17" />
   <img src="https://img.shields.io/badge/session%2018-complete-blue" alt="Session 18" />
+  <img src="https://img.shields.io/badge/session%2019-complete-blue" alt="Session 19" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -35,8 +36,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 6 in progress
-- **Completed in Sessions 1-18 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, and an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes
-- **Next recommended implementation session:** Session 19 — encrypt private key material at rest
+- **Completed in Sessions 1-19 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, and application-layer envelope encryption for certificate private keys stored in PostgreSQL
+- **Next recommended implementation session:** Session 20 — harden backup, export, import, and restore flows
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -339,6 +340,7 @@ Treat at least the following as secret material:
 
 - `DATABASE_URL`
 - `API_KEY`
+- `PRIVATE_KEY_ENCRYPTION_MASTER_KEY`
 - `SMTP_PASS`
 - `SLACK_WEBHOOK_URL`
 - `DISCORD_WEBHOOK_URL`
@@ -349,6 +351,23 @@ Treat at least the following as secret material:
 ```bash
 RENEW_BEFORE_DAYS=30                # Days before expiry to renew
 ```
+
+#### Private-key encryption at rest
+
+```bash
+PRIVATE_KEY_ENCRYPTION_PROVIDER=local
+PRIVATE_KEY_ENCRYPTION_MASTER_KEY=<inject-at-runtime>
+PRIVATE_KEY_ENCRYPTION_KEY_VERSION=v1
+```
+
+Session 19 adds application-layer envelope encryption for certificate private keys stored in PostgreSQL:
+
+- each certificate row and certificate-artifact row gets a freshly generated data key
+- the data key is wrapped by the configured master key and stored alongside per-record encryption metadata/versioning
+- legacy plaintext rows are migrated on application startup, and changing `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` causes the runtime to re-encrypt stored keys under the new version metadata
+- the current shipped provider is a local master-key envelope implementation; the service boundary is intentionally shaped so later sessions can plug in Vault/KMS/HSM-backed providers without changing certificate workflows
+
+Session 20 still needs to encrypt backup archives and tighten restore/import/export integrity, so downloaded backups and exported PEM payloads should still be treated as highly sensitive material.
 
 #### Alert Configuration
 
@@ -636,6 +655,16 @@ The hardened HTTP-01 flow is the default for non-wildcard orders and remains clu
 5. the certificate service finalizes the challenge lifecycle as `validated` or `failed`, which makes challenge publication / finalization inspectable after the run
 
 The `GET /certificates/challenges` endpoint exposes recent built-in HTTP-01 challenge records with statuses such as `presented`, `cleaned-up`, `validated`, `failed`, and `expired`.
+
+### Private-key storage model
+
+As of Session 19, the database no longer stores certificate private keys as plaintext PEMs for active certificates or certificate artifacts.
+
+- `Certificate.keyPem` and `CertificateArtifactVersion.keyPem` now contain encrypted payloads rather than raw PEM text
+- per-record `keyEncryption` metadata stores the envelope version, provider type, master-key version, and ciphertext parameters needed for decryption/rotation
+- runtime workflows decrypt private keys only when they need to validate material, write local `privkey.pem` files, create backups, or serve explicit export flows
+
+That means order-history APIs still avoid raw key exposure, while the storage layer now has a clear path for future master-key rotation and external key-manager integration.
 
 Example configuration snippets:
 

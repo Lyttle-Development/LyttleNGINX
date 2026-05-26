@@ -17,6 +17,7 @@ import {
   CertificateOrderDetailDto,
   CertificateOrderSummaryDto,
 } from './dto/certificate-order.dto';
+import { PrivateKeyEncryptionService } from './private-key-encryption.service';
 
 const STATUS_TIMESTAMP_FIELDS: Partial<Record<CertificateOrderStatus, string>> =
   {
@@ -74,9 +75,11 @@ type CertificateArtifactRecord = {
   id: string;
   orderId: string | null;
   certificateId: string | null;
+  domains: string;
   domainsHash: string;
   version: number;
   sourceType: CertificateOrderSourceType;
+  keyEncryption: Record<string, unknown> | null;
   issuedAt: Date;
   expiresAt: Date;
   activatedAt: Date | null;
@@ -116,7 +119,10 @@ type LatestDistributionRecord = {
 export class CertificateOrderService {
   private readonly logger = new Logger(CertificateOrderService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly privateKeyEncryption: PrivateKeyEncryptionService = new PrivateKeyEncryptionService(),
+  ) {}
 
   async getOrCreateOrder(params: {
     domains: string[];
@@ -392,24 +398,33 @@ export class CertificateOrderService {
         orderBy: { version: 'desc' },
       })) as { version: number } | null;
     const version = (latestArtifact?.version ?? 0) + 1;
+    const encryptedKey = this.privateKeyEncryption.encryptPrivateKey(
+      params.keyPem,
+      {
+        scope: 'certificate-artifact',
+        domainsHash,
+        version,
+      },
+    );
 
     const artifact = (await this.prisma.certificateArtifactVersion.create({
       data: {
         orderId: params.orderId,
-          certificateId: params.certificateId ?? null,
+        certificateId: params.certificateId ?? null,
         domains: joinDomains(domains, { allowWildcard: true }),
         domainsHash,
         version,
         sourceType: params.sourceType,
         certPem: params.certPem,
-        keyPem: params.keyPem,
+        keyPem: encryptedKey.keyPem,
+        keyEncryption: encryptedKey.keyEncryption ?? undefined,
         issuedAt: params.issuedAt,
         expiresAt: params.expiresAt,
         activatedAt: params.activatedAt ?? null,
         createdByNode: params.createdByNode ?? null,
         metadata: params.metadata ?? undefined,
       },
-    })) as { id: string; version: number };
+    } as any)) as { id: string; version: number };
 
     await this.recordEvent(params.orderId, {
       eventType: 'artifact-created',
@@ -437,10 +452,10 @@ export class CertificateOrderService {
     return (await this.prisma.certificateArtifactVersion.findUnique({
       where: { id: artifactId },
     })) as (CertificateArtifactRecord & {
-      domains: string;
       domainsHash: string;
       certPem: string;
       keyPem: string;
+      keyEncryption: Record<string, unknown> | null;
       metadata: Record<string, unknown> | null;
       orderId: string | null;
     }) | null;
