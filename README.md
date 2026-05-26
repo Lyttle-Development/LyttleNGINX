@@ -34,8 +34,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 5 in progress
-- **Completed in Sessions 1-18 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, and an explicit Nest-managed ACME strategy layer with built-in HTTP-01 challenge tracking plus DNS-01 orchestration metadata
+- **Roadmap status:** Phase 6 in progress
+- **Completed in Sessions 1-18 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, and an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes
 - **Next recommended implementation session:** Session 19 — encrypt private key material at rest
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
@@ -612,17 +612,18 @@ Certificate domain input is now normalized and validated strictly before any fil
 - internationalized domains are normalized to ASCII/punycode
 - wildcard domains must use the left-most `*.` form
 - path separators, whitespace, control characters, and shell metacharacter tricks are rejected early
-- wildcard issuance now resolves to DNS-01 automatically when `ACME_CHALLENGE_STRATEGY=auto` and the required DNS hook configuration is present
+- wildcard issuance remains intentionally unsupported in the hardened built-in ACME flow because production issuance should not require DNS TXT changes
 
 ### ACME strategy selection
 
 Session 18 formalizes ACME challenge handling behind an explicit strategy layer.
 
-The runtime now supports three `ACME_CHALLENGE_STRATEGY` modes:
+The runtime supports two `ACME_CHALLENGE_STRATEGY` modes:
 
-- `auto` *(default)* — use built-in HTTP-01 for non-wildcard orders and DNS-01 for wildcard orders
+- `auto` *(default)* — use the built-in HTTP-01 flow
 - `http-01` — force the built-in database-backed HTTP-01 flow
-- `dns-01` — force DNS-01 through the in-app NestJS challenge workflow with external DNS provisioning
+
+This Session 18 implementation is intentionally HTTP-01 only so clustered production issuance works without operator DNS TXT changes. Wildcard orders are rejected early with a clear validation error.
 
 #### Built-in HTTP-01 strategy
 
@@ -636,33 +637,16 @@ The hardened HTTP-01 flow is the default for non-wildcard orders and remains clu
 
 The `GET /certificates/challenges` endpoint exposes recent built-in HTTP-01 challenge records with statuses such as `presented`, `cleaned-up`, `validated`, `failed`, and `expired`.
 
-#### DNS-01 strategy
-
-Wildcard orders and operator-selected DNS flows now stay inside the NestJS control plane as well:
-
-- `ACME_DNS_PROVIDER` — operator-facing label for the external DNS workflow or provider integration
-- `ACME_DNS_PROPAGATION_SECONDS` — initial propagation delay hint before verification begins
-- `ACME_DNS_WAIT_TIMEOUT_MS` — maximum time the app waits for the expected TXT record to become visible
-- `ACME_DNS_POLL_INTERVAL_MS` — polling interval while waiting for the TXT record to appear
-
-For DNS-01, the application stores the desired TXT record name/value in `AcmeChallenge.metadata`, exposes it through `GET /certificates/challenges`, and then verifies the record in-process. This removes the old shell-hook dependency while keeping the workflow explicit and auditable.
-
 Example configuration snippets:
 
 ```bash
-# Default mixed strategy: HTTP-01 for normal domains, DNS-01 for wildcards
+# Default production strategy: shared HTTP-01 without DNS TXT changes
 ACME_CHALLENGE_STRATEGY=auto
 
 # Force the built-in database-backed HTTP-01 flow
 ACME_CHALLENGE_STRATEGY=http-01
 ACME_HTTP01_PROPAGATION_SECONDS=5
 
-# Force DNS-01 through the in-app flow while an external DNS automation path publishes TXT records
-ACME_CHALLENGE_STRATEGY=dns-01
-ACME_DNS_PROVIDER=manual-dns-nest
-ACME_DNS_PROPAGATION_SECONDS=45
-ACME_DNS_WAIT_TIMEOUT_MS=180000
-ACME_DNS_POLL_INTERVAL_MS=3000
 
 # Optional explicit ACME account key location
 ACME_ACCOUNT_PRIVATE_KEY_PATH=/app/state/acme/account.pem

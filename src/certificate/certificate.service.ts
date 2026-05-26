@@ -1284,7 +1284,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             'challenge-published',
             {
               message:
-                'Starting ACME manual challenge publication and certificate issuance',
+                'Starting ACME HTTP-01 challenge publication and certificate issuance',
               details: {
                 lockName,
                 sourceType,

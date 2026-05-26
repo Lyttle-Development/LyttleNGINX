@@ -1,10 +1,10 @@
 import * as path from 'node:path';
-import { normalizeDomain, containsWildcardDomain, normalizeDomains } from '../utils/domain-utils';
+import { containsWildcardDomain, normalizeDomains } from '../utils/domain-utils';
 
-export const ACME_CHALLENGE_STRATEGIES = ['auto', 'http-01', 'dns-01'] as const;
+export const ACME_CHALLENGE_STRATEGIES = ['auto', 'http-01'] as const;
 export type AcmeChallengeStrategy = (typeof ACME_CHALLENGE_STRATEGIES)[number];
 
-export const ACME_CHALLENGE_TYPES = ['http-01', 'dns-01'] as const;
+export const ACME_CHALLENGE_TYPES = ['http-01'] as const;
 export type AcmeChallengeType = (typeof ACME_CHALLENGE_TYPES)[number];
 
 export type ResolvedAcmeStrategy = {
@@ -14,7 +14,7 @@ export type ResolvedAcmeStrategy = {
   wildcard: boolean;
   sharedChallengeStore: boolean;
   propagationSeconds: number | null;
-  challengeStore: 'database-http' | 'database-dns';
+  challengeStore: 'database-http';
   visibleInChallengeApi: boolean;
 };
 
@@ -30,6 +30,12 @@ function normalizeRequestedStrategy(
   value: string | undefined,
 ): AcmeChallengeStrategy {
   const normalized = value?.trim().toLowerCase() ?? 'auto';
+  if (normalized === 'dns-01') {
+    throw new Error(
+      'ACME_CHALLENGE_STRATEGY=dns-01 is not supported in the production-hardened Session 18 flow because it would require DNS TXT record changes. Use auto/http-01 with non-wildcard hostnames or import a certificate instead.',
+    );
+  }
+
   if ((ACME_CHALLENGE_STRATEGIES as readonly string[]).includes(normalized)) {
     return normalized as AcmeChallengeStrategy;
   }
@@ -63,38 +69,15 @@ export function resolveAcmeStrategy(
   const requestedStrategy = normalizeRequestedStrategy(
     env['ACME_CHALLENGE_STRATEGY'],
   );
-  const challengeType =
-    requestedStrategy === 'auto'
-      ? wildcard
-        ? 'dns-01'
-        : 'http-01'
-      : requestedStrategy;
-
-  if (challengeType === 'http-01' && wildcard) {
+  if (wildcard) {
     throw new Error(
-      'Wildcard certificate issuance requires DNS-01. Leave ACME_CHALLENGE_STRATEGY=auto or set it to dns-01.',
+      'Wildcard certificate issuance is not supported by the production-hardened Session 18 ACME flow because it would require DNS TXT record changes. Use explicit hostnames or import/upload the certificate instead.',
     );
-  }
-
-  if (challengeType === 'dns-01') {
-    return {
-      requestedStrategy,
-      challengeType,
-      provider: env['ACME_DNS_PROVIDER']?.trim() || 'manual-dns-nest',
-      wildcard,
-      sharedChallengeStore: false,
-      propagationSeconds: parsePositiveInteger(
-        env['ACME_DNS_PROPAGATION_SECONDS'],
-        30,
-      ),
-      challengeStore: 'database-dns',
-      visibleInChallengeApi: true,
-    };
   }
 
   return {
     requestedStrategy,
-    challengeType,
+    challengeType: 'http-01',
     provider: env['ACME_HTTP01_PROVIDER']?.trim() || 'database-http-01',
     wildcard,
     sharedChallengeStore: true,
@@ -129,25 +112,6 @@ export function getAcmeAccountKeyPath(
   );
 }
 
-export function getAcmeDnsRecordName(identifierValue: string): string {
-  const normalized = normalizeDomain(identifierValue, { allowWildcard: true });
-  const baseDomain = normalized.startsWith('*.')
-    ? normalized.slice(2)
-    : normalized;
-  return `_acme-challenge.${baseDomain}`;
-}
-
-export function getAcmeDnsWaitTimeoutMs(
-  env: NodeJS.ProcessEnv = process.env,
-): number {
-  return parsePositiveInteger(env['ACME_DNS_WAIT_TIMEOUT_MS'], 5 * 60 * 1000);
-}
-
-export function getAcmeDnsPollIntervalMs(
-  env: NodeJS.ProcessEnv = process.env,
-): number {
-  return parsePositiveInteger(env['ACME_DNS_POLL_INTERVAL_MS'], 5000);
-}
 
 export function getAcmeHttpVerificationTimeoutMs(
   env: NodeJS.ProcessEnv = process.env,

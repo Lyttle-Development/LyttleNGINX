@@ -1,6 +1,6 @@
 # Architecture Decisions Log
 
-Last updated: 2026-05-24
+Last updated: 2026-05-26
 
 This file records repository-level architectural and delivery decisions so future implementation sessions can build on explicit, reviewable choices.
 
@@ -36,7 +36,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-018 | Strict normalized certificate domains and argument-array process execution                | accepted | Session 15 | 2026-05-24 |
 | ADR-019 | Durable certificate orders with artifact history and retryable lifecycle state            | accepted | Session 16 | 2026-05-24 |
 | ADR-020 | ACK-backed certificate artifact activation with rollback to prior versions                | accepted | Session 17 | 2026-05-24 |
-| ADR-021 | Explicit ACME strategy selection with DB-backed HTTP-01 tracking and DNS-01 hook support | accepted | Session 18 | 2026-05-24 |
+| ADR-021 | Explicit ACME strategy selection with Nest-managed cluster-safe HTTP-01 challenge orchestration | accepted | Session 18 | 2026-05-26 |
 
 ---
 
@@ -44,7 +44,7 @@ This file records repository-level architectural and delivery decisions so futur
 
 - Status: accepted
 - Session: Session 1 — Delivery scaffolding and progress tracking
-- Date: 2026-05-24
+- Date: 2026-05-26
 
 ### Context
 
@@ -71,7 +71,7 @@ Treat the following documents as the canonical delivery set:
 
 - Status: accepted
 - Session: Session 1 — Delivery scaffolding and progress tracking
-- Date: 2026-05-24
+- Date: 2026-05-26
 
 ### Context
 
@@ -701,36 +701,34 @@ Separate issuance from activation and make activation an ACK-backed cluster oper
 
 ---
 
-## ADR-021 — Explicit ACME strategy selection with Nest-managed HTTP-01 and DNS-01 challenge orchestration
+## ADR-021 — Explicit ACME strategy selection with Nest-managed cluster-safe HTTP-01 challenge orchestration
 
 - Status: accepted
 - Session: Session 18 — Harden the ACME strategy for clustered production
-- Date: 2026-05-24
+- Date: 2026-05-26
 
 ### Context
 
 By the end of Session 17, certificate activation and rollback were cluster-aware, but the pre-issuance ACME flow still relied on external shell-oriented orchestration. That left three gaps called out in the production-readiness assessment:
 
-1. wildcard issuance still had no supported path
-2. challenge publication / cleanup / finalization was not explicit or inspectable enough for operators
-3. the repository had no clear operator-facing contract for when to use shared HTTP challenge serving versus external DNS provisioning
+1. challenge publication / cleanup / finalization was not explicit or inspectable enough for operators
+2. the repository needed a production-safe clustered ACME path that does not require operator DNS TXT changes
+3. the previous shell-oriented orchestration was not a good fit for a NestJS-managed clustered control plane
 
 ### Decision
 
 Adopt an explicit ACME strategy layer with the following rules:
 
-1. introduce `ACME_CHALLENGE_STRATEGY` with `auto`, `http-01`, and `dns-01` modes
+1. introduce `ACME_CHALLENGE_STRATEGY` with `auto` and `http-01` modes, both mapping to the same hardened shared HTTP-01 implementation
 2. keep the built-in cluster-safe HTTP-01 path for non-wildcard orders by writing challenge state into PostgreSQL, serving it from every node through `/.well-known/acme-challenge/:token`, and verifying it in-process from NestJS
 3. preserve HTTP-01 challenge rows through cleanup/finalization so operators can inspect challenge lifecycle state instead of losing it immediately on cleanup
-4. support DNS-01 through the same Nest-managed challenge lifecycle by storing desired TXT record metadata in `AcmeChallenge` and waiting for external DNS provisioning rather than delegating to shell hook scripts
-5. in `auto` mode, resolve wildcard orders to DNS-01 and non-wildcard orders to the built-in HTTP-01 path
-6. expose recent ACME challenge records through an authenticated inspection API (`GET /certificates/challenges`)
+4. reject wildcard issuance explicitly because supporting it would require DNS TXT changes, which is outside the production-hardened Session 18 scope
+5. expose recent ACME challenge records through an authenticated inspection API (`GET /certificates/challenges`)
 
 ### Consequences
 
-- wildcard issuance now uses the in-app DNS-01 workflow, without weakening the existing safe-domain validation rules
 - the built-in HTTP-01 flow remains cluster-safe because any node can serve the shared challenge record, while challenge publication / cleanup / validation state is now queryable afterward
-- DNS-01 provider behavior remains intentionally pluggable: the application records the desired TXT record and waits for it in-process, while provider-specific DNS mutations can still be integrated later without reintroducing shell hooks
+- wildcard requests now fail fast with an explicit message instead of falling into partial or operator-dependent DNS challenge workflows
 - future certificate, observability, and operator-API sessions should build on this explicit ACME strategy metadata instead of assuming a single hard-coded HTTP-01 flow
 - later sessions can build richer activation policies, operator APIs, and certificate-distribution observability on top of artifact-level rollout state instead of inferring activation from local filesystem writes alone
 

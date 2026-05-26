@@ -266,19 +266,19 @@ describe('Session 15 strict domain validation and safe process execution', () =>
     ]);
   });
 
-  it('resolves wildcard ACME issuance onto the DNS-01 strategy without shell hooks', async () => {
+  it('rejects wildcard ACME issuance because the hardened flow does not require DNS TXT changes', async () => {
     resetModules();
-    const { resolveAcmeStrategy, getAcmeDnsRecordName } = require(
+    const { resolveAcmeStrategy } = require(
       path.join(repoRoot, 'src/certificate/acme-strategy.ts'),
     );
 
-    const strategy = resolveAcmeStrategy(['*.example.com', 'example.com'], {
-      ACME_CHALLENGE_STRATEGY: 'auto',
-    });
-
-    assert.equal(strategy.challengeType, 'dns-01');
-    assert.equal(strategy.provider, 'manual-dns-nest');
-    assert.equal(getAcmeDnsRecordName('*.example.com'), '_acme-challenge.example.com');
+    assert.throws(
+      () =>
+        resolveAcmeStrategy(['*.example.com', 'example.com'], {
+          ACME_CHALLENGE_STRATEGY: 'auto',
+        }),
+      /would require DNS TXT record changes/i,
+    );
   });
 
   it('generates self-signed certificates through safe OpenSSL args and stores normalized domains', async () => {

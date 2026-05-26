@@ -157,47 +157,37 @@ describe('Session 18 ACME strategy hardening', () => {
     );
   });
 
-  it('auto-selects DNS-01 for wildcard domains and derives Nest-managed DNS challenge metadata', () => {
-    const {
-      resolveAcmeStrategy,
-      getAcmeDnsRecordName,
-      getAcmeDnsWaitTimeoutMs,
-      getAcmeDnsPollIntervalMs,
-    } = require(acmeStrategyPath);
+  it('keeps production ACME issuance on the shared HTTP-01 flow and rejects wildcard or DNS-TXT-dependent strategies', () => {
+    const { resolveAcmeStrategy } = require(acmeStrategyPath);
 
-    const strategy = resolveAcmeStrategy(['*.example.com', 'example.com'], {
+    const strategy = resolveAcmeStrategy(['example.com', 'www.example.com'], {
       ACME_CHALLENGE_STRATEGY: 'auto',
-      ACME_DNS_PROVIDER: 'manual-dns-nest',
-      ACME_DNS_PROPAGATION_SECONDS: '45',
-      ACME_DNS_WAIT_TIMEOUT_MS: '180000',
-      ACME_DNS_POLL_INTERVAL_MS: '3000',
+      ACME_HTTP01_PROPAGATION_SECONDS: '5',
     });
 
     assert.deepEqual(strategy, {
       requestedStrategy: 'auto',
-      challengeType: 'dns-01',
-      provider: 'manual-dns-nest',
-      wildcard: true,
-      sharedChallengeStore: false,
-      propagationSeconds: 45,
-      challengeStore: 'database-dns',
+      challengeType: 'http-01',
+      provider: 'database-http-01',
+      wildcard: false,
+      sharedChallengeStore: true,
+      propagationSeconds: 5,
+      challengeStore: 'database-http',
       visibleInChallengeApi: true,
     });
-    assert.equal(
-      getAcmeDnsRecordName('*.Example.com'),
-      '_acme-challenge.example.com',
+    assert.throws(
+      () =>
+        resolveAcmeStrategy(['*.example.com', 'example.com'], {
+          ACME_CHALLENGE_STRATEGY: 'auto',
+        }),
+      /would require DNS TXT record changes/i,
     );
-    assert.equal(
-      getAcmeDnsRecordName('api.example.com'),
-      '_acme-challenge.api.example.com',
-    );
-    assert.equal(
-      getAcmeDnsWaitTimeoutMs({ ACME_DNS_WAIT_TIMEOUT_MS: '180000' }),
-      180000,
-    );
-    assert.equal(
-      getAcmeDnsPollIntervalMs({ ACME_DNS_POLL_INTERVAL_MS: '3000' }),
-      3000,
+    assert.throws(
+      () =>
+        resolveAcmeStrategy(['example.com'], {
+          ACME_CHALLENGE_STRATEGY: 'dns-01',
+        }),
+      /not supported.*DNS TXT record changes/i,
     );
   });
 

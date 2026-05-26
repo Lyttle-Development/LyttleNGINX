@@ -6,9 +6,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   getAcmeAccountKeyPath,
   getAcmeDirectoryUrl,
-  getAcmeDnsPollIntervalMs,
-  getAcmeDnsRecordName,
-  getAcmeDnsWaitTimeoutMs,
   getAcmeHttpPollIntervalMs,
   getAcmeHttpVerificationTimeoutMs,
   resolveAcmeStrategy,
@@ -92,7 +89,6 @@ export class AcmeService {
             client,
             authz,
             challenge,
-            strategy,
           });
         },
         challengeRemoveFn: async (authz, challenge, keyAuthorization) => {
@@ -333,16 +329,9 @@ export class AcmeService {
     client: Client;
     authz: Authorization;
     challenge: Challenge;
-    strategy: ResolvedAcmeStrategy;
   }): Promise<void> {
-    const timeoutMs =
-      params.strategy.challengeType === 'dns-01'
-        ? getAcmeDnsWaitTimeoutMs()
-        : getAcmeHttpVerificationTimeoutMs();
-    const pollIntervalMs =
-      params.strategy.challengeType === 'dns-01'
-        ? getAcmeDnsPollIntervalMs()
-        : getAcmeHttpPollIntervalMs();
+    const timeoutMs = getAcmeHttpVerificationTimeoutMs();
+    const pollIntervalMs = getAcmeHttpPollIntervalMs();
     const deadline = Date.now() + timeoutMs;
     let lastError: Error | null = null;
 
@@ -390,7 +379,7 @@ export class AcmeService {
     challenge: Challenge;
     keyAuthorization: string;
   }): Record<string, unknown> {
-    const base: Record<string, unknown> = {
+    return {
       authorizationUrl: params.authz.url,
       challengeUrl: params.challenge.url,
       provider: params.strategy.provider,
@@ -401,22 +390,8 @@ export class AcmeService {
       propagationSeconds: params.strategy.propagationSeconds,
       wildcard: Boolean(params.authz.wildcard),
       presentedByNode: params.instanceId ?? null,
-    };
-
-    if (params.challenge.type === 'http-01') {
-      return {
-        ...base,
-        httpPath: `/.well-known/acme-challenge/${params.challenge.token}`,
-      };
-    }
-
-    const recordName = getAcmeDnsRecordName(params.authz.identifier.value);
-    return {
-      ...base,
-      recordName,
-      recordType: 'TXT',
-      recordValue: params.keyAuthorization,
-      verificationMode: 'external-dns',
+      httpPath: `/.well-known/acme-challenge/${params.challenge.token}`,
+      verificationMode: 'shared-http-01',
     };
   }
 

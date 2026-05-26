@@ -1,6 +1,6 @@
 # LyttleNGINX Implementation Status
 
-Last updated: 2026-05-24
+Last updated: 2026-05-26
 
 This file is the working delivery tracker for the roadmap in `IMPLEMENTATION_PLAN_BY_SESSION.md`.
 Use it as the single place to record what has shipped, what is in progress, and what remains.
@@ -667,12 +667,12 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - `test/session15/domain-validation-and-safe-process.test.js`
   - `test/session18/acme-strategy-hardening.test.js`
 - Tests added/updated:
-  - added `test/session18/acme-strategy-hardening.test.js` to verify Nest-managed ACME strategy resolution, wildcard DNS-01 auto-selection, challenge inspection delegation, and challenge-serving lifecycle behavior
-  - updated the Session 15 wildcard regression so it now asserts wildcard ACME requests resolve onto the DNS-01 strategy without shell hooks
+  - added `test/session18/acme-strategy-hardening.test.js` to verify Nest-managed ACME strategy resolution, production-hardened HTTP-01 behavior, explicit wildcard/DNS rejection, challenge inspection delegation, and challenge-serving lifecycle behavior
+  - updated the Session 15 wildcard regression so it now asserts wildcard ACME requests are rejected because the hardened flow must not require DNS TXT changes
   - updated the Session 16 and Session 17 harnesses for the new in-app ACME service dependency and re-ran the focused Session 3 / 15 / 16 / 17 / 18 suites locally after the refactor
 - Risks:
-  - DNS-01 now stays inside the NestJS lifecycle, but provider-specific DNS mutation is still external; the app currently waits for external TXT publication rather than managing provider APIs directly
-  - built-in challenge inspection now covers both HTTP-01 and DNS-01 intent/state, but richer operator workflows around DNS challenge approval and long-running issuance remain future work
+  - the validated Session 18 flow is intentionally limited to non-wildcard certificates so clustered issuance stays production-safe without operator DNS TXT changes
+  - built-in challenge inspection now focuses on shared HTTP-01 publication / cleanup / validation state; richer per-order observability and operator workflows remain future work
   - private keys and artifact history are still stored plaintext until Session 19 lands encryption-at-rest
 - Follow-up sessions:
   - Session 19 — encrypt private key material at rest
@@ -681,9 +681,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - Session 25 — expand metrics and alerting
   - Session 29 — reconcile README, architecture docs, and runbooks with reality
 - Notes:
-  - replaced the prior shell-hook/certbot orchestration path with a Nest-managed `AcmeService` built on `acme-client`, so HTTP-01 and DNS-01 challenge lifecycle work now stays inside the application
+  - replaced the prior shell-hook/certbot orchestration path with a Nest-managed `AcmeService` built on `acme-client`, so the hardened HTTP-01 challenge lifecycle now stays inside the application
   - the built-in HTTP-01 flow stores publication, cleanup, expiry, and finalization state in `AcmeChallenge`, and operators can inspect recent challenge rows through `GET /certificates/challenges`
-  - wildcard orders now resolve to DNS-01 automatically and record the required TXT record metadata in the database, allowing external DNS automation or operator workflows to satisfy the challenge without OS-specific scripts
+  - wildcard orders are now rejected explicitly because the production-hardened Session 18 scope requires cluster-safe issuance without any DNS TXT record changes
   - the runtime now persists the ACME account key under `ACME_ACCOUNT_PRIVATE_KEY_PATH` instead of depending on external certbot account state and hook scripts
 
 ---
