@@ -36,8 +36,6 @@ RUN apt-get update && \
         openssl \
         bash \
         tini \
-        certbot \
-        python3-certbot-nginx \
         procps \
         netcat-openbsd \
         postgresql-client && \
@@ -55,9 +53,7 @@ COPY --from=builder /app/prisma ./prisma
 # Copy entrypoint scripts and make them executable
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY healthcheck.sh /healthcheck.sh
-COPY certbot-auth-hook.sh /certbot-auth-hook.sh
-COPY certbot-cleanup-hook.sh /certbot-cleanup-hook.sh
-RUN chmod +x /docker-entrypoint.sh /healthcheck.sh /certbot-auth-hook.sh /certbot-cleanup-hook.sh
+RUN chmod +x /docker-entrypoint.sh /healthcheck.sh
 
 # Copy nginx config to /app/nginx (for reloader service to access)
 COPY nginx /app/nginx
@@ -72,9 +68,7 @@ RUN mkdir -p /var/log/nginx /var/lib/nginx /var/run && \
     touch /var/log/nginx/error.log /var/log/nginx/access.log && \
     chmod 666 /var/log/nginx/*.log && \
     mkdir -p /etc/nginx/ssl && chmod 755 /etc/nginx/ssl && \
-    mkdir -p /var/www/certbot && chmod 755 /var/www/certbot && \
-    mkdir -p /etc/letsencrypt/live /etc/letsencrypt/archive && \
-    chmod 755 /etc/letsencrypt/live /etc/letsencrypt/archive && \
+    mkdir -p /etc/letsencrypt/live && chmod 755 /etc/letsencrypt/live && \
     mkdir -p /app/logs && chmod 755 /app/logs
 
 # Create nginx user/group and set ownership
@@ -82,8 +76,8 @@ RUN groupadd --system --gid 101 nginx || true && \
     useradd --system --no-create-home --uid 101 --gid 101 nginx || true && \
     chown -R nginx:nginx /etc/nginx /var/log/nginx /var/lib/nginx
 
-# Create app state directory for crash recovery
-RUN mkdir -p /app/state && chmod 755 /app/state
+# Create app state directory for crash recovery and persistent ACME account state
+RUN mkdir -p /app/state/acme && chmod 755 /app/state /app/state/acme
 
 # Expose API and Nginx ports
 EXPOSE 80 443 3000

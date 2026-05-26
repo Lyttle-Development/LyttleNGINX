@@ -653,9 +653,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 - Files touched:
   - `prisma/schema.prisma`
   - `prisma/migrations/20260524213000_session18_acme_strategy_hardening/migration.sql`
-  - `certbot-auth-hook.sh`
-  - `certbot-cleanup-hook.sh`
+  - `Dockerfile`
   - `src/certificate/acme-strategy.ts`
+  - `src/certificate/acme.service.ts`
   - `src/certificate/acme.controller.ts`
   - `src/certificate/certificate.controller.ts`
   - `src/certificate/certificate.service.ts`
@@ -667,12 +667,12 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - `test/session15/domain-validation-and-safe-process.test.js`
   - `test/session18/acme-strategy-hardening.test.js`
 - Tests added/updated:
-  - added `test/session18/acme-strategy-hardening.test.js` to verify built-in HTTP-01 planning, wildcard DNS-01 auto-selection, challenge inspection listing, and challenge-serving lifecycle behavior
-  - updated the Session 15 wildcard regression so it now asserts that wildcard issuance requires DNS-01 hook configuration rather than rejecting all wildcard ACME orders categorically
-  - re-ran the focused Session 15 and Session 18 suites locally after landing the strategy changes
+  - added `test/session18/acme-strategy-hardening.test.js` to verify Nest-managed ACME strategy resolution, wildcard DNS-01 auto-selection, challenge inspection delegation, and challenge-serving lifecycle behavior
+  - updated the Session 15 wildcard regression so it now asserts wildcard ACME requests resolve onto the DNS-01 strategy without shell hooks
+  - updated the Session 16 and Session 17 harnesses for the new in-app ACME service dependency and re-ran the focused Session 3 / 15 / 16 / 17 / 18 suites locally after the refactor
 - Risks:
-  - DNS-01 is now supported through operator-supplied manual hooks, but first-class provider-specific integrations remain external to the app for now
-  - built-in challenge inspection currently covers the DB-backed HTTP-01 flow only; provider-managed DNS-01 challenge detail remains owned by the mounted provider hooks
+  - DNS-01 now stays inside the NestJS lifecycle, but provider-specific DNS mutation is still external; the app currently waits for external TXT publication rather than managing provider APIs directly
+  - built-in challenge inspection now covers both HTTP-01 and DNS-01 intent/state, but richer operator workflows around DNS challenge approval and long-running issuance remain future work
   - private keys and artifact history are still stored plaintext until Session 19 lands encryption-at-rest
 - Follow-up sessions:
   - Session 19 — encrypt private key material at rest
@@ -681,10 +681,10 @@ Use it as the single place to record what has shipped, what is in progress, and 
   - Session 25 — expand metrics and alerting
   - Session 29 — reconcile README, architecture docs, and runbooks with reality
 - Notes:
-  - introduced an explicit ACME strategy layer that supports `auto`, `http-01`, and `dns-01` challenge modes instead of assuming one implicit certbot path
-  - the built-in HTTP-01 flow now stores publication, cleanup, expiry, and finalization state in `AcmeChallenge`, and operators can inspect recent challenge rows through `GET /certificates/challenges`
-  - wildcard orders now resolve to DNS-01 automatically when the required DNS hook configuration is present, while non-wildcard orders continue to use the cluster-safe database-backed HTTP-01 publication path by default
-  - certbot hook wiring now carries per-order metadata and propagation tuning through explicit environment variables instead of relying on ad hoc implicit behavior
+  - replaced the prior shell-hook/certbot orchestration path with a Nest-managed `AcmeService` built on `acme-client`, so HTTP-01 and DNS-01 challenge lifecycle work now stays inside the application
+  - the built-in HTTP-01 flow stores publication, cleanup, expiry, and finalization state in `AcmeChallenge`, and operators can inspect recent challenge rows through `GET /certificates/challenges`
+  - wildcard orders now resolve to DNS-01 automatically and record the required TXT record metadata in the database, allowing external DNS automation or operator workflows to satisfy the challenge without OS-specific scripts
+  - the runtime now persists the ACME account key under `ACME_ACCOUNT_PRIVATE_KEY_PATH` instead of depending on external certbot account state and hook scripts
 
 ---
 

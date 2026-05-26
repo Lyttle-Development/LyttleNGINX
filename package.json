@@ -49,6 +49,7 @@
     "@promster/express": "^15.5.1",
     "@types/archiver": "^7.0.0",
     "@types/nodemailer": "^8.0.0",
+    "acme-client": "^5.4.0",
     "archiver": "^8.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",

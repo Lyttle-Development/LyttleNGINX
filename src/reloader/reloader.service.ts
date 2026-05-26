@@ -131,8 +131,6 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
       // ----------- PHASE 2: Obtain SSL Certificates -----------
       this.logger.log('Phase 2: Ensuring SSL certificates...');
 
-      // Ensure certbot webroot exists
-      this.tlsConfig.ensureCertbotWebroot();
 
       for (const entry of entries) {
         try {

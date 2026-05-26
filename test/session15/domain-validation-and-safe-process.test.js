@@ -184,6 +184,7 @@ function createCertificateService() {
     distributedLock,
     healthService,
     null,
+    undefined,
   );
 }
 
@@ -265,13 +266,19 @@ describe('Session 15 strict domain validation and safe process execution', () =>
     ]);
   });
 
-  it('rejects wildcard ACME issuance when DNS-01 hooks are not configured', async () => {
-    const service = createCertificateService();
-
-    await assert.rejects(
-      () => service.ensureCertificate(['*.example.com', 'example.com']),
-      /ACME_DNS_AUTH_HOOK|ACME_DNS_CLEANUP_HOOK/i,
+  it('resolves wildcard ACME issuance onto the DNS-01 strategy without shell hooks', async () => {
+    resetModules();
+    const { resolveAcmeStrategy, getAcmeDnsRecordName } = require(
+      path.join(repoRoot, 'src/certificate/acme-strategy.ts'),
     );
+
+    const strategy = resolveAcmeStrategy(['*.example.com', 'example.com'], {
+      ACME_CHALLENGE_STRATEGY: 'auto',
+    });
+
+    assert.equal(strategy.challengeType, 'dns-01');
+    assert.equal(strategy.provider, 'manual-dns-nest');
+    assert.equal(getAcmeDnsRecordName('*.example.com'), '_acme-challenge.example.com');
   });
 
   it('generates self-signed certificates through safe OpenSSL args and stores normalized domains', async () => {

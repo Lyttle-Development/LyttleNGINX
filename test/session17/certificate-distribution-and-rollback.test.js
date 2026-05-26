@@ -481,6 +481,7 @@ function createHarness() {
     distributedLock,
     healthService,
     null,
+    undefined,
   );
 
   return { prisma, orderService, service, clusterState };

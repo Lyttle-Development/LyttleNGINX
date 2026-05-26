@@ -16,6 +16,7 @@ const {
 } = require('../../src/auth/guards/authorization.guard');
 
 class CertificateService {}
+class AcmeService {}
 class TlsConfigService {}
 class CertificateBackupService {}
 class HealthService {}
@@ -26,6 +27,7 @@ class ReloaderService {}
 const originalLoad = Module._load;
 const moduleStubs = new Map([
   ['./certificate.service', { CertificateService }],
+  ['./acme.service', { AcmeService }],
   ['./certificate-backup.service', { CertificateBackupService }],
   ['./tls-config.service', { TlsConfigService }],
   ['./health.service', { HealthService }],
@@ -73,6 +75,11 @@ const certificateServiceMock = {
   validateDomainForCertificate: async (domain) => ({ domain, valid: true }),
   checkAllCertificatesOcspSupport: async () => ({ supported: true }),
   syncCertificates: async () => ({ synced: true }),
+};
+
+const acmeServiceMock = {
+  getPresentedHttpChallenge: async () => ({ status: 'missing' }),
+  markChallengeServed: async () => undefined,
 };
 
 const tlsConfigServiceMock = {
@@ -159,6 +166,10 @@ describe('Session 3 endpoint lockdown', () => {
         {
           provide: CertificateService,
           useValue: certificateServiceMock,
+        },
+        {
+          provide: AcmeService,
+          useValue: acmeServiceMock,
         },
         {
           provide: TlsConfigService,

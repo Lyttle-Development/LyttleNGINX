@@ -234,14 +234,4 @@ export class TlsConfigService {
     }
   }
 
-  /**
-   * Ensure certbot webroot directory exists
-   */
-  ensureCertbotWebroot(): void {
-    const webroot = '/var/www/certbot';
-    if (!fs.existsSync(webroot)) {
-      this.logger.log(`[Certbot] Creating webroot directory: ${webroot}`);
-      fs.mkdirSync(webroot, { recursive: true, mode: 0o755 });
-    }
-  }
 }

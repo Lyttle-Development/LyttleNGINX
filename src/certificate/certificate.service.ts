@@ -28,11 +28,8 @@ import { ClusterOperationsService } from '../distributed-lock/cluster-operations
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
 import { HealthService } from '../health/health.service';
 import { runCommand } from '../utils/process-utils';
-import { AcmeChallengeInfoDto } from './dto/acme-challenge.dto';
-import {
-  buildAcmeCertbotPlan,
-  resolveAcmeStrategy,
-} from './acme-strategy';
+import { resolveAcmeStrategy } from './acme-strategy';
+import { AcmeService } from './acme.service';
 
 // Validate ADMIN_EMAIL is set (required by Let's Encrypt)
 const adminEmail = process.env.ADMIN_EMAIL;
@@ -52,23 +49,6 @@ class ArtifactActivationError extends Error {
   }
 }
 
-type AcmeChallengeRecord = {
-  id: string;
-  orderId: string | null;
-  token: string;
-  domain: string;
-  challengeType: string;
-  provider: string | null;
-  status: string;
-  metadata: Record<string, unknown> | null;
-  createdAt: Date;
-  presentedAt: Date;
-  cleanedUpAt: Date | null;
-  finalizedAt: Date | null;
-  lastServedAt: Date | null;
-  expiresAt: Date;
-};
-
 @Injectable()
 export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(CertificateService.name);
@@ -86,6 +66,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     private healthService: HealthService,
     @Inject(forwardRef(() => ClusterHeartbeatService))
     private clusterHeartbeat: ClusterHeartbeatService | null,
+    private readonly acmeService?: AcmeService,
   ) {}
 
   async onModuleInit() {
@@ -537,88 +518,6 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       '-pubout',
     ]);
     return stdout.trim();
-  }
-
-  private getAcmeChallengeDelegate(): {
-    findMany?: (args: unknown) => Promise<AcmeChallengeRecord[]>;
-    update?: (args: unknown) => Promise<unknown>;
-  } | null {
-    const delegate = (this.prisma as unknown as {
-      acmeChallenge?: {
-        findMany?: (args: unknown) => Promise<AcmeChallengeRecord[]>;
-        update?: (args: unknown) => Promise<unknown>;
-      };
-    }).acmeChallenge;
-
-    return delegate ?? null;
-  }
-
-  private toAcmeChallengeDto(
-    challenge: AcmeChallengeRecord,
-  ): AcmeChallengeInfoDto {
-    return {
-      id: challenge.id,
-      orderId: challenge.orderId,
-      token: challenge.token,
-      domain: challenge.domain,
-      challengeType: challenge.challengeType,
-      provider: challenge.provider,
-      status: challenge.status,
-      presentedAt: challenge.presentedAt,
-      cleanedUpAt: challenge.cleanedUpAt,
-      finalizedAt: challenge.finalizedAt,
-      lastServedAt: challenge.lastServedAt,
-      expiresAt: challenge.expiresAt,
-      metadata: challenge.metadata,
-      createdAt: challenge.createdAt,
-    };
-  }
-
-  private async finalizeAcmeChallengesForOrder(
-    orderId: string,
-    params: {
-      status: 'validated' | 'failed';
-      error?: string | null;
-    },
-  ): Promise<void> {
-    const delegate = this.getAcmeChallengeDelegate();
-    if (!delegate?.findMany || !delegate.update) {
-      return;
-    }
-
-    const challenges = await delegate.findMany({
-      where: {
-        orderId,
-        status: {
-          in: ['presented', 'cleaned-up'],
-        },
-      },
-      orderBy: [{ presentedAt: 'desc' }, { createdAt: 'desc' }],
-    });
-
-    if (challenges.length === 0) {
-      return;
-    }
-
-    const finalizedAt = new Date();
-    await Promise.all(
-      challenges.map((challenge) =>
-        delegate.update?.({
-          where: { id: challenge.id },
-          data: {
-            status: params.status,
-            finalizedAt,
-            metadata: this.mergeMetadata(challenge.metadata, {
-              finalization: {
-                status: params.status,
-                error: params.error ?? null,
-                finalizedAt: finalizedAt.toISOString(),
-              },
-            }),
-          },
-        }),
-      ),
-    );
   }
 
   private calculateRetryDelayMs(attemptNumber: number): number {
@@ -1374,19 +1273,12 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           return recheck;
         }
 
-        // Still need to issue - proceed with certbot
+        // Still need to issue - proceed with ACME issuance
         this.logger.log(
-          `[Certbot] No valid certificate in DB. Running certbot for: [${domainsStr}]`,
+          `[ACME] No valid certificate in DB. Starting certificate issuance for: [${domainsStr}]`,
         );
 
         try {
-          const acmePlan = buildAcmeCertbotPlan({
-            domains,
-            adminEmail,
-            orderId: order.id,
-            instanceId,
-          });
-
           await this.certificateOrders.transitionOrder(
             order.id,
             'challenge-published',
@@ -1396,58 +1288,43 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
               details: {
                 lockName,
                 sourceType,
-                acme: acmePlan.metadata,
+                acme: acmeStrategy,
               },
               data: {
                 metadata: this.mergeMetadata(order.metadata, {
-                  acme: acmePlan.metadata,
+                  acme: acmeStrategy,
                 }),
               },
             },
           );
 
+          if (!this.acmeService) {
+            throw new Error('ACME service is not available for certificate issuance');
+          }
+
           this.logger.log(
-            `[Certbot] Running ${acmePlan.challengeType} certificate flow for ${primaryDomain} via provider ${acmePlan.provider}`,
+            `[ACME] Running ${acmeStrategy.challengeType} certificate flow for ${primaryDomain} via provider ${acmeStrategy.provider}`,
           );
 
-          await runCommand('certbot', acmePlan.args, {
-            env: acmePlan.env,
-            timeoutMs: 10 * 60 * 1000,
+          const issuedCertificate = await this.acmeService.obtainCertificate({
+            orderId: order.id,
+            domains,
+            instanceId,
+            adminEmail,
           });
           this.logger.log(
-            `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
+            `[ACME] Successfully obtained/renewed certificate for ${primaryDomain}`,
           );
-
-          await this.finalizeAcmeChallengesForOrder(order.id, {
-            status: 'validated',
-          });
 
           await this.certificateOrders.transitionOrder(order.id, 'validating', {
             message:
               'ACME order completed; validating generated certificate artifacts',
             details: {
-              acme: acmePlan.metadata,
+              acme: issuedCertificate.metadata.acme,
             },
           });
 
-          // Read the cert/key files produced by certbot
-          const certPath = path.join(
-            this.certDir(primaryDomain),
-            'fullchain.pem',
-          );
-          const keyPath = path.join(this.certDir(primaryDomain), 'privkey.pem');
-
-          // Verify files exist
-          if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-            throw new Error(
-              `Certificate files not found after certbot execution. Cert: ${fs.existsSync(certPath)}, Key: ${fs.existsSync(keyPath)}`,
-            );
-          }
-
-          this.logger.log(`[FS] Reading certificate file: ${certPath}`);
-          const certPem = fs.readFileSync(certPath, 'utf8');
-          this.logger.log(`[FS] Reading key file: ${keyPath}`);
-          const keyPem = fs.readFileSync(keyPath, 'utf8');
+          const { certPem, keyPem } = issuedCertificate;
 
           // Defensive checks: ensure we actually read PEM content before proceeding
           this.logger.debug(
@@ -1465,11 +1342,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
           if (!certLooksValid || !keyLooksValid) {
             this.logger.error(
-              `[DB] Invalid or missing PEM data after certbot for ${primaryDomain} — certLooksValid=${certLooksValid}, keyLooksValid=${keyLooksValid}`,
+              `[DB] Invalid or missing PEM data after ACME issuance for ${primaryDomain} — certLooksValid=${certLooksValid}, keyLooksValid=${keyLooksValid}`,
             );
             // Throw to trigger the existing failure path (which records failure & schedules retry)
             throw new Error(
-              'Certificate or private key missing/invalid after certbot execution',
+              'Certificate or private key missing/invalid after ACME execution',
             );
           }
 
@@ -1516,6 +1393,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
               'Validated certificate and private key produced by ACME flow',
             details: {
               expiresAt: validation.expiresAt?.toISOString() ?? null,
+              acme: issuedCertificate.metadata.acme,
             },
           });
 
@@ -1526,12 +1404,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             sourceType,
             certPem,
             keyPem,
-            issuedAt: new Date(),
-            expiresAt: validation.expiresAt ?? addDays(new Date(), 90),
+            issuedAt: issuedCertificate.issuedAt,
+            expiresAt:
+              validation.expiresAt ?? issuedCertificate.expiresAt ?? addDays(new Date(), 90),
             activatedAt: null,
             createdByNode: instanceId,
             metadata: {
               activation: 'pending-cluster-rollout',
+              ...issuedCertificate.metadata,
             },
           });
 
@@ -1546,11 +1426,6 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           // Persist failure with backoff
           const message = err instanceof Error ? err.message : String(err);
           const stack = err instanceof Error ? err.stack : undefined;
-
-          await this.finalizeAcmeChallengesForOrder(order.id, {
-            status: 'failed',
-            error: message,
-          });
 
           if (err instanceof ArtifactActivationError) {
             await this.alertService
@@ -1567,7 +1442,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
               })
               .catch((alertErr) =>
                 this.logger.error(
-                  `[Certbot] Failed to send alert: ${alertErr.message}`,
+                  `[ACME] Failed to send alert: ${alertErr.message}`,
                 ),
               );
 
@@ -1643,7 +1518,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             })
             .catch((alertErr) =>
               this.logger.error(
-                `[Certbot] Failed to send alert: ${alertErr.message}`,
+                `[ACME] Failed to send alert: ${alertErr.message}`,
               ),
             );
 
@@ -2082,32 +1957,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   }
 
   async listAcmeChallenges(options: { status?: string; limit?: number } = {}) {
-    const delegate = this.getAcmeChallengeDelegate();
-    if (!delegate?.findMany) {
-      return {
-        count: 0,
-        challenges: [] as AcmeChallengeInfoDto[],
-      };
-    }
-
-    const take = Number.isFinite(options.limit)
-      ? Math.min(Math.max(options.limit ?? 25, 1), 100)
-      : 25;
-    const normalizedStatus = options.status?.trim();
-    const challenges = await delegate.findMany({
-      where: normalizedStatus
-        ? {
-            status: normalizedStatus,
-          }
-        : undefined,
-      take,
-      orderBy: [{ presentedAt: 'desc' }, { createdAt: 'desc' }],
-    });
-
-    return {
-      count: challenges.length,
-      challenges: challenges.map((challenge) => this.toAcmeChallengeDto(challenge)),
-    };
+    return this.acmeService
+      ? this.acmeService.listChallenges(options)
+      : { count: 0, challenges: [] };
   }
 
   async getCertificateOrder(orderId: string) {

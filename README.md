@@ -35,7 +35,7 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 5 in progress
-- **Completed in Sessions 1-18 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, and an explicit ACME strategy layer with built-in HTTP-01 challenge tracking plus DNS-01 hook support
+- **Completed in Sessions 1-18 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, and an explicit Nest-managed ACME strategy layer with built-in HTTP-01 challenge tracking plus DNS-01 orchestration metadata
 - **Next recommended implementation session:** Session 19 — encrypt private key material at rest
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
@@ -622,30 +622,30 @@ The runtime now supports three `ACME_CHALLENGE_STRATEGY` modes:
 
 - `auto` *(default)* — use built-in HTTP-01 for non-wildcard orders and DNS-01 for wildcard orders
 - `http-01` — force the built-in database-backed HTTP-01 flow
-- `dns-01` — force DNS-01 through operator-supplied manual hook scripts
+- `dns-01` — force DNS-01 through the in-app NestJS challenge workflow with external DNS provisioning
 
 #### Built-in HTTP-01 strategy
 
 The hardened HTTP-01 flow is the default for non-wildcard orders and remains cluster-safe:
 
-1. the issuing node runs `certbot --manual --preferred-challenges=http`
-2. the built-in auth hook writes the challenge token + key authorization into PostgreSQL together with order/strategy metadata
+1. the issuing node starts an in-process ACME order through the NestJS `AcmeService`
+2. the HTTP-01 challenge token + key authorization are written into PostgreSQL together with order/strategy metadata
 3. any node can answer `/.well-known/acme-challenge/:token` from the shared database record
-4. the cleanup hook marks the challenge as cleaned up instead of deleting it immediately
+4. challenge verification happens in-process before the ACME order is completed
 5. the certificate service finalizes the challenge lifecycle as `validated` or `failed`, which makes challenge publication / finalization inspectable after the run
 
 The `GET /certificates/challenges` endpoint exposes recent built-in HTTP-01 challenge records with statuses such as `presented`, `cleaned-up`, `validated`, `failed`, and `expired`.
 
 #### DNS-01 strategy
 
-Wildcard orders and operator-selected DNS flows now use external manual hooks:
+Wildcard orders and operator-selected DNS flows now stay inside the NestJS control plane as well:
 
-- `ACME_DNS_AUTH_HOOK` — absolute path to the DNS challenge publication hook inside the container
-- `ACME_DNS_CLEANUP_HOOK` — absolute path to the DNS challenge cleanup hook inside the container
-- `ACME_DNS_PROVIDER` — operator-facing label for the DNS provider / hook implementation
-- `ACME_DNS_PROPAGATION_SECONDS` — provider-specific propagation wait hint passed to the hook environment
+- `ACME_DNS_PROVIDER` — operator-facing label for the external DNS workflow or provider integration
+- `ACME_DNS_PROPAGATION_SECONDS` — initial propagation delay hint before verification begins
+- `ACME_DNS_WAIT_TIMEOUT_MS` — maximum time the app waits for the expected TXT record to become visible
+- `ACME_DNS_POLL_INTERVAL_MS` — polling interval while waiting for the TXT record to appear
 
-DNS-01 challenge details are managed by the provider hook itself rather than the built-in DB-backed HTTP challenge table, so `GET /certificates/challenges` is intentionally focused on the built-in HTTP-01 publication path.
+For DNS-01, the application stores the desired TXT record name/value in `AcmeChallenge.metadata`, exposes it through `GET /certificates/challenges`, and then verifies the record in-process. This removes the old shell-hook dependency while keeping the workflow explicit and auditable.
 
 Example configuration snippets:
 
@@ -657,17 +657,20 @@ ACME_CHALLENGE_STRATEGY=auto
 ACME_CHALLENGE_STRATEGY=http-01
 ACME_HTTP01_PROPAGATION_SECONDS=5
 
-# Force DNS-01 through mounted provider hooks
+# Force DNS-01 through the in-app flow while an external DNS automation path publishes TXT records
 ACME_CHALLENGE_STRATEGY=dns-01
-ACME_DNS_PROVIDER=route53-manual
-ACME_DNS_AUTH_HOOK=/opt/acme/dns-auth.sh
-ACME_DNS_CLEANUP_HOOK=/opt/acme/dns-cleanup.sh
+ACME_DNS_PROVIDER=manual-dns-nest
 ACME_DNS_PROPAGATION_SECONDS=45
+ACME_DNS_WAIT_TIMEOUT_MS=180000
+ACME_DNS_POLL_INTERVAL_MS=3000
+
+# Optional explicit ACME account key location
+ACME_ACCOUNT_PRIVATE_KEY_PATH=/app/state/acme/account.pem
 ```
 
 ### Certificate order state machine
 
-Session 16 adds a durable certificate-order workflow so issuance is no longer just an ephemeral `certbot` run plus a best-effort database write.
+Session 16 adds a durable certificate-order workflow so issuance is no longer just an ephemeral ACME subprocess plus a best-effort database write.
 
 Current order states are:
 
@@ -1003,7 +1006,6 @@ services:
       NODE_ENV: production
     volumes:
       - letsencrypt-data:/etc/letsencrypt
-      - certbot-webroot:/var/www/certbot
       - nginx-ssl:/etc/nginx/ssl
     ports:
       - 80:80
@@ -1015,7 +1017,6 @@ services:
 volumes:
   postgres-data:
   letsencrypt-data:
-  certbot-webroot:
   nginx-ssl:
 ```
 
@@ -1194,7 +1195,7 @@ psql $DATABASE_URL
 curl http://localhost:3000/certificates/validate/yourdomain.com
 
 # 2. Check logs
-docker-compose logs app | grep -i certbot
+docker-compose logs app | grep -i acme
 
 # 3. Verify email is set
 echo $ADMIN_EMAIL

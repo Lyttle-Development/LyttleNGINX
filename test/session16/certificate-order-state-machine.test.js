@@ -406,7 +406,7 @@ function createPrismaMock(clusterState) {
   };
 }
 
-function createHarness() {
+function createHarness(acmeService = undefined) {
   process.env.ADMIN_EMAIL = 'session16@example.test';
   resetModules();
   const { CertificateOrderService } = require(certificateOrderServicePath);
@@ -477,6 +477,7 @@ function createHarness() {
     distributedLock,
     healthService,
     null,
+    acmeService,
   );
 
   service.writeCertToFs = () => undefined;
@@ -594,15 +595,19 @@ describe('Session 16 certificate order state machine', () => {
   });
 
   it('persists failure history and resumes the same ACME order on manual retry', async () => {
-    process.env.DATABASE_URL = 'not-a-postgresql-url';
-    const { service, orderService, prisma } = createHarness();
+    const { service, orderService, prisma } = createHarness({
+      obtainCertificate: async () => {
+        throw new Error('Simulated ACME issuance failure');
+      },
+      listChallenges: async () => ({ count: 0, challenges: [] }),
+    });
     const { hashDomains } = require(domainUtilsPath);
     const domains = ['example.com'];
     const domainsHash = hashDomains(domains, { allowWildcard: true });
 
     await assert.rejects(
       () => service.ensureCertificate(domains),
-      /Could not parse DATABASE_URL/,
+      /Simulated ACME issuance failure/,
     );
 
     const firstList = await orderService.listOrders();
@@ -612,7 +617,7 @@ describe('Session 16 certificate order state machine', () => {
     assert.equal(failedOrder.retryCount, 0);
     assert.equal(failedOrder.attemptCount, 1);
     assert.ok(failedOrder.nextRetryAt instanceof Date);
-    assert.match(failedOrder.lastError ?? '', /Could not parse DATABASE_URL/);
+    assert.match(failedOrder.lastError ?? '', /Simulated ACME issuance failure/);
     assert.equal(
       failedOrder.events.some((event) => event.eventType === 'retry-scheduled'),
       true,
