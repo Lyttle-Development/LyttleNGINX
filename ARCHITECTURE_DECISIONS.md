@@ -40,6 +40,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-022 | Envelope encryption for persisted certificate private keys                               | accepted | Session 19 | 2026-05-26 |
 | ADR-023 | Encrypted backup envelopes with signed manifests and platform-admin-only raw certificate export | accepted | Session 20 | 2026-05-26 |
 | ADR-024 | Validation-first proxy management API with reload-required desired-state hints          | accepted | Session 21 | 2026-05-26 |
+| ADR-025 | Cluster overview and per-node convergence APIs backed by the operation journal          | accepted | Session 22 | 2026-05-26 |
 
 ---
 
@@ -838,4 +839,35 @@ Adopt a dedicated proxy-management API under `/proxies` with the following rules
 - proxy state is now managed through the same authenticated, authorized, and auditable control-plane surface as the rest of the system
 - malformed upstream targets and conflicting domain ownership are rejected before they reach persistent desired state, reducing the chance of broken config rollouts later
 - proxy mutations still need an explicit follow-up reload or cluster rollout today, so Session 22 and later config-version work should build on the new `reloadRequired` response contract instead of reintroducing silent direct DB writes
+
+---
+
+## ADR-025 — Cluster overview and per-node convergence APIs backed by the operation journal
+
+- Status: accepted
+- Session: Session 22 — Add cluster operations and node-status admin APIs
+- Date: 2026-05-26
+
+### Context
+
+Session 12 introduced durable `ClusterOperation` and `ClusterOperationAck` records, but operators still had to piece together cluster state from multiple low-level endpoints (`/cluster/nodes`, `/cluster/leader`, `/cluster/lease`, `/cluster/operations`) without a normalized overview or any node-level convergence view. Session 17 also made certificate activation ACK-driven, which increased the need for operator-facing APIs that answer “what happened on this node?” without requiring direct database access.
+
+### Decision
+
+Adopt an operator-focused cluster inspection surface with the following characteristics:
+
+1. add `GET /cluster/status` as a single aggregated overview that combines cluster counts, leader/lease health, active-node summaries, and recent operation state
+2. extend `GET /cluster/operations` so operators can filter the operation journal by node and operation type while receiving normalized status-summary metadata and stable self-links
+3. add node-detail endpoints:
+   - `GET /cluster/nodes/:nodeId`
+   - `GET /cluster/nodes/:nodeId/config`
+   - `GET /cluster/nodes/:nodeId/certificates`
+4. treat the durable operation journal as the primary source of per-node convergence history, while enriching the local node view with runtime NGINX release metadata and the current certificate inventory from the shared database
+5. keep the new cluster-inspection APIs read-only and RBAC-protected under the existing `viewer` posture so later sessions can layer richer logging, metrics, and desired-state workflows on top without reworking the basic operator contract again
+
+### Consequences
+
+- operators can now answer cluster-status and node-convergence questions through authenticated API calls instead of correlating multiple low-level routes or inspecting the database directly
+- async operation responses now expose a more uniform contract across accepted, listed, and detailed operation views, which gives later admin APIs a stable status-summary shape to reuse
+- remote-node config/certificate detail is still limited to the current ACK payload plus cluster metadata; later sessions should expand that with structured logs, metrics, and desired/applied-state version tracking rather than bypassing the operation journal
 

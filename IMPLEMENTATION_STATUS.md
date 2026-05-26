@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 7 — Operational API expansion
-- Most recently completed session: Session 21 — Add proxy management API
-- Next recommended session from the roadmap: Session 22 — Add cluster operations and node-status admin APIs
+- Most recently completed session: Session 22 — Add cluster operations and node-status admin APIs
+- Next recommended session from the roadmap: Session 23 — Add security administration APIs
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -798,13 +798,36 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 22 — Add cluster operations and node-status admin APIs
 
-- Status: not started
+- Status: done
 - Objective: expose cluster coordination state through operator-facing APIs
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: operators cannot yet inspect convergence or operation state through the API
-- Follow-up sessions: Session 24, Session 25, Session 26
-- Notes: async operation response contracts remain to be defined
+- Files touched:
+  - `src/distributed-lock/cluster.controller.ts`
+  - `src/distributed-lock/cluster-operations.service.ts`
+  - `src/reloader/reloader.service.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session8/rbac-authorization.test.js`
+  - `test/session9/audit-logging.test.js`
+  - `test/session22/cluster-admin-apis.test.js`
+- Tests added/updated:
+  - added `test/session22/cluster-admin-apis.test.js` to verify the new cluster overview, inactive-node listing, per-node config/certificate detail, filtered operation inspection, and stable not-found contracts
+  - updated the Session 8 and Session 9 controller harnesses to provide the new `PrismaService` dependency required by the expanded `ClusterController`
+  - ran `npm run typecheck`, `npm run build`, the focused Session 22 regression, and the full `npm test` suite successfully after landing the new APIs
+- Risks:
+  - node-level config and certificate views still derive primarily from the current operation journal plus local runtime/DB inspection; richer desired-state drift tracking and per-node metrics remain future work for Sessions 24 and 25
+  - remote node runtime detail is still limited to what the latest ACK payload exposes, because inter-node transport remains request/response HTTP rather than a dedicated status stream
+  - the local certificate inventory is sourced from the shared database and represents the cluster control-plane view, not an independently attested on-disk filesystem scan of every remote node
+- Follow-up sessions:
+  - Session 23 — add security administration APIs
+  - Session 24 — replace ad hoc logging with structured operational and audit logging
+  - Session 25 — expand metrics and alerting
+  - Session 26 — add automated test harness and baseline coverage
+- Notes:
+  - added `GET /cluster/status` as a single operator-facing overview that combines cluster counts, lease/leader diagnostics, active node summaries, and recent operation state
+  - expanded `GET /cluster/operations` with node/type/status filtering and normalized status-summary metadata so async operation responses are easier to consume consistently
+  - added `GET /cluster/nodes/:nodeId`, `GET /cluster/nodes/:nodeId/config`, and `GET /cluster/nodes/:nodeId/certificates` so operators can inspect per-node convergence, local runtime release state, and recent certificate rollout ACKs
+  - added public reloader runtime-release inspection so the node config API can expose current and last-known-good release metadata without requiring shell access to the container
 
 ## Session 23 — Add security administration APIs
 

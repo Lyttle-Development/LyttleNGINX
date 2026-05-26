@@ -185,6 +185,28 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async getRuntimeReleaseStatus() {
+    const [currentReleasePath, lastKnownGoodPath] = await Promise.all([
+      this.getSymlinkTarget(NGINX_CURRENT_RELEASE_LINK),
+      this.getSymlinkTarget(NGINX_LAST_KNOWN_GOOD_LINK),
+    ]);
+    const [currentRelease, lastKnownGoodRelease] = await Promise.all([
+      this.readReleaseMetadata(currentReleasePath),
+      this.readReleaseMetadata(lastKnownGoodPath),
+    ]);
+
+    return {
+      runtimeDir: NGINX_RUNTIME_DIR,
+      releasesDir: NGINX_RELEASES_DIR,
+      currentReleaseId: currentReleasePath ? basename(currentReleasePath) : null,
+      currentReleasePath,
+      currentRelease,
+      lastKnownGoodReleaseId: lastKnownGoodPath ? basename(lastKnownGoodPath) : null,
+      lastKnownGoodPath,
+      lastKnownGoodRelease,
+    };
+  }
+
   // Helper: Generate nginx confs for all entries (auto SSL detection)
   private async generateNginxConfs(
     entries: any[],
@@ -594,6 +616,35 @@ export class ReloaderService implements OnModuleInit, OnModuleDestroy {
       `${JSON.stringify(metadata, null, 2)}\n`,
       'utf8',
     );
+  }
+
+  private async readReleaseMetadata(releasePath: string | null) {
+    if (!releasePath) {
+      return null;
+    }
+
+    try {
+      const metadata = await readFile(
+        join(releasePath, NGINX_RELEASE_METADATA_FILE),
+        'utf8',
+      );
+
+      return JSON.parse(metadata) as Record<string, unknown>;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? '';
+      if (code === 'ENOENT') {
+        return null;
+      }
+
+      this.logger.warn(
+        `Failed to read nginx release metadata for ${releasePath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+
+      return {
+        releasePath,
+        readError: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private async updateSymlinkAtomically(

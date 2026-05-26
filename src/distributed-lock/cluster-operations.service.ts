@@ -54,6 +54,10 @@ type ClusterOperationRecordWithAcks = ClusterOperationRecord & {
   acknowledgements: ClusterOperationAckRecord[];
 };
 
+type ClusterOperationSummaryRecord = ClusterOperationRecord & {
+  acknowledgements?: ClusterOperationAckRecord[];
+};
+
 type OperationTarget = {
   instanceId: string;
   hostname: string;
@@ -84,6 +88,14 @@ type WaitForOperationOptions = {
   pollIntervalMs?: number;
 };
 
+type ListClusterOperationsOptions = {
+  limit?: number;
+  status?: string;
+  operationType?: string;
+  operationTypes?: string[];
+  targetNodeId?: string;
+};
+
 export type ClusterOperationAcceptedResponse = {
   operationId: string;
   operationType: string;
@@ -99,6 +111,15 @@ export type ClusterOperationAcceptedResponse = {
   correlationId: string | null;
   requestPath: string | null;
   operationStatusPath: string;
+  links: {
+    self: string;
+  };
+  statusSummary: {
+    pendingNodeCount: number;
+    completionRatio: number;
+    isTerminal: boolean;
+    isSuccessful: boolean;
+  };
 };
 
 @Injectable()
@@ -197,16 +218,61 @@ export class ClusterOperationsService {
     return this.toAcceptedResponse(operation);
   }
 
-  async listOperations(limit = 20) {
-    const take = this.normalizeListLimit(limit);
-    const operations = await this.prisma.clusterOperation.findMany({
+  async listOperations(limitOrOptions: number | ListClusterOperationsOptions = 20) {
+    const options =
+      typeof limitOrOptions === 'number'
+        ? ({ limit: limitOrOptions } satisfies ListClusterOperationsOptions)
+        : limitOrOptions;
+    const take = this.normalizeListLimit(options.limit ?? 20);
+    const operationTypes = this.normalizeOperationTypes(options);
+    const targetNodeId = options.targetNodeId?.trim() || undefined;
+    const operations = (await this.prisma.clusterOperation.findMany({
       take,
       orderBy: { createdAt: 'desc' },
-    });
+      where: {
+        ...(options.status ? { status: options.status } : {}),
+        ...(operationTypes.length === 1
+          ? { operationType: operationTypes[0] }
+          : operationTypes.length > 1
+            ? { operationType: { in: operationTypes } }
+            : {}),
+        ...(targetNodeId
+          ? {
+              acknowledgements: {
+                some: {
+                  nodeInstanceId: targetNodeId,
+                },
+              },
+            }
+          : {}),
+      },
+      ...(targetNodeId
+        ? {
+            include: {
+              acknowledgements: {
+                where: { nodeInstanceId: targetNodeId },
+                orderBy: [{ nodeHostname: 'asc' }, { nodeInstanceId: 'asc' }],
+              },
+            },
+          }
+        : {}),
+    })) as ClusterOperationSummaryRecord[];
+
+    const filteredOperations = targetNodeId
+      ? operations.filter((operation) => (operation.acknowledgements?.length ?? 0) > 0)
+      : operations;
 
     return {
-      count: operations.length,
-      operations: operations.map((operation) => this.toSummary(operation)),
+      count: filteredOperations.length,
+      filters: {
+        limit: take,
+        status: options.status ?? null,
+        operationTypes,
+        targetNodeId: targetNodeId ?? null,
+      },
+      operations: filteredOperations.map((operation) =>
+        this.toSummary(operation, operation.acknowledgements?.[0] ?? null),
+      ),
     };
   }
 
@@ -651,10 +717,17 @@ export class ClusterOperationsService {
       correlationId: operation.correlationId,
       requestPath: operation.requestPath,
       operationStatusPath: `/cluster/operations/${operation.id}`,
+      links: {
+        self: `/cluster/operations/${operation.id}`,
+      },
+      statusSummary: this.buildStatusSummary(operation),
     };
   }
 
-  private toSummary(operation: ClusterOperationRecord) {
+  private toSummary(
+    operation: ClusterOperationRecord,
+    nodeAcknowledgement?: ClusterOperationAckRecord | null,
+  ) {
     return {
       operationId: operation.id,
       operationType: operation.operationType,
@@ -673,6 +746,23 @@ export class ClusterOperationsService {
       completedAt: operation.completedAt,
       lastError: operation.lastError,
       operationStatusPath: `/cluster/operations/${operation.id}`,
+      links: {
+        self: `/cluster/operations/${operation.id}`,
+      },
+      statusSummary: this.buildStatusSummary(operation),
+      nodeAcknowledgement: nodeAcknowledgement
+        ? {
+            nodeInstanceId: nodeAcknowledgement.nodeInstanceId,
+            nodeHostname: nodeAcknowledgement.nodeHostname,
+            endpointUrl: nodeAcknowledgement.endpointUrl,
+            status: nodeAcknowledgement.status,
+            responseStatus: nodeAcknowledgement.responseStatus,
+            errorMessage: nodeAcknowledgement.errorMessage,
+            startedAt: nodeAcknowledgement.startedAt,
+            ackedAt: nodeAcknowledgement.ackedAt,
+            details: nodeAcknowledgement.details,
+          }
+        : null,
     };
   }
 
@@ -694,6 +784,43 @@ export class ClusterOperationsService {
         updatedAt: ack.updatedAt,
       })),
     };
+  }
+
+  private buildStatusSummary(operation: Pick<
+    ClusterOperationRecord,
+    | 'status'
+    | 'targetNodeCount'
+    | 'completedNodeCount'
+    | 'successfulNodeCount'
+    | 'failedNodeCount'
+  >) {
+    const pendingNodeCount = Math.max(
+      operation.targetNodeCount - operation.completedNodeCount,
+      0,
+    );
+
+    return {
+      pendingNodeCount,
+      completionRatio:
+        operation.targetNodeCount > 0
+          ? Number(
+              (operation.completedNodeCount / operation.targetNodeCount).toFixed(4),
+            )
+          : 1,
+      isTerminal: !['pending', 'running'].includes(operation.status),
+      isSuccessful: operation.status === 'succeeded',
+    };
+  }
+
+  private normalizeOperationTypes(options: ListClusterOperationsOptions) {
+    const values = [
+      ...(Array.isArray(options.operationTypes) ? options.operationTypes : []),
+      ...(options.operationType ? [options.operationType] : []),
+    ]
+      .map((value) => value.trim())
+      .filter((value, index, array) => value.length > 0 && array.indexOf(value) === index);
+
+    return values;
   }
 
   private normalizeListLimit(limit: number) {

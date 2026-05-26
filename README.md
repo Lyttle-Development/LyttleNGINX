@@ -1042,7 +1042,16 @@ Cluster-wide mutations now use a durable operation journal:
 - `POST /cluster/reload` now returns `202 Accepted` with an operation ID instead of only reporting local-node success
 - `GET /cluster/operations` returns recent cluster operations and summary counts
 - `GET /cluster/operations/:operationId` returns per-node acknowledgement state for a specific operation
+- `GET /cluster/operations?nodeId=<node>&type=<operation>` filters the operation journal down to the node and workflow an operator is investigating
 - internal certificate-sync broadcasts also use the same operation journal so later certificate activation work can build on a shared ACK model
+
+Session 22 adds operator-focused cluster inspection APIs on top of that journal:
+
+- `GET /cluster/status` returns a single overview payload containing cluster counts, leader/lease health, active nodes, and recent operations
+- `GET /cluster/nodes?includeInactive=true` includes stale/inactive nodes instead of only the currently active set
+- `GET /cluster/nodes/:nodeId` returns node detail plus recent per-node operation history, config state, and certificate state
+- `GET /cluster/nodes/:nodeId/config` returns the latest reload ACK for that node and, on the local node, the current/last-known-good NGINX runtime release metadata
+- `GET /cluster/nodes/:nodeId/certificates` returns the latest certificate activation/sync ACKs for that node and, on the local node, a summary of the current certificate inventory from the shared database
 
 Transactional config activation now uses a managed runtime release layout:
 
@@ -1071,6 +1080,15 @@ curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/operations
 
 # Inspect one operation and its per-node acknowledgements
 curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/operations/<operation-id>
+
+# See the aggregated cluster status overview
+curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/status
+
+# Inspect a node, including config and certificate rollout state
+curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/nodes/<node-id>
+
+# Filter the operation journal down to one node + one workflow
+curl -H "Authorization: Bearer $JWT" "http://localhost:3003/cluster/operations?nodeId=<node-id>&type=cluster.reload"
 
 # View leader
 docker service logs lyttlenginx_lyttlenginx 2>&1 | grep "LEADER"

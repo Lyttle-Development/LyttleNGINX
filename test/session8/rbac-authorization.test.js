@@ -21,6 +21,7 @@ class CertificateBackupService {}
 class ClusterHeartbeatService {}
 class ClusterOperationsService {}
 class DistributedLockService {}
+class PrismaService {}
 class ReloaderService {}
 class LogsService {}
 
@@ -32,6 +33,7 @@ const moduleStubs = new Map([
   ['./cluster-heartbeat.service', { ClusterHeartbeatService }],
   ['./cluster-operations.service', { ClusterOperationsService }],
   ['./distributed-lock.service', { DistributedLockService }],
+  ['../prisma/prisma.service', { PrismaService }],
   ['./reloader/reloader.service', { ReloaderService }],
   ['../reloader/reloader.service', { ReloaderService }],
   ['./logs.service', { LogsService }],
@@ -232,6 +234,23 @@ describe('Session 8 RBAC authorization policies', () => {
 
   const reloaderServiceMock = {
     reloadConfig: async () => ({ ok: true }),
+    getRuntimeReleaseStatus: async () => ({
+      currentReleaseId: 'release-1',
+      currentRelease: { status: 'active' },
+      lastKnownGoodReleaseId: 'release-1',
+      lastKnownGoodRelease: { status: 'active' },
+    }),
+  };
+
+  const prismaServiceMock = {
+    clusterNode: {
+      findMany: async () => [],
+      findFirst: async () => null,
+    },
+    certificate: {
+      count: async () => 0,
+      findMany: async () => [],
+    },
   };
 
   const logsServiceMock = {
@@ -293,6 +312,10 @@ describe('Session 8 RBAC authorization policies', () => {
         {
           provide: ReloaderService,
           useValue: reloaderServiceMock,
+        },
+        {
+          provide: PrismaService,
+          useValue: prismaServiceMock,
         },
         {
           provide: LogsService,

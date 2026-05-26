@@ -22,6 +22,7 @@ class CertificateBackupService {}
 class ClusterHeartbeatService {}
 class ClusterOperationsService {}
 class DistributedLockService {}
+class PrismaService {}
 class ReloaderService {}
 
 const originalLoad = Module._load;
@@ -31,6 +32,7 @@ const moduleStubs = new Map([
   ['./cluster-heartbeat.service', { ClusterHeartbeatService }],
   ['./cluster-operations.service', { ClusterOperationsService }],
   ['./distributed-lock.service', { DistributedLockService }],
+  ['../prisma/prisma.service', { PrismaService }],
   ['./reloader/reloader.service', { ReloaderService }],
   ['../reloader/reloader.service', { ReloaderService }],
 ]);
@@ -281,6 +283,33 @@ describe('Session 9 audit logging', () => {
     async reloadConfig() {
       return { ok: true };
     },
+    async getRuntimeReleaseStatus() {
+      return {
+        currentReleaseId: 'release-1',
+        currentRelease: { status: 'active' },
+        lastKnownGoodReleaseId: 'release-1',
+        lastKnownGoodRelease: { status: 'active' },
+      };
+    },
+  };
+
+  const prismaServiceMock = {
+    clusterNode: {
+      async findMany() {
+        return [];
+      },
+      async findFirst() {
+        return null;
+      },
+    },
+    certificate: {
+      async count() {
+        return 0;
+      },
+      async findMany() {
+        return [];
+      },
+    },
   };
 
   before(async () => {
@@ -341,6 +370,10 @@ describe('Session 9 audit logging', () => {
         {
           provide: ReloaderService,
           useValue: reloaderServiceMock,
+        },
+        {
+          provide: PrismaService,
+          useValue: prismaServiceMock,
         },
       ],
     }).compile();
