@@ -18,6 +18,7 @@ const { AuditController } = require('../../src/audit/audit.controller');
 const { AuditService } = require('../../src/audit/audit.service');
 
 class CertificateService {}
+class CertificateBackupService {}
 class ClusterHeartbeatService {}
 class ClusterOperationsService {}
 class DistributedLockService {}
@@ -26,6 +27,7 @@ class ReloaderService {}
 const originalLoad = Module._load;
 const moduleStubs = new Map([
   ['./certificate.service', { CertificateService }],
+  ['./certificate-backup.service', { CertificateBackupService }],
   ['./cluster-heartbeat.service', { ClusterHeartbeatService }],
   ['./cluster-operations.service', { ClusterOperationsService }],
   ['./distributed-lock.service', { DistributedLockService }],
@@ -44,6 +46,7 @@ Module._load = function loadWithStubs(requestName, parent, isMain) {
 const {
   CertificateController,
 } = require('../../src/certificate/certificate.controller');
+const { BackupController } = require('../../src/certificate/backup.controller');
 const {
   ClusterController,
 } = require('../../src/distributed-lock/cluster.controller');
@@ -183,6 +186,33 @@ describe('Session 9 audit logging', () => {
     },
   };
 
+  const backupServiceMock = {
+    async createBackup() {
+      return { filename: 'backup.lyttlebackup' };
+    },
+    async listBackups() {
+      return [];
+    },
+    async getBackupStream() {
+      return undefined;
+    },
+    async verifyBackup(filename) {
+      return { verified: true, filename };
+    },
+    async restoreBackup() {
+      return { imported: 0, skipped: 0, errors: 0 };
+    },
+    async deleteBackup() {
+      return undefined;
+    },
+    async importCertificates() {
+      return { imported: 0, skipped: 0, errors: 0 };
+    },
+    async exportCertificate(id) {
+      return { id, exported: true };
+    },
+  };
+
   const clusterHeartbeatServiceMock = {
     async getActiveNodes() {
       return [];
@@ -264,7 +294,12 @@ describe('Session 9 audit logging', () => {
     auditServiceMock = createAuditServiceMock();
 
     const moduleRef = await Test.createTestingModule({
-      controllers: [AuditController, CertificateController, ClusterController],
+      controllers: [
+        AuditController,
+        BackupController,
+        CertificateController,
+        ClusterController,
+      ],
       providers: [
         AuthService,
         {
@@ -286,6 +321,10 @@ describe('Session 9 audit logging', () => {
         {
           provide: CertificateService,
           useValue: certificateServiceMock,
+        },
+        {
+          provide: CertificateBackupService,
+          useValue: backupServiceMock,
         },
         {
           provide: ClusterHeartbeatService,
@@ -383,14 +422,14 @@ describe('Session 9 audit logging', () => {
     const operatorToken = buildAdminToken('operator');
 
     await request(httpServer)
-      .get('/cluster/admin/become-leader')
+      .get('/certificates/backup/export/cert-1')
       .set('Authorization', `Bearer ${operatorToken}`)
       .expect(403);
 
     await flushAuditWrites();
 
     const deniedEvent = auditServiceMock.events.at(-1);
-    assert.equal(deniedEvent.action, 'cluster.become-leader');
+    assert.equal(deniedEvent.action, 'certificate.export');
     assert.equal(deniedEvent.outcome, 'denied');
     assert.equal(deniedEvent.responseStatus, 403);
     assert.equal(deniedEvent.actor.subject, 'operator-user');

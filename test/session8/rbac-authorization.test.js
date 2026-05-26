@@ -418,6 +418,11 @@ describe('Session 8 RBAC authorization policies', () => {
       });
 
     await request(httpServer)
+      .get('/certificates/backup/export/cert-1')
+      .set('Authorization', `Bearer ${securityAdminToken}`)
+      .expect(403);
+
+    await request(httpServer)
       .post('/reload')
       .set('Authorization', `Bearer ${securityAdminToken}`)
       .expect(403);
@@ -453,6 +458,11 @@ describe('Session 8 RBAC authorization policies', () => {
 
     await request(httpServer)
       .get('/certificates/backup')
+      .set('Authorization', `Bearer ${platformAdminToken}`)
+      .expect(200);
+
+    await request(httpServer)
+      .get('/certificates/backup/export/cert-1')
       .set('Authorization', `Bearer ${platformAdminToken}`)
       .expect(200);
 

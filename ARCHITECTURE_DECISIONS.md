@@ -38,6 +38,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-020 | ACK-backed certificate artifact activation with rollback to prior versions                | accepted | Session 17 | 2026-05-24 |
 | ADR-021 | Explicit ACME strategy selection with Nest-managed cluster-safe HTTP-01 challenge orchestration | accepted | Session 18 | 2026-05-26 |
 | ADR-022 | Envelope encryption for persisted certificate private keys                               | accepted | Session 19 | 2026-05-26 |
+| ADR-023 | Encrypted backup envelopes with signed manifests and platform-admin-only raw certificate export | accepted | Session 20 | 2026-05-26 |
 
 ---
 
@@ -768,4 +769,38 @@ Adopt application-layer envelope encryption for stored certificate private keys:
 - certificate issuance, activation, sync, backup, and export flows must explicitly decrypt private keys at the last responsible moment instead of assuming DB reads already return PEM text
 - changing `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` now creates a concrete upgrade path for future master-key rotation work, even though full operator-facing rotation APIs remain future work for Session 23
 - backup archives, export flows, and restore integrity are still separate concerns; Session 20 remains responsible for hardening those artifacts beyond the storage-layer protection introduced here
+
+---
+
+## ADR-023 — Encrypted backup envelopes with signed manifests and platform-admin-only raw certificate export
+
+- Status: accepted
+- Session: Session 20 — Harden backup, export, import, and restore flows
+- Date: 2026-05-26
+
+### Context
+
+After Session 19, private keys were encrypted in PostgreSQL, but backup artifacts and direct export flows could still re-materialize plaintext PEM bundles without artifact-level protection or strong restore validation. The production-readiness assessment explicitly called for encrypted backup artifacts, integrity manifests/signatures, stricter import/restore validation, and tighter control over raw key export.
+
+### Decision
+
+Adopt the following Session 20 backup and recovery model:
+
+1. write backups as encrypted `.lyttlebackup` envelopes rather than plaintext ZIP archives
+2. include a signed manifest plus per-entry SHA-256 checksums so verification can reject tampered backups before any restore logic runs
+3. add explicit server-side backup verification and restore endpoints that operate on the encrypted artifact instead of requiring operators to unzip plaintext material manually
+4. validate direct imports before acceptance by checking:
+   - PEM/X.509 structure
+   - private-key and certificate match
+   - requested domain coverage in certificate SAN/CN fields
+   - validity-window consistency for issued/expiry timestamps
+5. keep encrypted backup creation, listing, download, verify, restore, and direct import under `security-admin`, but tighten raw decrypted certificate export to `platform-admin` because it returns break-glass key material
+
+### Consequences
+
+- backup files written to `BACKUP_DIR` no longer contain plaintext PEM material at rest when created through the hardened Session 20 flow
+- restore now has an explicit trust boundary: backups with invalid signatures, failed decryption, missing entries, or checksum mismatches are rejected before any certificate rows are created
+- operators gain a safer recovery workflow through `POST /certificates/backup/:filename/verify` and `POST /certificates/backup/:filename/restore`
+- raw `GET /certificates/backup/export/:id` remains available for emergency use, but it is now intentionally narrower than the rest of the backup surface and should be monitored as a higher-risk audited action
+- legacy plaintext `.zip` backups are no longer trusted by the hardened restore path; future operator documentation should steer users toward regenerating encrypted artifacts where possible
 

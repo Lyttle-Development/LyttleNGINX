@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 6 — Secrets, backups, and data protection
-- Most recently completed session: Session 19 — Encrypt private key material at rest
-- Next recommended session from the roadmap: Session 20 — Harden backup, export, import, and restore flows
+- Most recently completed session: Session 20 — Harden backup, export, import, and restore flows
+- Next recommended session from the roadmap: Session 21 — Add proxy management API
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -726,13 +726,39 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 20 — Harden backup, export, import, and restore flows
 
-- Status: not started
+- Status: done
 - Objective: make backup and recovery flows encrypted, validated, and authorized
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: backups and restore flows are not yet production-grade
-- Follow-up sessions: Session 27, Session 29
-- Notes: integrity manifests and stronger validation remain pending
+- Files touched:
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `src/certificate/certificate-backup.service.ts`
+  - `src/certificate/backup.controller.ts`
+  - `src/certificate/dto/import-certificates.dto.ts`
+  - `test/session8/rbac-authorization.test.js`
+  - `test/session9/audit-logging.test.js`
+  - `test/session19/private-key-encryption-at-rest.test.js`
+  - `test/session20/backup-hardening.test.js`
+- Tests added/updated:
+  - added `test/session20/backup-hardening.test.js` to verify encrypted backup creation, signed-manifest verification, tamper rejection, server-side restore, and mismatched-key import rejection
+  - updated the Session 8 RBAC regression so raw certificate export now requires `platform-admin` while `security-admin` retains encrypted backup/import/restore access
+  - updated the Session 9 audit regression so denied raw certificate export attempts are recorded as audited authorization failures
+  - updated the Session 19 private-key regression fixtures to use valid certificate material now that Session 20 import validation rejects malformed placeholder PEMs
+  - ran the focused Session 8/9/19/20 regression suites plus `npm run typecheck`, `npm test`, and `npm run build` after landing the backup hardening changes
+- Risks:
+  - the current backup envelope uses a locally configured symmetric key and HMAC signature; external KMS/Vault/HSM-backed backup-key custody and rotation workflows remain future work for Session 23
+  - restore currently recreates active certificate rows but does not yet rebuild higher-level order/artifact history from older backups, so operators should still treat backup restore as certificate-state recovery rather than full workflow replay
+  - legacy plaintext `.zip` backups remain downloadable for backward compatibility, but the hardened verify/restore flow intentionally refuses to trust or import them
+- Follow-up sessions:
+  - Session 23 — add security administration APIs
+  - Session 27 — add chaos and fault-injection validation
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+- Notes:
+  - backups are now written as encrypted `.lyttlebackup` artifacts with a signed manifest and per-entry SHA-256 checksums instead of plaintext ZIP archives
+  - added `POST /certificates/backup/:filename/verify` and `POST /certificates/backup/:filename/restore` so operators can verify and restore encrypted backups server-side without manual plaintext extraction
+  - direct import now validates PEM structure, key/certificate matching, SAN/CN domain coverage, and validity-window consistency before accepting certificate material
+  - raw `GET /certificates/backup/export/:id` remains available as a break-glass flow but is now restricted to `platform-admin` and continues to be audited explicitly
 
 ---
 

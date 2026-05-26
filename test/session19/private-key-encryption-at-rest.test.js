@@ -23,6 +23,26 @@ const originalKeyVersion = process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION;
 const originalProvider = process.env.PRIVATE_KEY_ENCRYPTION_PROVIDER;
 const originalNodeEnv = process.env.NODE_ENV;
 
+const VALID_CERT_PEM = `-----BEGIN CERTIFICATE-----
+MIIBqzCCAVCgAwIBAgIUXj2axSEIzp9WQkQnsHhPNeuGmm4wCgYIKoZIzj0EAwIw
+FjEUMBIGA1UEAwwLZXhhbXBsZS5jb20wHhcNMjYwNTI2MTgzNjUzWhcNMzYwNTIz
+MTgzNjUzWjAWMRQwEgYDVQQDDAtleGFtcGxlLmNvbTBZMBMGByqGSM49AgEGCCqG
+SM49AwEHA0IABN1hBq/wyvIjIh+Hg1XT/WAL7vwq3olyr1GCKDMbl+yYpTHbOFF/
+2mMdQfkcOXFvAlNa4tJxlpPQ9AqIpbUjfUCjfDB6MB0GA1UdDgQWBBQTeY9QpI1O
+tUGKc6LZpmhJ98f7CDAfBgNVHSMEGDAWgBQTeY9QpI1OtUGKc6LZpmhJ98f7CDAP
+BgNVHRMBAf8EBTADAQH/MCcGA1UdEQQgMB6CC2V4YW1wbGUuY29tgg93d3cuZXhh
+bXBsZS5jb20wCgYIKoZIzj0EAwIDSQAwRgIhAIk6kq5Fdvyw2EDkfqUtYrM1IHAG
+aKUyOFucZhk0VqmIAiEAzaGSXKVBsKMoA+4EHXTZ+gJV2IhFVDfTTCivqzBMiB0=
+-----END CERTIFICATE-----
+`;
+
+const VALID_KEY_PEM = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgKxTl2EOJ4qdIDZSD
+gHgdj3PXIYhR1gU9hxnOndxEC6ahRANCAATdYQav8MryIyIfh4NV0/1gC+78Kt6J
+cq9RgigzG5fsmKUx2zhRf9pjHUH5HDlxbwJTWuLScZaT0PQKiKW1I31A
+-----END PRIVATE KEY-----
+`;
+
 function resetModules() {
   delete require.cache[require.resolve(encryptionServicePath)];
   delete require.cache[require.resolve(certificateOrderServicePath)];
@@ -323,18 +343,17 @@ describe('Session 19 private-key encryption at rest', () => {
     const encryptionService = new PrivateKeyEncryptionService(prisma);
     const orderService = new CertificateOrderService(prisma, encryptionService);
     const backupService = new CertificateBackupService(prisma, encryptionService);
-    const plaintextKey =
-      '-----BEGIN PRIVATE KEY-----\nnew-secret\n-----END PRIVATE KEY-----\n';
+    const plaintextKey = VALID_KEY_PEM;
 
     const artifact = await orderService.recordArtifact({
       orderId: 'order-1',
       certificateId: null,
       domains: ['Example.com'],
       sourceType: 'uploaded',
-      certPem: '-----BEGIN CERTIFICATE-----\nartifact\n-----END CERTIFICATE-----\n',
+      certPem: VALID_CERT_PEM,
       keyPem: plaintextKey,
-      issuedAt: new Date('2026-05-26T00:00:00.000Z'),
-      expiresAt: new Date('2035-05-26T00:00:00.000Z'),
+      issuedAt: new Date('2026-05-26T18:36:53.000Z'),
+      expiresAt: new Date('2036-05-23T18:36:53.000Z'),
       activatedAt: null,
       createdByNode: 'node-1',
       metadata: { activation: 'pending' },
@@ -362,11 +381,11 @@ describe('Session 19 private-key encryption at rest', () => {
 
     const imported = await backupService.importCertificates([
       {
-        domains: ['example.com'],
-        certPem: '-----BEGIN CERTIFICATE-----\nimported\n-----END CERTIFICATE-----\n',
+        domains: ['example.com', 'www.example.com'],
+        certPem: VALID_CERT_PEM,
         keyPem: plaintextKey,
-        expiresAt: new Date('2036-01-01T00:00:00.000Z'),
-        issuedAt: new Date('2026-01-01T00:00:00.000Z'),
+        expiresAt: new Date('2036-05-23T18:36:53.000Z'),
+        issuedAt: new Date('2026-05-26T18:36:53.000Z'),
       },
     ]);
 
@@ -384,7 +403,7 @@ describe('Session 19 private-key encryption at rest', () => {
 
     const exported = await backupService.exportCertificate(prisma.state.certificates[0].id);
     assert.equal(exported.keyPem, plaintextKey);
-    assert.deepEqual(exported.domains, ['example.com']);
+    assert.deepEqual(exported.domains, ['example.com', 'www.example.com']);
   });
 });
 

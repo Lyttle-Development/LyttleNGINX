@@ -367,7 +367,12 @@ Session 19 adds application-layer envelope encryption for certificate private ke
 - legacy plaintext rows are migrated on application startup, and changing `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` causes the runtime to re-encrypt stored keys under the new version metadata
 - the current shipped provider is a local master-key envelope implementation; the service boundary is intentionally shaped so later sessions can plug in Vault/KMS/HSM-backed providers without changing certificate workflows
 
-Session 20 still needs to encrypt backup archives and tighten restore/import/export integrity, so downloaded backups and exported PEM payloads should still be treated as highly sensitive material.
+Session 20 hardens backup and restore handling on top of the Session 19 storage-layer encryption:
+
+- created backups are now encrypted at the artifact layer before they are written to disk or downloaded
+- each backup contains a signed integrity manifest plus per-entry SHA-256 checksums, and restore verifies both the manifest signature and entry digests before any import happens
+- restore now runs through a first-class server-side verification + import flow instead of requiring manual unzip/import of plaintext archives
+- raw certificate export still returns decrypted PEM material, so it remains intentionally restricted to `platform-admin` and should be treated as a break-glass action
 
 #### Alert Configuration
 
@@ -393,6 +398,8 @@ DISCORD_WEBHOOK_URL=<inject-at-runtime>
 
 ```bash
 BACKUP_DIR=/var/backups/certificates
+BACKUP_ENCRYPTION_KEY=<inject-runtime-secret>
+BACKUP_ENCRYPTION_KEY_VERSION=v1
 ```
 
 ### Database Schema
@@ -412,9 +419,9 @@ npm run prisma:migrate
 
 ## 📚 API Documentation
 
-### Session 3-9 access policy
+### Session 3-20 access policy
 
-As of Sessions 3-9, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, explicit RBAC authorization policies on protected endpoints, and durable audit logging for privileged and mutating operations.
+As of Sessions 3-20, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, explicit RBAC authorization policies on protected endpoints, durable audit logging for privileged and mutating operations, and hardened backup/restore/export flows.
 
 The current explicit public allowlist is limited to:
 
@@ -447,7 +454,7 @@ Current RBAC roles:
 
 - `viewer` — read-only admin visibility into certificates, cluster state, TLS recommendations, and auth configuration
 - `operator` — operational actions such as config reloads, certificate renewals, and log access
-- `security-admin` — certificate/key lifecycle, backup, export/import, and TLS hardening actions
+- `security-admin` — certificate/key lifecycle, encrypted backup/import/restore, and TLS hardening actions
 - `platform-admin` — full administrative access, including cluster-leadership and break-glass maintenance flows
 - `internal-node` — reserved for trusted inter-node identities; currently used for internal certificate sync and future cluster control-plane policies
 
@@ -490,7 +497,7 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 | Public           | health probes, metrics, ACME challenge serving                       |
 | `viewer`         | read-only admin inspection endpoints                                 |
 | `operator`       | runtime operations such as reload, renew, and log inspection         |
-| `security-admin` | certificate/key management, backup/export/import, TLS hardening      |
+| `security-admin` | certificate/key management, encrypted backup/import/restore, TLS hardening |
 | `platform-admin` | full admin access including cluster maintenance endpoints            |
 | `internal-node`  | internal certificate sync and future node-only control-plane actions |
 
@@ -516,9 +523,11 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 | POST   | `/certificates/backup`            | Create backup       | `security-admin` |
 | GET    | `/certificates/backup`            | List backups        | `security-admin` |
 | GET    | `/certificates/backup/:filename`  | Download backup     | `security-admin` |
+| POST   | `/certificates/backup/:filename/verify`  | Verify encrypted backup integrity | `security-admin` |
+| POST   | `/certificates/backup/:filename/restore` | Restore from encrypted backup     | `security-admin` |
 | DELETE | `/certificates/backup/:filename`  | Delete backup       | `security-admin` |
 | POST   | `/certificates/backup/import`     | Import certificates | `security-admin` |
-| GET    | `/certificates/backup/export/:id` | Export certificate  | `security-admin` |
+| GET    | `/certificates/backup/export/:id` | Export decrypted certificate PEMs | `platform-admin` |
 
 ### Metrics Endpoints
 
@@ -665,6 +674,16 @@ As of Session 19, the database no longer stores certificate private keys as plai
 - runtime workflows decrypt private keys only when they need to validate material, write local `privkey.pem` files, create backups, or serve explicit export flows
 
 That means order-history APIs still avoid raw key exposure, while the storage layer now has a clear path for future master-key rotation and external key-manager integration.
+
+### Backup and restore protection model
+
+Session 20 moves backup artifacts themselves onto a hardened envelope format:
+
+- backups are written as encrypted `.lyttlebackup` artifacts instead of plaintext ZIP files
+- the encrypted payload contains the familiar logical entries (`certificates.json`, `metadata.json`, `certs/.../fullchain.pem`, `certs/.../privkey.pem`), but those entries are only available after successful decryption
+- every backup includes a signed manifest with per-entry SHA-256 checksums, and restore refuses to import anything unless the manifest signature, decrypted payload, and entry digests all verify cleanly
+- direct import still exists for explicitly supplied certificate payloads, but each entry is now validated for PEM structure, private-key match, certificate SAN/CN coverage, and validity-window consistency before it is accepted
+- raw certificate export is treated as a higher-risk break-glass flow and is now restricted to `platform-admin`
 
 Example configuration snippets:
 
@@ -847,12 +866,14 @@ curl -X POST http://localhost:3000/certificates/backup \
   -H "X-API-Key: $API_KEY"
 ```
 
-Creates a ZIP file containing:
+Creates an encrypted `.lyttlebackup` artifact containing these logical entries inside the encrypted payload:
 
-- `certificates.json` - Database export
-- `certs/{certificate-storage-id}/fullchain.pem` - Certificate files
-- `certs/{certificate-storage-id}/privkey.pem` - Private keys
-- `metadata.json` - Backup metadata
+- `certificates.json` - database export for restore/import
+- `certs/{certificate-storage-id}/fullchain.pem` - certificate files
+- `certs/{certificate-storage-id}/privkey.pem` - private keys
+- `metadata.json` - backup metadata
+
+The backup file on disk is encrypted and signed; plaintext PEM material is not written to the backup directory.
 
 ### List Backups
 
@@ -864,22 +885,48 @@ curl http://localhost:3000/certificates/backup \
 ### Download Backup
 
 ```bash
-curl http://localhost:3000/certificates/backup/certificates-backup-2025-11-22.zip \
+curl http://localhost:3000/certificates/backup/certificates-backup-2026-05-26T18-40-26-776Z.lyttlebackup \
   -H "X-API-Key: $API_KEY" \
-  --output backup.zip
+  --output backup.lyttlebackup
+```
+
+### Verify Backup Integrity
+
+```bash
+curl -X POST http://localhost:3000/certificates/backup/certificates-backup-2026-05-26T18-40-26-776Z.lyttlebackup/verify \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ### Restore from Backup
 
 ```bash
-# Extract backup
-unzip backup.zip
+# Verify and restore the encrypted backup server-side
+curl -X POST http://localhost:3000/certificates/backup/certificates-backup-2026-05-26T18-40-26-776Z.lyttlebackup/restore \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
 
-# Import certificates
+### Direct Import / Break-Glass Export
+
+```bash
+# Direct certificate import still exists for explicit operator-supplied payloads.
 curl -X POST http://localhost:3000/certificates/backup/import \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $SECURITY_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d @certificates.json
+  -d '{
+    "certificates": [
+      {
+        "domains": ["example.com", "www.example.com"],
+        "certPem": "-----BEGIN CERTIFICATE-----\\n...",
+        "keyPem": "-----BEGIN PRIVATE KEY-----\\n...",
+        "issuedAt": "2026-05-26T18:36:53.000Z",
+        "expiresAt": "2036-05-23T18:36:53.000Z"
+      }
+    ]
+  }'
+
+# Raw PEM export is now restricted to platform-admin because it returns decrypted key material.
+curl http://localhost:3000/certificates/backup/export/<certificate-id> \
+  -H "Authorization: Bearer $PLATFORM_ADMIN_TOKEN"
 ```
 
 ### Automated Backups
