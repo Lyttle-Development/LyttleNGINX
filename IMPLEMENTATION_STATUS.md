@@ -7,11 +7,14 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Current summary
 
-- Overall status: in progress
-- Current phase: Phase 10 — Documentation and final validation
-- Most recently completed session: Session 29 — Reconcile README, architecture docs, and runbooks with reality
-- Next recommended session from the roadmap: Session 30 — Final production-readiness validation pass
-- Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
+- Overall status: roadmap complete, with accepted production deferments documented separately
+- Current phase: Phase 10 — Documentation and final validation (complete)
+- Most recently completed session: Session 30 — Final production-readiness validation pass
+- Next recommended session from the roadmap: none; the 30-session plan is complete
+- Readiness references:
+  - `PRODUCTION_READINESS_ASSESSMENT.md`
+  - `FINAL_PRODUCTION_CHECKLIST.md`
+  - `PRODUCTION_DEFERMENT_REGISTER.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
 ---
@@ -1073,10 +1076,26 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 30 — Final production-readiness validation pass
 
-- Status: not started
+- Status: done
 - Objective: reconcile the assessment, roadmap, and shipped implementation into a final go-live checklist
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: production-readiness cannot be claimed until every assessment item is accounted for
+- Files touched:
+  - `README.md`
+  - `docs/architecture/current-architecture.md`
+  - `FINAL_PRODUCTION_CHECKLIST.md`
+  - `PRODUCTION_DEFERMENT_REGISTER.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+- Tests added/updated:
+  - no code-level tests were added for this documentation-and-validation session
+  - ran `node -v` and `npm -v` to confirm the pinned toolchain is available in the workspace session (`24.16.0` / `11.15.0`)
+  - ran `npm run verify:ci` as the final repository validation contract; the first run exposed a stale README omission around explicit `CLUSTER_CONTROL_PORT` guidance, which Session 30 corrected before the verification suite was rerun to green
+  - the CI-grade verification pass exercises Prisma client generation, linting, typechecking, coverage-gated tests, build validation, and production dependency audit in one contract
+- Risks:
+  - rollout still requires explicit acceptance of the residual items in `PRODUCTION_DEFERMENT_REGISTER.md`, especially the lack of internal mTLS, incomplete Docker runtime hardening, baseline rate limiting, and environment-driven secret ingestion
+  - the repository now has a final readiness position, but some operational controls still depend on external platform configuration rather than in-repo code alone (for example isolated control-plane networking, Swarm/external secret injection, GitHub branch protections, and external monitoring/alert delivery)
 - Follow-up sessions: none
-- Notes: final checklist and deferment register remain to be created
+- Notes:
+  - published `FINAL_PRODUCTION_CHECKLIST.md` to reconcile every numbered assessment section and capture the final go-live checklist
+  - published `PRODUCTION_DEFERMENT_REGISTER.md` to track accepted residual gaps, compensating controls, and recommended future work
+  - updated the README and current-architecture docs so they no longer describe Session 30 as pending and instead point operators to the final validation artifacts
+  - recorded ADR-033 to formalize the final-readiness posture: controlled production rollout for the documented current architecture, with explicit deferment sign-off instead of implied parity with the ideal target architecture

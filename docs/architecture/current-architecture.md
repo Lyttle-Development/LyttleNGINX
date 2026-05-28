@@ -225,26 +225,33 @@ The current observability surface has three layers:
 | Single-node Compose | evaluation and non-HA use; not final hardened production guidance |
 | Docker Swarm global mode | target architecture and controlled-testing path; final go-live sign-off still pending |
 
-## 7. Important current limitations
+## 7. Final validation references
+
+Session 30 published the final readiness convergence artifacts:
+
+- `FINAL_PRODUCTION_CHECKLIST.md`
+- `PRODUCTION_DEFERMENT_REGISTER.md`
+
+Use them together with this architecture document when deciding whether a rollout is acceptable for your environment.
+
+## 8. Important current limitations
 
 The docs should stay explicit about the boundaries that still exist today:
 
-1. **Session 30 is still outstanding**
-   - there is not yet a final go-live checklist or final gap reconciliation pass
-2. **Internal node traffic is still authenticated HTTP, not mTLS**
+1. **Internal node traffic is still authenticated HTTP, not mTLS**
    - node identity and RBAC exist
    - transport-level mutual TLS is still future work
-3. **NestJS and NGINX still share a single container**
+2. **NestJS and NGINX still share a single container**
    - supervision is fail-fast now
    - the split control-plane/dataplane target architecture is not implemented yet
-4. **Secret ingestion is still environment-variable driven**
+3. **Secret ingestion is still environment-variable driven**
    - docs recommend Swarm secrets or an external secret store
    - first-class `*_FILE` or external secret-provider integration is still future work
-5. **Manual config rollback is not yet a dedicated API**
+4. **Manual config rollback is not yet a dedicated API**
    - automatic rollback exists for reload failures
    - logical rollback still requires desired-state reversion plus a new reload
 
-## 8. Incident-navigation map
+## 9. Incident-navigation map
 
 When something looks wrong, start here:
 
@@ -265,10 +272,12 @@ Then move into the dedicated runbook:
 - break-glass secret handling → `docs/runbooks/security-break-glass.md`
 - monitoring and alert response → `docs/runbooks/monitoring-alerts.md`
 
-## 9. Related references
+## 10. Related references
 
 - `README.md`
 - `PRODUCTION_READINESS_ASSESSMENT.md`
+- `FINAL_PRODUCTION_CHECKLIST.md`
+- `PRODUCTION_DEFERMENT_REGISTER.md`
 - `IMPLEMENTATION_PLAN_BY_SESSION.md`
 - `IMPLEMENTATION_STATUS.md`
 - `ARCHITECTURE_DECISIONS.md`

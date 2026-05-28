@@ -1,13 +1,13 @@
 # 🔒 LyttleNGINX
 
-![Session 29 complete](https://img.shields.io/badge/status-session%2029%20complete-blue)
-![Phase 10 in progress](https://img.shields.io/badge/roadmap-phase%2010%20in%20progress-yellow)
-![Final sign-off pending](https://img.shields.io/badge/readiness-final%20sign--off%20pending-orange)
+![Session 30 complete](https://img.shields.io/badge/status-session%2030%20complete-blue)
+![Phase 10 complete](https://img.shields.io/badge/roadmap-phase%2010%20complete-brightgreen)
+![Controlled rollout ready](https://img.shields.io/badge/readiness-controlled%20rollout%20ready-yellowgreen)
 ![License: UNLICENSED](https://img.shields.io/badge/license-UNLICENSED-red)
 
 **NestJS-based NGINX control plane for proxy configuration, certificate lifecycle automation, cluster coordination, and operator observability.**
 
-> **Current status:** Sessions 1-29 of the implementation plan are complete. Session 30 — final production-readiness validation — is still outstanding. Treat the repository as a hardened implementation baseline with remaining final validation work, not as a finished production sign-off.
+> **Current status:** Sessions 1-30 of the implementation plan are complete. Final readiness artifacts now live in [`FINAL_PRODUCTION_CHECKLIST.md`](FINAL_PRODUCTION_CHECKLIST.md) and [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md). Treat the repository as ready for a controlled production rollout of the documented current architecture only after the checklist items are completed and the listed deferments are explicitly accepted.
 
 ## Current state at a glance
 
@@ -24,7 +24,7 @@
 
 These constraints are still real and are intentionally documented here:
 
-- **Session 30 is still open.** The final go-live checklist and gap reconciliation are not published yet.
+- **Production rollout still carries accepted deferments.** Review [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md) before go-live and make sure the unresolved items are consciously accepted.
 - **Internal node traffic is still authenticated HTTP, not mTLS.** Identity and RBAC exist, but transport hardening remains future work.
 - **NestJS and NGINX still share a single container.** The runtime is fail-fast and restart-friendly, but the preferred split control-plane/dataplane architecture is not implemented yet.
 - **Manual config rollback is not a dedicated API today.** Automatic rollback covers reload failures; logical rollback still requires reverting desired state and reloading.
@@ -36,7 +36,7 @@ These constraints are still real and are intentionally documented here:
 | --- | --- | --- |
 | Local development | coding, debugging, manual verification | best-supported workflow today |
 | Single-node Compose | demos, evaluation, non-HA deployments | usable for evaluation; not final hardened production guidance |
-| Docker Swarm global mode | target clustered operating model | controlled testing path; final sign-off still pending |
+| Docker Swarm global mode | target clustered operating model | ready for controlled rollout when the final checklist is completed and deferments are accepted |
 
 ## Quick start
 
@@ -204,6 +204,8 @@ The shipped Session 18 implementation is intentionally conservative:
 - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md) — current risk inventory and production gap analysis
 - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md) — roadmap and acceptance criteria
 - [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) — session-by-session shipped status
+- [`FINAL_PRODUCTION_CHECKLIST.md`](FINAL_PRODUCTION_CHECKLIST.md) — final assessment reconciliation and go-live checklist
+- [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md) — accepted gaps, compensating controls, and follow-up work
 - [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) — ADR log across all sessions
 - [`docs/architecture/current-architecture.md`](docs/architecture/current-architecture.md) — current implementation architecture and explicit boundaries
 
@@ -245,6 +247,7 @@ Use [`docker-compose.swarm.yml`](docker-compose.swarm.yml) for controlled cluste
 Important current Swarm notes:
 
 - peer communication uses explicit advertised control-plane settings (`CLUSTER_CONTROL_ADDRESS`, `CLUSTER_CONTROL_PORT`, or `CLUSTER_CONTROL_URL`)
+- treat `CLUSTER_CONTROL_PORT` as the peer-facing port other nodes must dial; do not assume it matches PORT
 - cluster leadership uses durable lease state with generation/fencing metadata
 - cluster-wide reload and certificate activation flows use tracked operation IDs and per-node ACKs
 - internal node transport is still authenticated HTTP, not mTLS

@@ -1149,3 +1149,48 @@ Adopt the following documentation posture for operator-facing materials:
 - future sessions should update the dedicated architecture overview and affected runbooks whenever they materially change runtime behavior or recovery procedures
 - Session 30 can build its final go-live checklist from a documentation set that already distinguishes shipped behavior from remaining validation work
 
+---
+
+## ADR-033 — Final readiness sign-off uses an explicit checklist plus deferment register instead of silently implying parity with the ideal target architecture
+
+- Status: accepted
+- Session: Session 30 — Final production-readiness validation pass
+- Date: 2026-05-28
+
+### Context
+
+By Session 30, the repository had completed the planned implementation work across endpoint protection, health semantics, recovery behavior, cluster leases and ACKs, staged NGINX activation, certificate-order durability, encrypted backups, operational APIs, observability, tests, CI gates, and operator documentation.
+
+At the same time, several original assessment recommendations still remained intentionally unimplemented or only partially implemented, most notably:
+
+- internal node transport still uses authenticated HTTP rather than mTLS
+- the current runtime keeps NestJS and NGINX in the same container
+- secret ingestion is still environment-variable driven rather than first-class secret-provider integration
+- rate limiting and some Docker runtime hardening expectations remain baseline rather than fully production-tuned
+- several assessment sections describe a broader ideal API and target architecture than the current shipped scope
+
+Declaring the project simply “production-ready” without preserving those boundaries would repeat the documentation overstatement problem Session 29 was created to fix.
+
+### Decision
+
+Use the following final-readiness posture:
+
+1. publish a `FINAL_PRODUCTION_CHECKLIST.md` that:
+   - reconciles every numbered assessment section
+   - records the verification evidence used for Session 30
+   - defines the manual go-live checks operators must complete outside the repository
+2. publish a `PRODUCTION_DEFERMENT_REGISTER.md` that captures each accepted residual gap with:
+   - assessment linkage
+   - current compensating controls
+   - impact if left unchanged
+   - recommended follow-up direction
+3. describe the repository as ready only for the **documented current operating model**, not as automatic proof that the ideal target architecture from the assessment has been reached in full
+4. require future production claims to reference both the checklist and deferment register together
+
+### Consequences
+
+- Session 30 closes the roadmap without hiding residual risk
+- operators get a concrete yes/no rollout checklist instead of scattered caveats across README text and ADR history
+- accepted deferments such as internal mTLS, stronger runtime hardening, secret-provider integration, and richer operational APIs remain visible and traceable
+- future work can reduce risk incrementally by retiring deferments one-by-one rather than reopening the entire readiness question from scratch
+
