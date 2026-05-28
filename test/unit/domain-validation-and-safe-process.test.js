@@ -239,6 +239,29 @@ describe('strict domain validation and safe process execution', () => {
     );
   });
 
+  it('parses, joins, hashes, and detects wildcard domain sets consistently', () => {
+    const {
+      containsWildcardDomain,
+      hashDomains,
+      joinDomains,
+      parseDomains,
+      normalizeDomains,
+    } = loadDomainUtils();
+
+    assert.deepEqual(parseDomains(' example.com ; *.Example.com ', { allowWildcard: true }), [
+      'example.com',
+      '*.example.com',
+    ]);
+    assert.equal(joinDomains(['Example.com', 'example.com']), 'example.com');
+    assert.equal(
+      hashDomains(['*.example.com', 'example.com'], { allowWildcard: true }),
+      hashDomains('example.com;*.example.com', { allowWildcard: true }),
+    );
+    assert.equal(containsWildcardDomain(['example.com', '*.example.com']), true);
+    assert.throws(() => normalizeDomains([]), /at least one domain is required/i);
+    assert.throws(() => parseDomains(42), /domain input must be a string/i);
+  });
+
   it('uses argument-array OpenSSL execution for TLS connection tests', async () => {
     const calls = installExecFileStub(async ({ command, args }) => {
       assert.equal(command, 'openssl');

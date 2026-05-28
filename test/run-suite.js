@@ -99,6 +99,7 @@ console.log(
 const childArgs = [];
 if (options.coverage) {
   childArgs.push('--experimental-test-coverage');
+  childArgs.push('--test-concurrency=1');
 }
 childArgs.push(
   '--test',
