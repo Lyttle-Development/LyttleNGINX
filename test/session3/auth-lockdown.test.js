@@ -110,19 +110,115 @@ const healthServiceMock = {
 };
 
 const metricsServiceMock = {
-  getCertificateMetrics: async () => ({
-    total: 0,
-    valid: 0,
-    expiringSoon: 0,
-    expired: 0,
-    avgDaysUntilExpiry: 0,
-  }),
-  getProxyMetrics: async () => ({
-    total: 0,
-    withSsl: 0,
-    withoutSsl: 0,
-    proxies: 0,
-    redirects: 0,
+  getAllMetrics: async () => ({
+    timestamp: new Date().toISOString(),
+    collection: {
+      sections: {
+        certificates: 'ok',
+        proxies: 'ok',
+        health: 'ok',
+        leases: 'ok',
+        clusterOperations: 'ok',
+        certificateOrders: 'ok',
+        backups: 'ok',
+      },
+      errors: [],
+    },
+    certificates: {
+      total: 0,
+      valid: 0,
+      expiringSoon: 0,
+      expired: 0,
+      avgDaysUntilExpiry: 0,
+      oldestExpiry: null,
+      newestExpiry: null,
+    },
+    proxies: {
+      total: 0,
+      withSsl: 0,
+      withoutSsl: 0,
+      proxies: 0,
+      redirects: 0,
+    },
+    health: {
+      status: 'ok',
+      summary: { total: 0, ok: 0, error: 0 },
+      thresholds: {
+        configApplyMaxAgeMs: 0,
+        certificateSyncMaxAgeMs: 0,
+      },
+      checks: [],
+      database: null,
+      nginxMaster: null,
+      operations: {
+        configApply: {
+          status: 'ok',
+          ageMs: 0,
+          maxAgeMs: 0,
+          lastSuccessAt: null,
+          lastAttemptAt: null,
+          lastError: null,
+        },
+        certificateSync: {
+          status: 'ok',
+          ageMs: 0,
+          maxAgeMs: 0,
+          lastSuccessAt: null,
+          lastAttemptAt: null,
+          lastError: null,
+        },
+      },
+    },
+    leases: {
+      total: 0,
+      active: 0,
+      expired: 0,
+      leader: {
+        present: false,
+        ownerNodeId: null,
+        ownerHostname: null,
+        generation: 0,
+        ttlSeconds: 0,
+        secondsRemaining: 0,
+        isExpired: true,
+      },
+    },
+    clusterOperations: {
+      total: 0,
+      byStatus: {},
+      byType: {},
+      active: {
+        total: 0,
+        stale: 0,
+        oldestAgeSeconds: 0,
+        staleThresholdMs: 0,
+      },
+      recentFailures: {
+        total: 0,
+        windowMs: 0,
+      },
+      acknowledgements: {
+        total: 0,
+        byStatus: {},
+      },
+    },
+    certificateOrders: {
+      total: 0,
+      active: 0,
+      stale: 0,
+      staleThresholdMs: 0,
+      oldestActiveAgeSeconds: 0,
+      retryScheduled: 0,
+      retryDue: 0,
+      byStatus: {},
+    },
+    backups: {
+      total: 0,
+      totalSizeBytes: 0,
+      latest: null,
+      maxAgeMs: 0,
+      freshnessStatus: 0,
+    },
   }),
   formatPrometheusMetrics: () => 'lyttle_certificates_total 0',
 };

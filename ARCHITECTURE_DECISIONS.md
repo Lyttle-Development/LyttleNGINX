@@ -43,6 +43,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-025 | Cluster overview and per-node convergence APIs backed by the operation journal          | accepted | Session 22 | 2026-05-26 |
 | ADR-026 | Security administration APIs expose posture review, manual rotation bridges, and a future internal-cert rotation contract | accepted | Session 23 | 2026-05-28 |
 | ADR-027 | Structured stdout operational logging with request-scoped context and redaction | accepted | Session 24 | 2026-05-28 |
+| ADR-028 | Dependency drilldowns plus state-based Prometheus metrics for leases, operations, orders, and backups | accepted | Session 25 | 2026-05-28 |
 
 ---
 
@@ -947,4 +948,40 @@ Adopt the following operational logging model for the current monolith:
 - request/actor/operation context is attached once in middleware/async context rather than reimplemented piecemeal inside every service
 - the `/logs` endpoint now exposes structured entries for the current process only, while durable review of privileged actions remains the responsibility of `GET /audit`
 - later sessions can enrich this schema with additional metrics, node-state detail, and external log shipping guidance without reintroducing synchronous file logging or mixed audit/operational concerns
+
+---
+
+## ADR-028 — Dependency drilldowns plus state-based Prometheus metrics for leases, operations, orders, and backups
+
+- Status: accepted
+- Session: Session 25 — Expand metrics and alerting
+- Date: 2026-05-28
+
+### Context
+
+After Session 24, operational logs were structured and correlated, but the public metrics surface was still shallow: mostly certificate and proxy counts. Operators still lacked first-class metrics for leader leases, cluster operation backlog/failures, certificate-order staleness, backup freshness, and richer dependency drilldowns beyond the binary readiness response.
+
+### Decision
+
+Adopt the following observability model for the current monolith:
+
+1. keep `GET /metrics` public and extend it with state-based Prometheus gauges for:
+   - dependency health and DB latency
+   - config-apply and certificate-sync freshness
+   - leader lease presence, expiry window, and generation
+   - cluster operations by status/type plus recent failure windows and ACK rollups
+   - certificate orders by lifecycle state plus stale/retry counts
+   - encrypted backup inventory and freshness
+   - per-section metrics collection success/failure so partial scrape issues are visible
+2. keep `GET /metrics/json` as the dashboard/debug-friendly JSON mirror of the same data, including per-section `collection.errors`
+3. add `GET /health/dependencies` for direct dependency drilldowns and `GET /health/deep` for combined liveness/startup/readiness/dependency inspection
+4. drive alert recommendations primarily from *current state* and *recent failure windows* rather than all-time counters, so Prometheus alerts can debounce and clear cleanly
+5. document recommended alert rules and dashboard panels in operator docs instead of embedding policy directly in the app runtime
+
+### Consequences
+
+- operators can now distinguish a node that is merely “up” from one that is healthy, converged, and backed by fresh config/certificate/backup state
+- dashboards and alerts can reason about lease expiry, stuck operations, stale certificate workflows, and backup freshness without shelling into the node
+- metrics scrapes can degrade gracefully when one section fails, while still exposing section-level collection errors to Prometheus and the JSON API
+- later sessions can build historical SLOs, chaos validation, and CI release gates on top of a broader but still stable observability contract
 

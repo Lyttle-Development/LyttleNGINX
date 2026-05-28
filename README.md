@@ -38,8 +38,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 8 in progress
-- **Completed in Sessions 1-24 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, and structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction
-- **Next recommended implementation session:** Session 25 — expand metrics and alerting
+- **Completed in Sessions 1-25 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction, plus expanded Prometheus/JSON metrics and dependency drilldowns for leases, cluster operations, certificate orders, backups, and DB health
+- **Next recommended implementation session:** Session 26 — add automated test harness and baseline coverage
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -101,7 +101,7 @@ npm -v    # expected: 11.15.0
 
 ### 📊 Monitoring & Observability
 
-- **Prometheus Metrics** - 7+ metrics for Grafana dashboards
+- **Prometheus Metrics** - dependency, lease, cluster-operation, certificate-order, backup, and certificate lifecycle gauges for Grafana dashboards
 - **Health Checks** - Automated daily certificate health monitoring
 - **Real-time Status** - Live certificate expiry tracking
 - **JSON API** - Query certificate and proxy status
@@ -537,8 +537,8 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 
 | Method | Endpoint        | Description        | Auth   |
 | ------ | --------------- | ------------------ | ------ |
-| GET    | `/metrics`      | Prometheus metrics | Public |
-| GET    | `/metrics/json` | JSON metrics       | Public |
+| GET    | `/metrics`      | Prometheus metrics for health, leases, operations, certificates, and backups | Public |
+| GET    | `/metrics/json` | JSON metrics with per-section collection status and errors | Public |
 
 ### Logs Endpoints
 
@@ -669,6 +669,8 @@ curl http://localhost:3000/auth/me \
 | GET    | `/health/live`    | Liveness probe; returns 200 while the process is alive                    | Public     |
 | GET    | `/health/startup` | Startup probe; returns 503 until first config apply + cert sync succeed   | Public     |
 | GET    | `/health/ready`   | Readiness probe; returns 503 when DB/NGINX/config/cert state is unhealthy | Public     |
+| GET    | `/health/dependencies` | Dependency drilldown for DB, NGINX, config apply, and certificate sync | Public     |
+| GET    | `/health/deep`    | Combined liveness/startup/readiness/dependency report for incident triage | Public     |
 | GET    | `/health`         | Legacy alias for `/health/live`                                           | Public     |
 | GET    | `/ready`          | Legacy alias for `/health/ready`                                          | Public     |
 | POST   | `/reload`         | Reload NGINX config                                                       | `operator` |
@@ -884,13 +886,39 @@ curl http://localhost:3000/metrics/json
 
 **Available Metrics:**
 
-- `lyttle_certificates_total` - Total certificates
-- `lyttle_certificates_valid` - Valid certificates
-- `lyttle_certificates_expiring_soon` - Expiring soon
-- `lyttle_certificates_expired` - Expired certificates
-- `lyttle_certificates_avg_days_until_expiry` - Average days until expiry
-- `lyttle_proxy_entries_total` - Total proxy entries
-- `lyttle_proxy_entries_ssl` - Proxies with SSL enabled
+- `lyttle_health_dependency_status{name=...}` - health status for DB, NGINX, config apply, and certificate sync
+- `lyttle_db_connectivity_status` / `lyttle_db_query_duration_ms` - DB health and latency
+- `lyttle_config_apply_*` / `lyttle_certificate_sync_*` - freshness, timestamps, and last-error indicators
+- `lyttle_cluster_leader_lease_seconds_remaining` / `lyttle_cluster_leader_lease_generation` - leader lease health and fencing token visibility
+- `lyttle_cluster_operations_total{status=...}` / `lyttle_cluster_operations_recent_failures_total` - operation convergence and recent failure windows
+- `lyttle_cluster_operation_acks_total{status=...}` - per-node ACK state rollups
+- `lyttle_certificate_orders_total{status=...}` / `lyttle_certificate_orders_stale_total` - certificate workflow backlog and stuck-order visibility
+- `lyttle_backups_total` / `lyttle_backup_freshness_status` - encrypted backup presence and freshness
+- `lyttle_certificates_*` - certificate inventory and expiry distribution
+- `lyttle_proxy_entries_*` - proxy inventory and SSL coverage
+- `lyttle_metrics_collection_status{section=...}` - whether each metrics section was collected successfully
+
+The JSON view at `GET /metrics/json` also includes a `collection.errors` array so dashboards and incident tooling can distinguish a partial metrics scrape from a full endpoint failure.
+
+### Dependency Drilldowns
+
+Use the health drilldown endpoints during incidents:
+
+```bash
+# Dependency-only drilldown
+curl http://localhost:3000/health/dependencies | jq
+
+# Full deep-health report
+curl http://localhost:3000/health/deep | jq
+```
+
+These endpoints return structured details for:
+
+- PostgreSQL connectivity and latency
+- NGINX master-process status
+- config-apply freshness and last-error state
+- certificate-sync freshness and last-error state
+- combined startup/readiness/dependency summaries for operator triage
 
 ### Configure Prometheus Scraping
 
@@ -939,6 +967,8 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR/WEBHOOK/URL
 4. **Renewal Failure** - Alert when renewal fails
 
 The monitoring service runs **daily at 9 AM** automatically.
+
+For Prometheus/Grafana alerting, see [`docs/runbooks/monitoring-alerts.md`](docs/runbooks/monitoring-alerts.md) for recommended rules covering dependency health, leader leases, cluster operations, certificate orders, and backup freshness.
 
 ---
 

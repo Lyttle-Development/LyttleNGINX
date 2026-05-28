@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 8 — Logging, metrics, and SRE readiness
-- Most recently completed session: Session 24 — Replace ad hoc logging with structured operational and audit logging
-- Next recommended session from the roadmap: Session 25 — Expand metrics and alerting
+- Most recently completed session: Session 25 — Expand metrics and alerting
+- Next recommended session from the roadmap: Session 26 — Add automated test harness and baseline coverage
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -910,13 +910,36 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 25 — Expand metrics and alerting
 
-- Status: not started
+- Status: done
 - Objective: add observability for leases, config apply, cert orders, backups, and DB health
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: major failure modes are still under-instrumented
-- Follow-up sessions: Session 27, Session 29
-- Notes: should align with the health endpoint redesign
+- Files touched:
+  - `.env.example`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `docs/runbooks/monitoring-alerts.md`
+  - `src/health/health.controller.ts`
+  - `src/health/health.service.ts`
+  - `src/metrics/metrics.module.ts`
+  - `src/metrics/metrics.controller.ts`
+  - `src/metrics/metrics.service.ts`
+  - `test/session25/metrics-and-alerting.test.js`
+- Tests added/updated:
+  - added `test/session25/metrics-and-alerting.test.js` to verify the expanded JSON/Prometheus metrics surface, partial metrics collection failure handling, and the new `/health/dependencies` + `/health/deep` drilldown endpoints
+  - validated the edited health/metrics files with targeted IDE error checks before running repository verification
+  - ran the focused Session 25 regression, `npm run typecheck`, `npm run build`, and the full `npm test` suite after landing the observability changes
+- Risks:
+  - the new metrics are primarily current-state gauges built from live DB/filesystem reads and in-memory health state, so historical time-series retention and SLO alert tuning still depend on external Prometheus/Grafana infrastructure
+  - backup freshness metrics currently reflect the local node backup directory only; cluster-wide backup orchestration and off-node retention validation remain future work
+  - metrics and health drilldowns improve diagnosability, but they do not themselves prove recovery behavior under fault injection; Session 27 remains responsible for that evidence
+- Follow-up sessions:
+  - Session 26 — add automated test harness and baseline coverage
+  - Session 27 — add chaos and fault-injection validation
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+- Notes:
+  - expanded `GET /metrics` and `GET /metrics/json` to expose certificate, proxy, dependency-health, leader-lease, cluster-operation, certificate-order, backup, and metrics-collection status gauges
+  - added `GET /health/dependencies` and `GET /health/deep` so operators can inspect dependency drilldowns and combined probe state without inferring detail from readiness alone
+  - documented configurable freshness thresholds for metrics/alerting in `.env.example` and added `docs/runbooks/monitoring-alerts.md` with recommended Prometheus alert rules for the newly exposed signals
 
 ---
 

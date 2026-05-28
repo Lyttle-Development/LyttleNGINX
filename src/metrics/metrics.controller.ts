@@ -10,28 +10,12 @@ export class MetricsController {
   @Get()
   @Header('Content-Type', 'text/plain; version=0.0.4')
   async getPrometheusMetrics(): Promise<string> {
-    const [certificates, proxies] = await Promise.all([
-      this.metricsService.getCertificateMetrics(),
-      this.metricsService.getProxyMetrics(),
-    ]);
-
-    return this.metricsService.formatPrometheusMetrics({
-      certificates,
-      proxies,
-    });
+    const metrics = await this.metricsService.getAllMetrics();
+    return this.metricsService.formatPrometheusMetrics(metrics);
   }
 
   @Get('json')
   async getJsonMetrics() {
-    const [certificates, proxies] = await Promise.all([
-      this.metricsService.getCertificateMetrics(),
-      this.metricsService.getProxyMetrics(),
-    ]);
-
-    return {
-      timestamp: new Date().toISOString(),
-      certificates,
-      proxies,
-    };
+    return this.metricsService.getAllMetrics();
   }
 }

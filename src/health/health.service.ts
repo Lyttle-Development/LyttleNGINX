@@ -52,31 +52,38 @@ export class HealthService {
   }
 
   async ready() {
-    const checks = [
-      await this.checkDatabaseConnectivity(),
-      await this.checkNginxMasterProcess(),
-      this.checkOperationFreshness(
-        'config_apply',
-        this.configApplyState,
-        this.configApplyMaxAgeMs,
-      ),
-      this.checkOperationFreshness(
-        'certificate_sync',
-        this.certificateSyncState,
-        this.certificateSyncMaxAgeMs,
-      ),
-    ];
+    const checks: HealthCheckResult[] = await this.buildDependencyChecks();
+    return this.createDependencyReport('readiness', checks);
+  }
 
-    const healthy = checks.every((check) => check.status === 'ok');
+  async dependencies() {
+    const checks: HealthCheckResult[] = await this.buildDependencyChecks();
+    return this.createDependencyReport('dependencies', checks);
+  }
+
+  async deep() {
+    const live = await this.live();
+    const startup = await this.startup();
+    const dependencyChecks: HealthCheckResult[] =
+      await this.buildDependencyChecks();
+    const readiness = this.createDependencyReport('readiness', dependencyChecks);
+    const dependencies = this.createDependencyReport(
+      'dependencies',
+      dependencyChecks,
+    );
+    const healthy =
+      live.status === 'ok' &&
+      startup.status === 'ok' &&
+      readiness.status === 'ok' &&
+      dependencies.status === 'ok';
 
     return {
       status: healthy ? 'ok' : 'error',
-      probe: 'readiness',
-      checks,
-      thresholds: {
-        configApplyMaxAgeMs: this.configApplyMaxAgeMs,
-        certificateSyncMaxAgeMs: this.certificateSyncMaxAgeMs,
-      },
+      probe: 'deep',
+      live,
+      startup,
+      readiness,
+      dependencies,
       uptime: process.uptime(),
       startedAt: this.startedAt.toISOString(),
       timestamp: new Date().toISOString(),
@@ -109,6 +116,21 @@ export class HealthService {
       this.certificateSyncState,
       error,
     );
+  }
+
+  getOperationalDependencyState() {
+    return {
+      configApply: this.createOperationSnapshot(
+        'config_apply',
+        this.configApplyState,
+        this.configApplyMaxAgeMs,
+      ),
+      certificateSync: this.createOperationSnapshot(
+        'certificate_sync',
+        this.certificateSyncState,
+        this.certificateSyncMaxAgeMs,
+      ),
+    };
   }
 
   private createOperationState(): OperationState {
@@ -196,6 +218,23 @@ export class HealthService {
     }
 
     return this.createCheckResult(name, 'ok', 'fresh', state, ageMs, maxAgeMs);
+  }
+
+  private async buildDependencyChecks(): Promise<HealthCheckResult[]> {
+    return [
+      await this.checkDatabaseConnectivity(),
+      await this.checkNginxMasterProcess(),
+      this.checkOperationFreshness(
+        'config_apply',
+        this.configApplyState,
+        this.configApplyMaxAgeMs,
+      ),
+      this.checkOperationFreshness(
+        'certificate_sync',
+        this.certificateSyncState,
+        this.certificateSyncMaxAgeMs,
+      ),
+    ];
   }
 
   private async checkDatabaseConnectivity(): Promise<HealthCheckResult> {
@@ -304,6 +343,62 @@ export class HealthService {
       operationAgeMs: ageMs,
       maxAgeMs,
       stateDetails: state.details,
+    };
+  }
+
+  private createDependencyReport(
+    probe: 'readiness' | 'dependencies',
+    checks: HealthCheckResult[],
+  ) {
+    const healthy = checks.every((check) => check.status === 'ok');
+    const summary = this.summarizeChecks(checks);
+
+    return {
+      status: healthy ? 'ok' : 'error',
+      probe,
+      checks,
+      summary,
+      thresholds: {
+        configApplyMaxAgeMs: this.configApplyMaxAgeMs,
+        certificateSyncMaxAgeMs: this.certificateSyncMaxAgeMs,
+      },
+      uptime: process.uptime(),
+      startedAt: this.startedAt.toISOString(),
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  private summarizeChecks(checks: HealthCheckResult[]) {
+    const ok = checks.filter((check) => check.status === 'ok').length;
+    const error = checks.filter((check) => check.status === 'error').length;
+
+    return {
+      total: checks.length,
+      ok,
+      error,
+    };
+  }
+
+  private createOperationSnapshot(
+    name: string,
+    state: OperationState,
+    maxAgeMs: number,
+  ) {
+    const freshness = this.checkOperationFreshness(name, state, maxAgeMs);
+    const ageMs = state.lastSuccessAt
+      ? Date.now() - state.lastSuccessAt.getTime()
+      : null;
+
+    return {
+      name,
+      status: freshness.status,
+      details: freshness.details,
+      lastAttemptAt: state.lastAttemptAt?.toISOString() ?? null,
+      lastSuccessAt: state.lastSuccessAt?.toISOString() ?? null,
+      lastError: state.lastError,
+      stateDetails: state.details,
+      ageMs,
+      maxAgeMs,
     };
   }
 

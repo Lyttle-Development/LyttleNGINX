@@ -25,30 +25,41 @@ export class HealthController {
   @Get('health/startup')
   async startup(@Res({ passthrough: true }) response: Response) {
     const report = await this.probeService.startup();
-    response.status(
-      report.status === 'ok' ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
-    );
-
+    this.applyProbeStatus(response, report.status);
     return report;
   }
 
   @Get('health/ready')
   async readiness(@Res({ passthrough: true }) response: Response) {
     const report = await this.probeService.ready();
-    response.status(
-      report.status === 'ok' ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
-    );
+    this.applyProbeStatus(response, report.status);
+    return report;
+  }
 
+  @Get('health/dependencies')
+  async dependencies(@Res({ passthrough: true }) response: Response) {
+    const report = await this.probeService.dependencies();
+    this.applyProbeStatus(response, report.status);
+    return report;
+  }
+
+  @Get('health/deep')
+  async deep(@Res({ passthrough: true }) response: Response) {
+    const report = await this.probeService.deep();
+    this.applyProbeStatus(response, report.status);
     return report;
   }
 
   @Get('ready')
   async readyAlias(@Res({ passthrough: true }) response: Response) {
     const report = await this.probeService.ready();
-    response.status(
-      report.status === 'ok' ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
-    );
-
+    this.applyProbeStatus(response, report.status);
     return report;
+  }
+
+  private applyProbeStatus(response: Response, status: string) {
+    response.status(
+      status === 'ok' ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
+    );
   }
 }
