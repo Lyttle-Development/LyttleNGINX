@@ -1,38 +1,38 @@
 const UNIT_TEST_FILES = [
-  'test/session4/health-semantics.test.js',
-  'test/session5/entrypoint-recovery.test.js',
-  'test/session6/inter-node-addressing.test.js',
-  'test/session11/lease-backed-heartbeat.test.js',
-  'test/session13/transactional-nginx-rollout.test.js',
-  'test/session14/nginx-custom-code-guardrails.test.js',
-  'test/session15/domain-validation-and-safe-process.test.js',
-  'test/session19/private-key-encryption-at-rest.test.js',
-  'test/session24/structured-logging.test.js',
-  'test/session25/metrics-and-alerting.test.js',
-  'test/session26/auth-service-unit.test.js',
-  'test/session28/release-gating.test.js',
+  'test/unit/health-semantics.test.js',
+  'test/unit/entrypoint-recovery.test.js',
+  'test/unit/inter-node-addressing.test.js',
+  'test/unit/lease-backed-heartbeat.test.js',
+  'test/unit/transactional-nginx-rollout.test.js',
+  'test/unit/nginx-custom-code-guardrails.test.js',
+  'test/unit/domain-validation-and-safe-process.test.js',
+  'test/unit/private-key-encryption-at-rest.test.js',
+  'test/unit/structured-logging.test.js',
+  'test/unit/metrics-and-alerting.test.js',
+  'test/unit/auth-service-unit.test.js',
+  'test/unit/release-gating.test.js',
 ];
 
 const INTEGRATION_TEST_FILES = [
-  'test/session12/cluster-operations.test.js',
-  'test/session16/certificate-order-state-machine.test.js',
-  'test/session17/certificate-distribution-and-rollback.test.js',
-  'test/session18/acme-strategy-hardening.test.js',
-  'test/session20/backup-hardening.test.js',
+  'test/integration/cluster-operations.test.js',
+  'test/integration/certificate-order-state-machine.test.js',
+  'test/integration/certificate-distribution-and-rollback.test.js',
+  'test/integration/acme-strategy-hardening.test.js',
+  'test/integration/backup-hardening.test.js',
 ];
 
 const E2E_TEST_FILES = [
-  'test/session3/auth-lockdown.test.js',
-  'test/session7/auth-foundation.test.js',
-  'test/session8/rbac-authorization.test.js',
-  'test/session9/audit-logging.test.js',
-  'test/session21/proxy-management-api.test.js',
-  'test/session22/cluster-admin-apis.test.js',
-  'test/session23/security-admin-apis.test.js',
+  'test/e2e/auth-lockdown.test.js',
+  'test/e2e/auth-foundation.test.js',
+  'test/e2e/rbac-authorization.test.js',
+  'test/e2e/audit-logging.test.js',
+  'test/e2e/proxy-management-api.test.js',
+  'test/e2e/cluster-admin-apis.test.js',
+  'test/e2e/security-admin-apis.test.js',
 ];
 
 const CHAOS_TEST_FILES = [
-  'test/session27/chaos-fault-injection.test.js',
+  'test/chaos/chaos-fault-injection.test.js',
 ];
 
 const BASE_SUITE_DEFINITIONS = {
@@ -62,45 +62,45 @@ const BASELINE_PILLARS = [
   {
     name: 'auth',
     coverage: [
-      'test/session26/auth-service-unit.test.js',
-      'test/session3/auth-lockdown.test.js',
-      'test/session7/auth-foundation.test.js',
-      'test/session8/rbac-authorization.test.js',
-      'test/session23/security-admin-apis.test.js',
+      'test/unit/auth-service-unit.test.js',
+      'test/e2e/auth-lockdown.test.js',
+      'test/e2e/auth-foundation.test.js',
+      'test/e2e/rbac-authorization.test.js',
+      'test/e2e/security-admin-apis.test.js',
     ],
   },
   {
     name: 'health',
     coverage: [
-      'test/session4/health-semantics.test.js',
-      'test/session25/metrics-and-alerting.test.js',
+      'test/unit/health-semantics.test.js',
+      'test/unit/metrics-and-alerting.test.js',
     ],
   },
   {
     name: 'leases',
     coverage: [
-      'test/session11/lease-backed-heartbeat.test.js',
-      'test/session12/cluster-operations.test.js',
+      'test/unit/lease-backed-heartbeat.test.js',
+      'test/integration/cluster-operations.test.js',
     ],
   },
   {
     name: 'config-generation',
     coverage: [
-      'test/session13/transactional-nginx-rollout.test.js',
-      'test/session14/nginx-custom-code-guardrails.test.js',
+      'test/unit/transactional-nginx-rollout.test.js',
+      'test/unit/nginx-custom-code-guardrails.test.js',
     ],
   },
   {
     name: 'certificate-order-transitions',
     coverage: [
-      'test/session16/certificate-order-state-machine.test.js',
-      'test/session17/certificate-distribution-and-rollback.test.js',
-      'test/session18/acme-strategy-hardening.test.js',
+      'test/integration/certificate-order-state-machine.test.js',
+      'test/integration/certificate-distribution-and-rollback.test.js',
+      'test/integration/acme-strategy-hardening.test.js',
     ],
   },
   {
     name: 'fault-injection',
-    coverage: ['test/session27/chaos-fault-injection.test.js'],
+    coverage: ['test/chaos/chaos-fault-injection.test.js'],
   },
 ];
 
