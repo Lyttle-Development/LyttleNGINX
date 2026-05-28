@@ -10,6 +10,7 @@ const UNIT_TEST_FILES = [
   'test/session24/structured-logging.test.js',
   'test/session25/metrics-and-alerting.test.js',
   'test/session26/auth-service-unit.test.js',
+  'test/session28/release-gating.test.js',
 ];
 
 const INTEGRATION_TEST_FILES = [

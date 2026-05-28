@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 9 — Test harness and release gates
-- Most recently completed session: Session 27 — Add chaos and fault-injection validation
-- Next recommended session from the roadmap: Session 28 — Upgrade CI/CD and release gating
+- Most recently completed session: Session 28 — Upgrade CI/CD and release gating
+- Next recommended session from the roadmap: Session 29 — Reconcile README, architecture docs, and runbooks with reality
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -1008,13 +1008,34 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 28 — Upgrade CI/CD and release gating
 
-- Status: not started
+- Status: done
 - Objective: block insecure or broken releases from shipping
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: current CI only builds and pushes an image
-- Follow-up sessions: Session 30
-- Notes: lint, typecheck, tests, vulnerability scans, and image gating remain open
+- Files touched:
+  - `package.json`
+  - `package-lock.json`
+  - `.github/workflows/main.yml`
+  - `scripts/ci/assert-coverage.js`
+  - `test/test-harness.config.js`
+  - `test/session28/release-gating.test.js`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+- Tests added/updated:
+  - added `test/session28/release-gating.test.js` to assert the repository now carries explicit CI scripts, a coverage gate, and a publish-after-gates workflow contract
+  - added `scripts/ci/assert-coverage.js` and `npm run test:coverage:ci` so CI enforces minimum line/branch/function coverage thresholds while still running the full Session 3-27 regression suite
+  - ran `npm run test:coverage:ci`, `npm run test`, `npm run typecheck`, `npm run build`, `npm run audit:prod`, and focused Session 28 verification after refreshing the lockfile with the new transitive dependency overrides
+- Risks:
+  - the repo still has broad Prettier formatting debt across existing TypeScript files, so the new CI lint gate intentionally disables only the `prettier/prettier` rule while continuing to fail on semantic ESLint issues
+  - the container scan currently ignores unfixed high/critical CVEs to avoid blocking releases on base-image issues with no upstream patch yet; operators should still review scan output and keep base images current
+  - image publication is now gated on GitHub Actions success, but branch protections and required-status-check enforcement must still be enabled in the GitHub repository settings to make the policy mandatory for merges
+- Follow-up sessions:
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+  - Session 30 — final production-readiness validation pass
+- Notes:
+  - replaced the old image-build-only workflow with explicit GitHub Actions jobs for lint, typecheck, tests with coverage thresholds, build, production dependency audit, and container scanning
+  - GHCR publication now runs only on pushes to `main` and only after every verification and scan job succeeds, preventing image publication from bypassing the new release gates
+  - added targeted npm overrides for `@hono/node-server`, `@prisma/streams-local`/`ajv`, and `fast-uri` so the production dependency audit passes without waiting for a broader Prisma release
+  - added repo-level CI scripts (`lint:ci`, `test:coverage:ci`, `audit:prod`, `verify:ci`) so local and CI verification contracts are explicit and repeatable
 
 ---
 

@@ -46,6 +46,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-028 | Dependency drilldowns plus state-based Prometheus metrics for leases, operations, orders, and backups | accepted | Session 25 | 2026-05-28 |
 | ADR-029 | Classified Node.js test harness with shared preload and baseline coverage pillars | accepted | Session 26 | 2026-05-28 |
 | ADR-030 | Dedicated deterministic chaos suite for recovery and fault-injection validation | accepted | Session 27 | 2026-05-28 |
+| ADR-031 | Multi-job GitHub Actions release gates with coverage thresholds and publish-after-success image delivery | accepted | Session 28 | 2026-05-28 |
 
 ---
 
@@ -1062,4 +1063,45 @@ Add a dedicated `chaos` suite to the Node.js repository harness and implement Se
 - contributors can run only the failure drills when iterating on recovery-sensitive code without re-running every other suite first
 - Session 28 can wire `npm run test:chaos` into CI as an explicit release gate alongside the existing suite families
 - later operator runbooks and final readiness validation can reference the same deterministic scenarios as the documented minimum recovery baseline
+
+---
+
+## ADR-031 — Multi-job GitHub Actions release gates with coverage thresholds and publish-after-success image delivery
+
+- Status: accepted
+- Session: Session 28 — Upgrade CI/CD and release gating
+- Date: 2026-05-28
+
+### Context
+
+Before Session 28, the repository's GitHub Actions workflow only built and pushed a container image. It did not verify lint, type safety, automated tests, dependency vulnerabilities, or container-image vulnerabilities before publication.
+
+That meant broken or insecure revisions could still produce a published image even after Sessions 26 and 27 had already created a meaningful automated regression and fault-injection baseline.
+
+### Decision
+
+Adopt a gated GitHub Actions release workflow with explicit jobs for the repository's current quality and security checks:
+
+1. run separate CI jobs for:
+   - semantic lint (`npm run lint:ci`)
+   - typecheck (`npm run prisma:generate && npm run typecheck`)
+   - full automated tests with enforced coverage thresholds (`npm run test:coverage:ci`)
+   - build (`npm run prisma:generate && npm run build`)
+   - production dependency audit (`npm run audit:prod`)
+   - container vulnerability scan (Trivy against the built Docker image)
+2. publish the GHCR image only on pushes to `main`, and only after all of the jobs above succeed
+3. enforce the current minimum repository coverage thresholds through a dedicated Node.js helper instead of relying on manual review of coverage output:
+   - line coverage: 70%
+   - branch coverage: 67%
+   - function coverage: 76%
+4. keep the existing local `npm run lint` command strict, but introduce `npm run lint:ci` that disables only the `prettier/prettier` rule until the repository's existing formatting debt is cleaned up in a separate change
+5. add targeted npm overrides for the currently known production-audit transitive dependencies so the dependency gate can pass without waiting for a broader upstream release cadence
+
+### Consequences
+
+- image publication now depends on the actual verification state of the repository rather than only on Docker build success
+- pull requests and main-branch pushes exercise the same core release gates operators expect before publication
+- the repository now has an explicit coverage floor suitable for CI enforcement, building directly on the Session 26 and Session 27 harness work
+- CI remains honest about the current formatting situation by separating semantic lint failures from repository-wide Prettier cleanup instead of silently dropping lint enforcement entirely
+- branch protections and required status checks should be enabled in GitHub settings so the workflow policy also becomes a merge policy
 

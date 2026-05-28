@@ -30,6 +30,7 @@
   <img src="https://img.shields.io/badge/session%2025-complete-blue" alt="Session 25" />
   <img src="https://img.shields.io/badge/session%2026-complete-blue" alt="Session 26" />
   <img src="https://img.shields.io/badge/session%2027-complete-blue" alt="Session 27" />
+  <img src="https://img.shields.io/badge/session%2028-complete-blue" alt="Session 28" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -44,8 +45,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 9 in progress
-- **Completed in Sessions 1-27 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction, expanded Prometheus/JSON metrics and dependency drilldowns for leases, cluster operations, certificate orders, backups, and DB health, a classified Node.js test harness with unit/integration/e2e suite commands and baseline coverage for auth, health, leases, config generation, and certificate-order transitions, plus a dedicated chaos/fault-injection suite that reproduces DB outages, leader-lease recovery, NGINX crash supervision, staged config rollback, node communication failures, and partial certificate activation failures
-- **Next recommended implementation session:** Session 28 — upgrade CI/CD and release gating
+- **Completed in Sessions 1-28 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction, expanded Prometheus/JSON metrics and dependency drilldowns for leases, cluster operations, certificate orders, backups, and DB health, a classified Node.js test harness with unit/integration/e2e suite commands and baseline coverage for auth, health, leases, config generation, and certificate-order transitions, a dedicated chaos/fault-injection suite that reproduces DB outages, leader-lease recovery, NGINX crash supervision, staged config rollback, node communication failures, and partial certificate activation failures, plus gated GitHub Actions release workflows for lint, typecheck, coverage-backed tests, production dependency audit, container scanning, and publish-after-success image pushes
+- **Next recommended implementation session:** Session 29 — reconcile README, architecture docs, and runbooks with reality
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -68,9 +69,13 @@ Run these commands once a local Node/npm toolchain is available:
 npm run test
 npm run test:chaos
 npm run lint
+npm run lint:ci
 npm run typecheck
+npm run test:coverage:ci
 npm run build
+npm run audit:prod
 npm run verify
+npm run verify:ci
 ```
 
 Current repo toolchain target:
@@ -81,6 +86,29 @@ npm -v    # expected: 11.15.0
 ```
 
 `npm run test` now executes the classified harness across explicit `unit`, `integration`, `e2e`, and `chaos` suites. The baseline pillars cover auth, health, leases, config generation, certificate-order transitions, and deterministic fault-injection recovery checks. Use `npm run test:chaos` when you want to focus specifically on the Session 27 failure-mode drills.
+
+`npm run test:coverage:ci` adds the Session 28 coverage gate on top of the full regression suite. The current enforced minimums are:
+
+- line coverage: `70%`
+- branch coverage: `67%`
+- function coverage: `76%`
+
+`npm run lint:ci` is the CI-specific semantic lint gate. It intentionally suppresses only the `prettier/prettier` rule for now because the repository still carries repo-wide formatting debt that would otherwise force a large unrelated reformatting diff.
+
+## 🧪 CI/CD Release Gates
+
+GitHub Actions now enforces the following pipeline on pull requests and `main` pushes:
+
+1. `lint` — semantic ESLint gate via `npm run lint:ci`
+2. `typecheck` — `npm run prisma:generate` + `npm run typecheck`
+3. `tests` — full regression suite with the Session 28 coverage thresholds
+4. `build` — application compilation via `npm run build`
+5. `dependency-audit` — production npm audit via `npm run audit:prod`
+6. `container-scan` — Docker build plus Trivy scan for high/critical OS and library CVEs
+
+Container publication to GHCR now happens only on pushes to `main`, and only after every gate above succeeds.
+
+> Note: branch protections and required status checks still need to be enabled in the GitHub repository settings so merges cannot bypass the workflow policy.
 
 ---
 
@@ -170,6 +198,7 @@ npm -v    # expected: 11.15.0
 - [Current Delivery Status](#-current-delivery-status)
 - [Deployment Mode Expectations](#-deployment-mode-expectations)
 - [Repository Verification Commands](#-repository-verification-commands)
+- [CI/CD Release Gates](#-cicd-release-gates)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [API Documentation](#-api-documentation)

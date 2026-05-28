@@ -1767,7 +1767,6 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     this.logger.log(
       `[Upload] Uploading custom certificate for domains: [${joinDomains(domains, { allowWildcard: true })}]`,
     );
-    const hash = hashDomains(domains, { allowWildcard: true });
 
     // Validate certificate and key match
     await this.validateCertificateKeyPair(dto.certPem, dto.keyPem);
@@ -1858,7 +1857,6 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     this.logger.log(
       `[Self-Signed] Generating self-signed certificate for domains: [${joinDomains(normalizedDomains, { allowWildcard: true })}]`,
     );
-    const hash = hashDomains(normalizedDomains, { allowWildcard: true });
     const primaryDomain = normalizedDomains[0];
 
     // Generate self-signed certificate using openssl

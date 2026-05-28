@@ -153,7 +153,7 @@ export class DistributedLockService implements OnModuleDestroy {
       maxRetries?: number;
     } = {},
   ): Promise<T | null> {
-    const { timeoutMs = 5000, retryDelayMs = 1000, maxRetries = 3 } = options;
+    const { retryDelayMs = 1000, maxRetries = 3 } = options;
 
     let retries = 0;
     while (retries < maxRetries) {
