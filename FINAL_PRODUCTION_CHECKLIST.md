@@ -20,7 +20,7 @@ This is intentionally narrower than claiming full parity with the ideal target a
   - Node.js `24.16.0`
   - npm `11.15.0`
 - Final repository validation contract:
-  - `npm run verify:ci`
+  - `npm run verify:ci` ✅ passed on 2026-05-28 after a small README wording correction uncovered by the first verification attempt
 - What that contract covers:
   - Prisma client generation
   - ESLint CI gate
@@ -28,6 +28,10 @@ This is intentionally narrower than claiming full parity with the ideal target a
   - coverage-gated full test suite
   - production build
   - production dependency audit
+- Captured validation outputs from the successful run:
+  - tests: `99/99` passing
+  - coverage: `70.00%` lines, `67.87%` branches, `76.77%` functions
+  - production dependency audit: `0 vulnerabilities`
 
 ## Assessment reconciliation matrix
 
