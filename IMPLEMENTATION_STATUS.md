@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 9 — Test harness and release gates
-- Most recently completed session: Session 26 — Add automated test harness and baseline coverage
-- Next recommended session from the roadmap: Session 27 — Add chaos and fault-injection validation
+- Most recently completed session: Session 27 — Add chaos and fault-injection validation
+- Next recommended session from the roadmap: Session 28 — Upgrade CI/CD and release gating
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -981,13 +981,30 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 27 — Add chaos and fault-injection validation
 
-- Status: not started
+- Status: done
 - Objective: prove recovery and coordination claims with reproducible failure tests
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: auto-recovery claims remain unproven without fault-injection coverage
-- Follow-up sessions: Session 30
-- Notes: should cover DB outage, leader crash, NGINX crash, bad config, and node comms failure
+- Files touched:
+  - `package.json`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/test-harness.config.js`
+  - `test/session27/chaos-fault-injection.test.js`
+- Tests added/updated:
+  - added `test/session27/chaos-fault-injection.test.js` to deterministically inject a PostgreSQL readiness outage, stale-leader crash recovery, supervised NGINX master failure, staged-config rollback, inter-node communication failure, and partial certificate activation failure
+  - added `npm run test:chaos` plus an explicit `chaos` suite classification in `test/test-harness.config.js` so the new failure drills can run independently or as part of `npm run test`
+  - verified `npm run test:chaos`, `npm run test`, `npm run test:list`, `npm run typecheck`, and `npm run build` after landing the Session 27 suite
+- Risks:
+  - the chaos suite is intentionally deterministic and in-process, so it validates application recovery contracts without replacing later environment-level Swarm fault drills or external dependency chaos exercises
+  - node-to-node transport is still authenticated HTTP rather than mTLS, so the injected node communication failures prove ACK/error handling behavior but do not yet validate a future mTLS transport stack
+- Follow-up sessions:
+  - Session 28 — upgrade CI/CD and release gating
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+  - Session 30 — final production-readiness validation pass
+- Notes:
+  - the repository now has a first-class chaos/fault-injection suite instead of relying only on unit/integration/e2e regressions for recovery claims
+  - the new suite exercises the exact failure modes called out in the implementation plan: DB outage, leader crash with lease expiry/re-election, NGINX crash, bad config activation rollback, node comms failure, and partial certificate activation failure
+  - `npm run test` now includes the chaos suite automatically through the `all` classification, while `npm run test:chaos` provides a focused recovery-proof entrypoint for operators and CI
 
 ## Session 28 — Upgrade CI/CD and release gating
 

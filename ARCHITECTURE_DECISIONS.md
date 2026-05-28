@@ -45,6 +45,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-027 | Structured stdout operational logging with request-scoped context and redaction | accepted | Session 24 | 2026-05-28 |
 | ADR-028 | Dependency drilldowns plus state-based Prometheus metrics for leases, operations, orders, and backups | accepted | Session 25 | 2026-05-28 |
 | ADR-029 | Classified Node.js test harness with shared preload and baseline coverage pillars | accepted | Session 26 | 2026-05-28 |
+| ADR-030 | Dedicated deterministic chaos suite for recovery and fault-injection validation | accepted | Session 27 | 2026-05-28 |
 
 ---
 
@@ -1024,4 +1025,41 @@ Adopt the built-in Node.js test runner as the repository-standard harness, with 
 - new test files now require intentional classification, which reduces drift between “tests that exist” and “tests the harness actually runs”
 - the repository gains a stable entrypoint for later Session 27 chaos/fault suites and Session 28 CI gating without replacing the existing Node-native runner
 - coverage reporting is now available from the same harness, while stricter thresholds and release gates remain future work for Session 28
+
+---
+
+## ADR-030 — Dedicated deterministic chaos suite for recovery and fault-injection validation
+
+- Status: accepted
+- Session: Session 27 — Add chaos and fault-injection validation
+- Date: 2026-05-28
+
+### Context
+
+By the end of Session 26, the repository had strong focused regressions for auth, health semantics, leases, cluster operations, rollback-safe config rollout, certificate orders, and backup/security behavior. What it still lacked was a single reproducible way to prove the critical failure-mode claims called out in the production-readiness assessment and the Session 27 roadmap scope: database outages, leader crashes, NGINX crashes, bad config activation, node communication failure, and partial certificate activation failure.
+
+Running those drills only as ad hoc manual steps would make them hard to repeat locally and difficult to gate in CI later. Fully externalized chaos infrastructure is also out of scope for the current in-repo test harness.
+
+### Decision
+
+Add a dedicated `chaos` suite to the Node.js repository harness and implement Session 27 failure drills as deterministic, in-process fault-injection scenarios:
+
+1. keep using the existing Node.js test runner and shared preload path from Session 26 instead of introducing a second chaos framework
+2. expose `npm run test:chaos` as the focused entrypoint for recovery/failure-mode validation
+3. include the `chaos` suite in `npm run test` by way of the `all` harness classification so recovery proof is part of the default repository regression contract
+4. model failure scenarios with deterministic shims and mocks close to the affected code paths, including:
+   - PostgreSQL readiness failure
+   - stale leader crash with lease-expiry recovery
+   - supervised NGINX master crash in `docker-entrypoint.sh`
+   - staged-config activation rollback after reload failure
+   - inter-node communication timeout/error handling in cluster operations
+   - partial certificate activation failure that preserves the prior active artifact
+5. treat the Session 27 chaos suite as a baseline recovery-evidence pillar that complements, rather than replaces, later environment-level Swarm or infrastructure chaos drills
+
+### Consequences
+
+- the repository now has a repeatable, code-reviewed proof path for the core failure scenarios that previously relied on design intent or isolated unit/integration tests
+- contributors can run only the failure drills when iterating on recovery-sensitive code without re-running every other suite first
+- Session 28 can wire `npm run test:chaos` into CI as an explicit release gate alongside the existing suite families
+- later operator runbooks and final readiness validation can reference the same deterministic scenarios as the documented minimum recovery baseline
 

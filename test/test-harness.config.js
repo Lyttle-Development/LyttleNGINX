@@ -30,6 +30,10 @@ const E2E_TEST_FILES = [
   'test/session23/security-admin-apis.test.js',
 ];
 
+const CHAOS_TEST_FILES = [
+  'test/session27/chaos-fault-injection.test.js',
+];
+
 const BASE_SUITE_DEFINITIONS = {
   unit: {
     description:
@@ -45,6 +49,11 @@ const BASE_SUITE_DEFINITIONS = {
     description:
       'Nest application and controller surface checks for auth, RBAC, audit, proxy, cluster-admin, and security-admin APIs.',
     files: E2E_TEST_FILES,
+  },
+  chaos: {
+    description:
+      'Deterministic fault-injection checks for DB outages, lease recovery, NGINX crashes, rollback safety, node comms failures, and partial certificate activation failures.',
+    files: CHAOS_TEST_FILES,
   },
 };
 
@@ -88,6 +97,10 @@ const BASELINE_PILLARS = [
       'test/session18/acme-strategy-hardening.test.js',
     ],
   },
+  {
+    name: 'fault-injection',
+    coverage: ['test/session27/chaos-fault-injection.test.js'],
+  },
 ];
 
 function unique(values) {
@@ -103,7 +116,7 @@ function getSuiteDefinitions() {
     ...BASE_SUITE_DEFINITIONS,
     all: {
       description:
-        'All classified repository suites spanning unit, integration, and e2e coverage pillars.',
+        'All classified repository suites spanning unit, integration, e2e, and chaos coverage pillars.',
       files: allFiles,
     },
   };

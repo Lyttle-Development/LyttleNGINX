@@ -29,6 +29,7 @@
   <img src="https://img.shields.io/badge/session%2024-complete-blue" alt="Session 24" />
   <img src="https://img.shields.io/badge/session%2025-complete-blue" alt="Session 25" />
   <img src="https://img.shields.io/badge/session%2026-complete-blue" alt="Session 26" />
+  <img src="https://img.shields.io/badge/session%2027-complete-blue" alt="Session 27" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -43,8 +44,8 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 ## 📍 Current Delivery Status
 
 - **Roadmap status:** Phase 9 in progress
-- **Completed in Sessions 1-26 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction, expanded Prometheus/JSON metrics and dependency drilldowns for leases, cluster operations, certificate orders, backups, and DB health, plus a classified Node.js test harness with unit/integration/e2e suite commands and baseline coverage for auth, health, leases, config generation, and certificate-order transitions
-- **Next recommended implementation session:** Session 27 — add chaos and fault-injection validation
+- **Completed in Sessions 1-27 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction, expanded Prometheus/JSON metrics and dependency drilldowns for leases, cluster operations, certificate orders, backups, and DB health, a classified Node.js test harness with unit/integration/e2e suite commands and baseline coverage for auth, health, leases, config generation, and certificate-order transitions, plus a dedicated chaos/fault-injection suite that reproduces DB outages, leader-lease recovery, NGINX crash supervision, staged config rollback, node communication failures, and partial certificate activation failures
+- **Next recommended implementation session:** Session 28 — upgrade CI/CD and release gating
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -65,6 +66,7 @@ Run these commands once a local Node/npm toolchain is available:
 
 ```bash
 npm run test
+npm run test:chaos
 npm run lint
 npm run typecheck
 npm run build
@@ -78,7 +80,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now executes the Session 26 classified harness across explicit `unit`, `integration`, and `e2e` suites. The baseline pillars cover auth, health, leases, config generation, and certificate-order transitions, while the rest of the shipped Session 3-25 regressions remain part of the full suite.
+`npm run test` now executes the classified harness across explicit `unit`, `integration`, `e2e`, and `chaos` suites. The baseline pillars cover auth, health, leases, config generation, certificate-order transitions, and deterministic fault-injection recovery checks. Use `npm run test:chaos` when you want to focus specifically on the Session 27 failure-mode drills.
 
 ---
 

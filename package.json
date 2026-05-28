@@ -17,6 +17,7 @@
     "test:unit": "node ./test/run-suite.js unit",
     "test:integration": "node ./test/run-suite.js integration",
     "test:e2e": "node ./test/run-suite.js e2e",
+    "test:chaos": "node ./test/run-suite.js chaos",
     "test:coverage": "node ./test/run-suite.js all --coverage",
     "test:list": "node ./test/run-suite.js --list",
     "start": "nest start",
