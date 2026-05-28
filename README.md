@@ -1,13 +1,13 @@
 # 🔒 LyttleNGINX
 
-![Session 30 complete](https://img.shields.io/badge/status-session%2030%20complete-blue)
+![Current architecture documented](https://img.shields.io/badge/status-current%20architecture%20documented-blue)
 ![Phase 10 complete](https://img.shields.io/badge/roadmap-phase%2010%20complete-brightgreen)
 ![Controlled rollout ready](https://img.shields.io/badge/readiness-controlled%20rollout%20ready-yellowgreen)
 ![License: UNLICENSED](https://img.shields.io/badge/license-UNLICENSED-red)
 
 **NestJS-based NGINX control plane for proxy configuration, certificate lifecycle automation, cluster coordination, and operator observability.**
 
-> **Current status:** Sessions 1-30 of the implementation plan are complete. Final readiness artifacts now live in [`FINAL_PRODUCTION_CHECKLIST.md`](FINAL_PRODUCTION_CHECKLIST.md) and [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md). Treat the repository as ready for a controlled production rollout of the documented current architecture only after the checklist items are completed and the listed deferments are explicitly accepted.
+> **Current status:** The refactor is documented against the current implementation, not the historical delivery roadmap. Final readiness artifacts live in [`FINAL_PRODUCTION_CHECKLIST.md`](FINAL_PRODUCTION_CHECKLIST.md) and [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md). Treat the repository as ready for a controlled production rollout of the documented current architecture only after the checklist items are completed and the listed deferments are explicitly accepted.
 
 ## Current state at a glance
 
@@ -97,7 +97,7 @@ npm run verify
 npm run verify:ci
 ```
 
-`npm run test` executes the full classified harness, including the deterministic chaos suite introduced in Session 27.
+`npm run test` executes the full classified harness, including the deterministic chaos suite.
 
 ## Public vs protected API surface
 
@@ -188,7 +188,7 @@ Key operator-facing endpoints:
 
 ## Certificate strategy notes
 
-The shipped Session 18 implementation is intentionally conservative:
+The shipped ACME implementation is intentionally conservative:
 
 - built-in ACME strategy is shared **HTTP-01**
 - wildcard issuance is intentionally rejected
@@ -202,11 +202,9 @@ The shipped Session 18 implementation is intentionally conservative:
 ### Canonical project docs
 
 - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md) — current risk inventory and production gap analysis
-- [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md) — roadmap and acceptance criteria
-- [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) — session-by-session shipped status
 - [`FINAL_PRODUCTION_CHECKLIST.md`](FINAL_PRODUCTION_CHECKLIST.md) — final assessment reconciliation and go-live checklist
 - [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md) — accepted gaps, compensating controls, and follow-up work
-- [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) — ADR log across all sessions
+- [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) — ADR log for the current architecture and delivery policy
 - [`docs/architecture/current-architecture.md`](docs/architecture/current-architecture.md) — current implementation architecture and explicit boundaries
 
 ### Runbooks

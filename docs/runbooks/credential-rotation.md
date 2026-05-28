@@ -166,7 +166,6 @@ After any credential or key rotation:
 - API keys are not hot-reloaded by the application
 - backup-envelope key rotation does not retroactively rewrite older artifacts
 - internal mTLS certificate rotation is not yet implemented
-- final production-readiness sign-off is still pending Session 30
 
 ## Related procedures
 

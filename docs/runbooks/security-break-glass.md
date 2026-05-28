@@ -6,7 +6,7 @@ Last updated: 2026-05-28
 
 This runbook documents the emergency-only flows that intentionally bypass the safer default paths.
 
-Current break-glass scope in Session 23:
+Current break-glass scope:
 
 - `GET /certificates/backup/export/:id` — returns decrypted certificate PEM + private key material
 - manual legacy `API_KEY` overlap rotation while bearer-token migration is still in progress
@@ -97,7 +97,7 @@ Minimize overlap time while keeping the admin surface reachable during rollout.
 
 `POST /security/rotate/internal-certs` exists as a forward-looking contract only.
 
-Current state in Session 23:
+Current state:
 
 - inter-node traffic is still authenticated HTTP
 - mTLS node certificates are not active yet

@@ -79,7 +79,16 @@ async function createHarness(envOverrides = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lyttlenginx-entrypoint-recovery-'));
   const binDir = path.join(tempDir, 'bin');
   const logPath = path.join(tempDir, 'process.log');
+  const nginxRuntimeDir = path.join(tempDir, 'nginx-runtime');
+  const nginxSourceDir = path.join(tempDir, 'nginx-source');
   await fs.mkdir(binDir, { recursive: true });
+  await fs.mkdir(path.join(nginxSourceDir, 'conf.d'), { recursive: true });
+  await fs.mkdir(path.join(nginxSourceDir, 'html', 'errors'), { recursive: true });
+  await fs.writeFile(path.join(nginxSourceDir, 'conf.d', 'default.conf'), 'server { listen 80; }\n');
+  await fs.writeFile(path.join(nginxSourceDir, 'html', 'index.html'), '<html><body>ok</body></html>\n');
+  await fs.writeFile(path.join(nginxSourceDir, 'html', 'errors', '5xx.html'), '<html><body>error</body></html>\n');
+  await fs.writeFile(path.join(nginxSourceDir, 'mime.types'), 'types {}\n');
+  await fs.writeFile(path.join(nginxSourceDir, 'nginx.conf'), 'events {}\nhttp { include mime.types; }\n');
 
   await writeExecutable(
     path.join(binDir, 'node'),
@@ -202,6 +211,8 @@ exit 0
       NGINX_SHUTDOWN_TIMEOUT_SECONDS: '1',
       DB_CONNECT_RETRY_DELAY_SECONDS: '1',
       MIGRATION_RETRY_DELAY_SECONDS: '1',
+      NGINX_RUNTIME_DIR: nginxRuntimeDir,
+      NGINX_BUNDLED_SOURCE_DIR: nginxSourceDir,
       ...envOverrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -223,7 +234,7 @@ describe('entrypoint recovery behavior', () => {
     const harness = await createHarness({
       FAKE_NODE_MODE: 'crash',
       FAKE_NODE_EXIT_CODE: '37',
-      FAKE_NODE_CRASH_DELAY_SECONDS: '1',
+      FAKE_NODE_CRASH_DELAY_SECONDS: '2',
     });
 
     try {
@@ -247,7 +258,7 @@ describe('entrypoint recovery behavior', () => {
     const harness = await createHarness({
       FAKE_NGINX_MODE: 'crash',
       FAKE_NGINX_EXIT_CODE: '23',
-      FAKE_NGINX_CRASH_DELAY_SECONDS: '1',
+      FAKE_NGINX_CRASH_DELAY_SECONDS: '2',
     });
 
     try {

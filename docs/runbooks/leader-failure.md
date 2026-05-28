@@ -159,7 +159,6 @@ Recovery is considered successful when:
 
 - internal node transport is still authenticated HTTP rather than mTLS
 - the system still uses a combined Node + NGINX container model
-- final production-readiness sign-off is still pending Session 30
 
 ## Escalate when
 

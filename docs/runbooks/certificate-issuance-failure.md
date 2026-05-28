@@ -16,7 +16,7 @@ The shipped certificate workflow supports:
 Important current constraint:
 
 - the built-in hardened ACME flow is **HTTP-01 only**
-- wildcard issuance is intentionally rejected in the shipped Session 18 implementation
+- wildcard issuance is intentionally rejected by the shipped implementation
 
 ## Step 1: Identify the failing order or certificate
 

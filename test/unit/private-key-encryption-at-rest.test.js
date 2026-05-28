@@ -364,7 +364,7 @@ describe('private-key encryption at rest', () => {
     assert.doesNotMatch(prisma.state.artifacts[0].keyPem, /BEGIN PRIVATE KEY/);
     assert.equal(
       prisma.state.artifacts[0].keyEncryption.provider.keyVersion,
-      'session19-v1',
+      'private-key-v1',
     );
     assert.equal(
       encryptionService.decryptPrivateKey(
@@ -398,7 +398,7 @@ describe('private-key encryption at rest', () => {
     assert.doesNotMatch(prisma.state.certificates[0].keyPem, /BEGIN PRIVATE KEY/);
     assert.equal(
       prisma.state.certificates[0].keyEncryption.provider.keyVersion,
-      'session19-v1',
+      'private-key-v1',
     );
 
     const exported = await backupService.exportCertificate(prisma.state.certificates[0].id);

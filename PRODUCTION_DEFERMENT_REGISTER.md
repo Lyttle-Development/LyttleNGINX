@@ -2,7 +2,7 @@
 
 _Date: 2026-05-28_
 
-This register captures residual gaps that Session 30 intentionally leaves visible instead of silently absorbing into a broad "production-ready" label.
+This register captures residual gaps that remain intentionally visible instead of being silently absorbed into a broad "production-ready" label.
 
 A rollout owner should review every item here and explicitly decide whether the current compensating controls are acceptable for the target environment.
 

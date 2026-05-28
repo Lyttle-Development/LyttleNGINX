@@ -2,23 +2,22 @@
 
 Last updated: 2026-05-28
 
-This document describes the architecture that is actually present in the repository after Session 29 documentation reconciliation.
-It is intentionally grounded in shipped code and current operator workflows, not in the longer-term target architecture alone.
+This document describes the architecture that is actually present in the repository today. It is intentionally grounded in shipped code and current operator workflows, not just in the longer-term target architecture.
 
-> Status note: the project has completed Sessions 1-29 of the implementation plan, but Session 30 final production-readiness validation is still outstanding. Treat this as the current implementation baseline, not as a final production sign-off.
+> Status note: treat this as the current implementation baseline. Final rollout decisions should be made together with [`FINAL_PRODUCTION_CHECKLIST.md`](../../FINAL_PRODUCTION_CHECKLIST.md) and [`PRODUCTION_DEFERMENT_REGISTER.md`](../../PRODUCTION_DEFERMENT_REGISTER.md).
 
 ## 1. System shape
 
-LyttleNGINX is currently a **NestJS control plane plus local NGINX runtime** backed by **PostgreSQL**.
+LyttleNGINX currently consists of a **NestJS control plane plus local NGINX runtime** backed by **PostgreSQL**.
 
 At a high level:
 
 - **NestJS application**
   - admin and internal control-plane APIs
   - auth, RBAC, and audit hooks
-  - cluster lease + operation tracking
+  - cluster lease and operation tracking
   - certificate lifecycle orchestration
-  - backup/restore logic
+  - backup and restore logic
   - health, metrics, and structured operational logging
 - **NGINX runtime**
   - serves proxied traffic
@@ -32,7 +31,7 @@ At a high level:
   - encrypted backup artifacts
   - ACME account private key file when configured
 
-## 2. Current request classes and trust boundaries
+## 2. Request classes and trust boundaries
 
 The API is **authenticated by default**.
 
@@ -59,12 +58,12 @@ All other routes require one of:
 - `X-API-Key: <key>`
 - `Authorization: ApiKey <key>`
 
-The current actor types are:
+Current actor types:
 
 - `admin`
 - `internal-node`
 
-The current role model is:
+Current RBAC catalog:
 
 - `viewer`
 - `operator`
@@ -74,15 +73,13 @@ The current role model is:
 
 ## 3. Runtime topology today
 
-### Current shipped model
-
-The current shipped deployment model is still a **combined runtime**:
+The shipped deployment model is still a **combined runtime**:
 
 - NestJS and NGINX run in the same container
 - `docker-entrypoint.sh` supervises both processes
-- if either process exits unexpectedly, the container exits non-zero so Docker/Swarm can restart it
+- if either process exits unexpectedly, the container exits non-zero so Docker or Swarm can restart it
 
-This is safer than the earlier masked-failure model, but it is **not** yet the split control-plane/dataplane architecture described as the preferred long-term direction in the production-readiness assessment.
+This is materially safer than the earlier masked-failure model, but it is **not** yet the preferred split control-plane/dataplane architecture described in the broader readiness assessment.
 
 ## 4. Core control-plane workflows
 
@@ -105,10 +102,10 @@ Readiness returns non-200 when critical dependencies are unhealthy, including:
 
 ### 4.2 Cluster coordination
 
-Cluster leadership is currently lease-based:
+Cluster leadership is lease-based:
 
 - `ClusterLease` stores leader ownership and generation/fencing state
-- `ClusterNode` still exists for heartbeat and observability data
+- `ClusterNode` provides heartbeat and observability data
 - cluster-wide mutations are represented as `ClusterOperation` records with per-node `ClusterOperationAck` rows
 
 Operator inspection APIs include:
@@ -126,7 +123,7 @@ Operator inspection APIs include:
 
 ### 4.3 NGINX config rollout
 
-NGINX config deployment is currently staged and rollback-aware:
+NGINX config deployment is staged and rollback-aware:
 
 - each reload builds a staged release under `/etc/nginx/runtime/releases/<release-id>`
 - staged config is validated with `nginx -t` before activation
@@ -135,16 +132,12 @@ NGINX config deployment is currently staged and rollback-aware:
 - failed reload activation triggers automatic rollback
 - local release metadata is written to `lyttle-nginx-release.json`
 
-Important current limitation:
+Current limitation:
 
 - there is **not yet** a dedicated first-class API to manually roll back to an arbitrary prior config release
-- operator rollback today means either:
-  - relying on the built-in automatic rollback when reload fails, or
-  - reverting the desired state and triggering a fresh reload
+- operator rollback today means either relying on built-in rollback when reload fails or reverting desired state and triggering a fresh reload
 
 ### 4.4 Certificate lifecycle
-
-Certificates are no longer just point-in-time files.
 
 Current workflow primitives include:
 
@@ -174,10 +167,10 @@ Relevant APIs include:
 
 ### 4.5 Backups and restore
 
-The shipped backup model is now:
+The backup model is:
 
 - encrypted `.lyttlebackup` artifacts
-- signed manifest + checksums
+- signed manifest and checksums
 - server-side verify endpoint
 - server-side restore endpoint
 - direct raw PEM export treated as break-glass only
@@ -194,7 +187,7 @@ Relevant APIs include:
 
 ## 5. Observability model
 
-The current observability surface has three layers:
+The observability surface has three layers:
 
 ### Operational logs
 
@@ -210,7 +203,7 @@ The current observability surface has three layers:
 - exposed separately via `GET /audit`
 - capture privileged and mutating actions, denied attempts, and controller/service failures on protected routes
 
-### Health + metrics
+### Health and metrics
 
 - public health and drilldown endpoints
 - Prometheus metrics at `GET /metrics`
@@ -223,20 +216,11 @@ The current observability surface has three layers:
 | --- | --- |
 | Local development | best-supported path for coding and verification |
 | Single-node Compose | evaluation and non-HA use; not final hardened production guidance |
-| Docker Swarm global mode | target architecture and controlled-testing path; final go-live sign-off still pending |
+| Docker Swarm global mode | target clustered operating model for controlled rollout once the checklist is completed and deferments are accepted |
 
-## 7. Final validation references
+## 7. Important current limitations
 
-Session 30 published the final readiness convergence artifacts:
-
-- `FINAL_PRODUCTION_CHECKLIST.md`
-- `PRODUCTION_DEFERMENT_REGISTER.md`
-
-Use them together with this architecture document when deciding whether a rollout is acceptable for your environment.
-
-## 8. Important current limitations
-
-The docs should stay explicit about the boundaries that still exist today:
+The documentation should stay explicit about the boundaries that still exist today:
 
 1. **Internal node traffic is still authenticated HTTP, not mTLS**
    - node identity and RBAC exist
@@ -251,7 +235,7 @@ The docs should stay explicit about the boundaries that still exist today:
    - automatic rollback exists for reload failures
    - logical rollback still requires desired-state reversion plus a new reload
 
-## 9. Incident-navigation map
+## 8. Incident-navigation map
 
 When something looks wrong, start here:
 
@@ -272,13 +256,11 @@ Then move into the dedicated runbook:
 - break-glass secret handling → `docs/runbooks/security-break-glass.md`
 - monitoring and alert response → `docs/runbooks/monitoring-alerts.md`
 
-## 10. Related references
+## 9. Related references
 
 - `README.md`
 - `PRODUCTION_READINESS_ASSESSMENT.md`
 - `FINAL_PRODUCTION_CHECKLIST.md`
 - `PRODUCTION_DEFERMENT_REGISTER.md`
-- `IMPLEMENTATION_PLAN_BY_SESSION.md`
-- `IMPLEMENTATION_STATUS.md`
 - `ARCHITECTURE_DECISIONS.md`
 

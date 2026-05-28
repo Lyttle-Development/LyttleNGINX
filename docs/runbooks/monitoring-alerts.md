@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-28
 
-This runbook captures the recommended Prometheus/Grafana alert surface introduced in Session 25.
+This runbook captures the recommended Prometheus/Grafana alert surface for the current implementation.
 It is intentionally focused on the metrics that now exist in `GET /metrics` and the richer dependency drilldowns in `GET /health/dependencies` and `GET /health/deep`.
 
 ## Primary scrape targets

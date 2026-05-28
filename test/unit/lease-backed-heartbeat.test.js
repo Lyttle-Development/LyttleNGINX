@@ -319,11 +319,12 @@ describe('lease-backed heartbeat and leader flows', () => {
     const activeNodes = await service.getActiveNodes();
     const leader = await service.getLeaderNode();
     const stats = await service.getClusterStats();
+    const activeNodeById = Object.fromEntries(
+      activeNodes.map((node) => [node.instanceId, node]),
+    );
 
-    assert.equal(activeNodes[0].instanceId, 'node-a');
-    assert.equal(activeNodes[0].isLeader, true);
-    assert.equal(activeNodes[1].instanceId, 'node-b');
-    assert.equal(activeNodes[1].isLeader, false);
+    assert.equal(activeNodeById['node-a']?.isLeader, true);
+    assert.equal(activeNodeById['node-b']?.isLeader, false);
     assert.equal(leader?.instanceId, 'node-a');
     assert.equal(stats.leaderCount, 1);
     assert.deepEqual(stats.leadershipIssues, []);

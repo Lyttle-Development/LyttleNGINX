@@ -1,4 +1,4 @@
--- Session 18: Harden the ACME strategy for clustered production
+-- Harden the ACME strategy for clustered production
 
 ALTER TABLE "AcmeChallenge"
 ADD COLUMN     "orderId" TEXT,

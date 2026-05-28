@@ -6,7 +6,7 @@ Use this runbook to restore certificate state from a hardened `.lyttlebackup` ar
 
 ## Scope
 
-This runbook covers the shipped Session 20 restore flow:
+This runbook covers the shipped restore flow:
 
 - encrypted backup artifact
 - signed manifest verification
