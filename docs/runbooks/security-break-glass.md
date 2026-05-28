@@ -1,5 +1,7 @@
 # Security break-glass runbook
 
+Last updated: 2026-05-28
+
 ## Purpose
 
 This runbook documents the emergency-only flows that intentionally bypass the safer default paths.
@@ -114,4 +116,9 @@ Use the endpoint to confirm the current gap and to preserve a stable admin contr
 - `GET /audit`
 - `POST /certificates/backup/:filename/verify`
 - `POST /certificates/backup/:filename/restore`
+
+## Related runbooks
+
+- `docs/runbooks/credential-rotation.md`
+- `docs/runbooks/restore-from-encrypted-backup.md`
 

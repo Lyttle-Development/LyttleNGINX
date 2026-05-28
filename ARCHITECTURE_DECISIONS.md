@@ -47,6 +47,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-029 | Classified Node.js test harness with shared preload and baseline coverage pillars | accepted | Session 26 | 2026-05-28 |
 | ADR-030 | Dedicated deterministic chaos suite for recovery and fault-injection validation | accepted | Session 27 | 2026-05-28 |
 | ADR-031 | Multi-job GitHub Actions release gates with coverage thresholds and publish-after-success image delivery | accepted | Session 28 | 2026-05-28 |
+| ADR-032 | Operator-facing docs describe the shipped architecture, current limits, and concrete recovery procedures | accepted | Session 29 | 2026-05-28 |
 
 ---
 
@@ -1104,4 +1105,47 @@ Adopt a gated GitHub Actions release workflow with explicit jobs for the reposit
 - the repository now has an explicit coverage floor suitable for CI enforcement, building directly on the Session 26 and Session 27 harness work
 - CI remains honest about the current formatting situation by separating semantic lint failures from repository-wide Prettier cleanup instead of silently dropping lint enforcement entirely
 - branch protections and required status checks should be enabled in GitHub settings so the workflow policy also becomes a merge policy
+
+---
+
+## ADR-032 — Operator-facing docs describe the shipped architecture, current limits, and concrete recovery procedures
+
+- Status: accepted
+- Session: Session 29 — Reconcile README, architecture docs, and runbooks with reality
+- Date: 2026-05-28
+
+### Context
+
+By the end of Session 28, the codebase had materially changed from the original assessment baseline: leases, ACK-backed operations, staged NGINX activation, durable certificate orders, encrypted backups, structured logs, richer metrics, test harnesses, and CI release gates all existed. The top-level documentation had grown large and uneven, mixing accurate shipped behavior with stale feature-marketing language and missing operational procedures.
+
+Session 29 specifically requires the docs to stop overstating readiness and to give operators practical runbooks for high-risk workflows.
+
+### Decision
+
+Adopt the following documentation posture for operator-facing materials:
+
+1. keep `README.md` concise and reality-based, focusing on:
+   - current implementation capabilities
+   - explicit deployment expectations
+   - known architectural limits that still matter operationally
+   - links to the canonical planning/status docs and runbooks
+2. add a dedicated current-state architecture document that explains the shipped runtime shape, trust boundaries, major workflows, and unresolved limits without forcing operators to reconstruct that from ADR history alone
+3. maintain first-class runbooks for the highest-risk operational scenarios currently supported by the repo:
+   - leader failure
+   - NGINX config rollback
+   - encrypted backup restore
+   - certificate issuance failure
+   - credential rotation
+4. document current gaps explicitly instead of papering over them, including:
+   - Session 30 final validation still pending
+   - internal node transport still using authenticated HTTP rather than mTLS
+   - the current combined NestJS + NGINX container model
+   - the lack of a dedicated manual config-rollback API
+
+### Consequences
+
+- operators now have a practical starting point for day-2 operations without relying on roadmap prose or code archaeology
+- the README is less likely to drift into feature-marketing claims that exceed the actual validated implementation state
+- future sessions should update the dedicated architecture overview and affected runbooks whenever they materially change runtime behavior or recovery procedures
+- Session 30 can build its final go-live checklist from a documentation set that already distinguishes shipped behavior from remaining validation work
 

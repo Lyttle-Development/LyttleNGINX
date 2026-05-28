@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 9 — Test harness and release gates
-- Most recently completed session: Session 28 — Upgrade CI/CD and release gating
-- Next recommended session from the roadmap: Session 29 — Reconcile README, architecture docs, and runbooks with reality
+- Current phase: Phase 10 — Documentation and final validation
+- Most recently completed session: Session 29 — Reconcile README, architecture docs, and runbooks with reality
+- Next recommended session from the roadmap: Session 30 — Final production-readiness validation pass
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -1043,13 +1043,33 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 29 — Reconcile README, architecture docs, and runbooks with reality
 
-- Status: not started
+- Status: done
 - Objective: make operator-facing documentation accurate and practical
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: docs still overstate readiness in several areas
-- Follow-up sessions: Session 30
-- Notes: runbooks for leader failure, rollback, restore, issuance failure, and credential rotation remain open
+- Files touched:
+  - `README.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `docs/architecture/current-architecture.md`
+  - `docs/runbooks/leader-failure.md`
+  - `docs/runbooks/nginx-config-rollback.md`
+  - `docs/runbooks/restore-from-encrypted-backup.md`
+  - `docs/runbooks/certificate-issuance-failure.md`
+  - `docs/runbooks/credential-rotation.md`
+  - `docs/runbooks/security-break-glass.md`
+- Tests added/updated:
+  - no code-level automated tests were required for this documentation-only session
+  - validated the updated docs against the current route surface, package scripts, workflow files, and existing runbooks before close-out
+- Risks:
+  - Session 30 final production-readiness validation is still required before any production-ready claim can be made
+  - internal node traffic is still authenticated HTTP rather than mTLS, and the docs now call that out explicitly instead of softening the gap
+  - manual NGINX config rollback is still an operator procedure around desired-state reversion and automatic rollback behavior, not a dedicated API
+- Follow-up sessions:
+  - Session 30 — final production-readiness validation pass
+- Notes:
+  - replaced the oversized README with a shorter, reality-based overview that focuses on shipped behavior, current deployment expectations, and explicit limitations
+  - added a dedicated `docs/architecture/current-architecture.md` reference that explains the current monolith + NGINX runtime shape, trust boundaries, workflows, and unresolved architectural limits
+  - added operator runbooks for leader failure, encrypted restore, NGINX config rollback, certificate issuance failure, and credential rotation
+  - refreshed the existing break-glass runbook so it links cleanly into the broader Session 29 operator documentation set
 
 ## Session 30 — Final production-readiness validation pass
 
