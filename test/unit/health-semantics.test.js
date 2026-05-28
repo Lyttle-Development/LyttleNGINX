@@ -45,7 +45,7 @@ function restoreProcessAndFs() {
   process.kill = originalKill;
 }
 
-describe('Session 4 health service semantics', () => {
+describe('health service semantics', () => {
   before(() => {
     process.env.HEALTH_CONFIG_APPLY_MAX_AGE_MS = '60000';
     process.env.HEALTH_CERTIFICATE_SYNC_MAX_AGE_MS = '60000';
@@ -156,7 +156,7 @@ describe('Session 4 health service semantics', () => {
   });
 });
 
-describe('Session 4 health controller probes', () => {
+describe('health controller probes', () => {
   let app;
   let httpServer;
   let startupStatus = 'starting';

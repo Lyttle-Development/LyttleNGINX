@@ -25,7 +25,7 @@ function signHs256Token(payload, secret) {
   return `${signingInput}.${signature}`;
 }
 
-describe('Session 7 auth foundation', () => {
+describe('auth foundation', () => {
   const originalEnv = {
     API_KEY: process.env.API_KEY,
     AUTH_JWT_SECRET: process.env.AUTH_JWT_SECRET,
@@ -40,8 +40,8 @@ describe('Session 7 auth foundation', () => {
   let httpServer;
 
   before(async () => {
-    process.env.API_KEY = 'session7-legacy-key';
-    process.env.AUTH_JWT_SECRET = 'session7-super-secret';
+    process.env.API_KEY = 'auth-foundation-legacy-key';
+    process.env.AUTH_JWT_SECRET = 'auth-foundation-super-secret';
     process.env.AUTH_JWT_ISSUER = 'lyttle-nginx.test';
     process.env.AUTH_JWT_AUDIENCE = 'lyttle-nginx-admin';
     process.env.AUTH_DEFAULT_ADMIN_ROLES = 'platform-admin,operator';
@@ -83,7 +83,7 @@ describe('Session 7 auth foundation', () => {
   it('attaches a structured admin identity for legacy API-key requests', async () => {
     await request(httpServer)
       .get('/auth/me')
-      .set('X-API-Key', 'session7-legacy-key')
+      .set('X-API-Key', 'auth-foundation-legacy-key')
       .expect(200)
       .expect(({ body }) => {
         assert.equal(body.authenticated, true);
@@ -99,7 +99,7 @@ describe('Session 7 auth foundation', () => {
   it('exposes auth capabilities and supports API-key to bearer token exchange', async () => {
     const tokenResponse = await request(httpServer)
       .get('/auth/info')
-      .set('X-API-Key', 'session7-legacy-key')
+      .set('X-API-Key', 'auth-foundation-legacy-key')
       .expect(200)
       .expect(({ body }) => {
         assert.equal(body.authEnabled, true);
@@ -112,7 +112,7 @@ describe('Session 7 auth foundation', () => {
 
     const exchange = await request(httpServer)
       .post('/auth/token')
-      .set('X-API-Key', 'session7-legacy-key')
+      .set('X-API-Key', 'auth-foundation-legacy-key')
       .expect(200);
 
     assert.equal(exchange.body.tokenType, 'Bearer');
@@ -148,7 +148,7 @@ describe('Session 7 auth foundation', () => {
         roles: ['internal-node'],
         name: 'swarm-node-a',
       },
-      'session7-super-secret',
+      'auth-foundation-super-secret',
     );
 
     await request(httpServer)
@@ -173,7 +173,7 @@ describe('Session 7 auth foundation', () => {
         exp: now - 60,
         actor_type: 'admin',
       },
-      'session7-super-secret',
+      'auth-foundation-super-secret',
     );
 
     await request(httpServer)

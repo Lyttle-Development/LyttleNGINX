@@ -407,7 +407,7 @@ function createPrismaMock(clusterState) {
 }
 
 function createHarness(acmeService = undefined) {
-  process.env.ADMIN_EMAIL = 'session16@example.test';
+  process.env.ADMIN_EMAIL = 'certificate-order@example.test';
   resetModules();
   const { CertificateOrderService } = require(certificateOrderServicePath);
   const { CertificateService } = require(certificateServicePath);
@@ -486,7 +486,7 @@ function createHarness(acmeService = undefined) {
 }
 
 beforeEach(() => {
-  process.env.ADMIN_EMAIL = 'session16@example.test';
+  process.env.ADMIN_EMAIL = 'certificate-order@example.test';
   delete process.env.NODE_ENV;
   restoreExecFile();
   resetModules();
@@ -509,7 +509,7 @@ afterEach(() => {
   }
 });
 
-describe('Session 16 certificate order state machine', () => {
+describe('certificate order state machine', () => {
   it('records self-signed certificate workflows as durable orders with artifact history', async () => {
     installExecFileStub(async ({ command, args }) => {
       if (command === 'nginx') {

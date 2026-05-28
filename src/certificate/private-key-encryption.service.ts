@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const ENVELOPE_SCHEME = 'lyttle-private-key-envelope/v1';
 const DEVELOPMENT_FALLBACK_MASTER_KEY =
-  'lyttle-nginx-session19-development-only-master-key';
+  'lyttle-nginx-development-only-private-key-master-key';
 
 type EncryptionContext = {
   scope: 'certificate' | 'certificate-artifact';
@@ -411,7 +411,7 @@ export class PrivateKeyEncryptionService {
 
     if (configuredProvider !== 'local') {
       throw new Error(
-        `Unsupported PRIVATE_KEY_ENCRYPTION_PROVIDER "${configuredProvider}". Session 19 ships a local envelope-encryption provider plus an abstraction that later sessions can extend for Vault/KMS/HSM integration.`,
+        `Unsupported PRIVATE_KEY_ENCRYPTION_PROVIDER "${configuredProvider}". The current build ships a local envelope-encryption provider plus an abstraction that can be extended for Vault/KMS/HSM integration.`,
       );
     }
 

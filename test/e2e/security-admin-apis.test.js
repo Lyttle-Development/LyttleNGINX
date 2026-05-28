@@ -57,7 +57,7 @@ function buildAdminToken(role, subject = `${role}-user`) {
       scope: 'admin:full security:admin',
       name: subject,
     },
-    'session23-super-secret',
+    'security-admin-super-secret',
   );
 }
 
@@ -82,7 +82,7 @@ function flushAuditWrites() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-describe('Session 23 security administration APIs', () => {
+describe('security administration APIs', () => {
   const originalEnv = {
     NODE_ENV: process.env.NODE_ENV,
     API_KEY: process.env.API_KEY,
@@ -109,23 +109,23 @@ describe('Session 23 security administration APIs', () => {
   let prismaState;
 
   before(async () => {
-    acmeTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lyttlenginx-session23-'));
+    acmeTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lyttlenginx-security-admin-'));
     const acmeAccountPath = path.join(acmeTempDir, 'account.pem');
     fs.writeFileSync(acmeAccountPath, 'test-account-key', 'utf8');
 
     process.env.NODE_ENV = 'test';
-    process.env.API_KEY = 'session23-existing-admin-key';
-    process.env.AUTH_JWT_SECRET = 'session23-super-secret';
+    process.env.API_KEY = 'security-admin-existing-admin-key';
+    process.env.AUTH_JWT_SECRET = 'security-admin-super-secret';
     process.env.AUTH_JWT_ISSUER = 'lyttle-nginx.test';
     process.env.AUTH_JWT_AUDIENCE = 'lyttle-nginx-admin';
     process.env.AUTH_DEFAULT_ADMIN_ROLES = 'platform-admin';
     process.env.AUTH_DEFAULT_ADMIN_SCOPES = 'admin:full security:admin';
     process.env.PRIVATE_KEY_ENCRYPTION_PROVIDER = 'local';
     process.env.PRIVATE_KEY_ENCRYPTION_MASTER_KEY =
-      'session23-private-key-master-key';
-    process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION = 'session23-v2';
-    process.env.BACKUP_ENCRYPTION_KEY = 'session23-backup-key';
-    process.env.BACKUP_ENCRYPTION_KEY_VERSION = 'session23-backup-v1';
+      'security-admin-private-key-master-key';
+    process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION = 'security-admin-v2';
+    process.env.BACKUP_ENCRYPTION_KEY = 'security-admin-backup-key';
+    process.env.BACKUP_ENCRYPTION_KEY_VERSION = 'security-admin-backup-v1';
     process.env.ACME_ACCOUNT_PRIVATE_KEY_PATH = acmeAccountPath;
     process.env.CLUSTER_CONTROL_PROTOCOL = 'http';
 
@@ -242,7 +242,7 @@ describe('Session 23 security administration APIs', () => {
     assert.equal(statusResponse.body.auth.apiKeyConfigured, true);
     assert.equal(statusResponse.body.auth.apiKeyCount, 1);
     assert.equal(statusResponse.body.secrets.status, 'ok');
-    assert.equal(statusResponse.body.privateKeyEncryption.keyVersion, 'session23-v2');
+    assert.equal(statusResponse.body.privateKeyEncryption.keyVersion, 'security-admin-v2');
     assert.equal(statusResponse.body.interNodeSecurity.mtlsEnabled, false);
     assert.equal(
       statusResponse.body.breakGlass.rawCertificateExport.requiredRole,
@@ -274,7 +274,7 @@ describe('Session 23 security administration APIs', () => {
       .post('/security/rotate/api-key')
       .set('Authorization', `Bearer ${platformAdminToken}`)
       .send({
-        nextApiKey: 'NextRotationKey-Session23-!A9xYz321',
+        nextApiKey: 'NextRotationKey-SecurityAdmin-!A9xYz321',
         retireApiKeyId: 'missing-api-key-id',
         issueBridgeToken: true,
         reason: 'quarterly credential rotation',
@@ -303,20 +303,20 @@ describe('Session 23 security administration APIs', () => {
       .post('/security/rotate/private-key-encryption')
       .set('Authorization', `Bearer ${securityAdminToken}`)
       .send({
-        confirmKeyVersion: 'session23-v2',
+        confirmKeyVersion: 'security-admin-v2',
         dryRun: true,
         reason: 'preflight',
       })
       .expect(200);
 
     assert.equal(dryRunResponse.body.status, 'dry-run');
-    assert.equal(dryRunResponse.body.provider.keyVersion, 'session23-v2');
+    assert.equal(dryRunResponse.body.provider.keyVersion, 'security-admin-v2');
 
     const rotateResponse = await request(httpServer)
       .post('/security/rotate/private-key-encryption')
       .set('Authorization', `Bearer ${securityAdminToken}`)
       .send({
-        confirmKeyVersion: 'session23-v2',
+        confirmKeyVersion: 'security-admin-v2',
         reason: 'activate rotated master key version',
       })
       .expect(200);
@@ -362,7 +362,7 @@ describe('Session 23 security administration APIs', () => {
     await request(httpServer)
       .post('/security/rotate/private-key-encryption')
       .set('Authorization', `Bearer ${securityAdminToken}`)
-      .send({ confirmKeyVersion: 'session23-v2' })
+      .send({ confirmKeyVersion: 'security-admin-v2' })
       .expect(200);
 
     await flushAuditWrites();

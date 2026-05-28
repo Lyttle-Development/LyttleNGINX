@@ -70,7 +70,7 @@ function loadDomainUtils() {
 }
 
 function createCertificateService() {
-  process.env.ADMIN_EMAIL = 'session15@example.test';
+  process.env.ADMIN_EMAIL = 'domain-validation@example.test';
   resetModules();
   const { CertificateService } = require(certificateServicePath);
 
@@ -189,7 +189,7 @@ function createCertificateService() {
 }
 
 beforeEach(() => {
-  process.env.ADMIN_EMAIL = 'session15@example.test';
+  process.env.ADMIN_EMAIL = 'domain-validation@example.test';
   restoreExecFile();
   resetModules();
 });
@@ -204,7 +204,7 @@ afterEach(() => {
   }
 });
 
-describe('Session 15 strict domain validation and safe process execution', () => {
+describe('strict domain validation and safe process execution', () => {
   it('normalizes Unicode domains to lowercase ASCII and derives safe certificate storage names', () => {
     const { normalizeDomain, normalizeDomains, getCertificateStorageName } =
       loadDomainUtils();

@@ -158,15 +158,15 @@ async function seedEncryptedCertificate(prisma) {
 }
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lyttlenginx-session20-'));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lyttlenginx-backup-hardening-'));
   process.env.NODE_ENV = 'test';
   process.env.BACKUP_DIR = tempDir;
-  process.env.BACKUP_ENCRYPTION_KEY = 'session20-test-backup-encryption-key';
-  process.env.BACKUP_ENCRYPTION_KEY_VERSION = 'session20-v1';
+  process.env.BACKUP_ENCRYPTION_KEY = 'backup-hardening-test-backup-encryption-key';
+  process.env.BACKUP_ENCRYPTION_KEY_VERSION = 'backup-v1';
   process.env.PRIVATE_KEY_ENCRYPTION_PROVIDER = 'local';
   process.env.PRIVATE_KEY_ENCRYPTION_MASTER_KEY =
-    'session20-test-private-key-master-key';
-  process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION = 'session20-pk-v1';
+    'backup-hardening-test-private-key-master-key';
+  process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION = 'backup-private-key-v1';
   resetModules();
 });
 
@@ -183,7 +183,7 @@ afterEach(() => {
   }
 });
 
-describe('Session 20 backup, export, import, and restore hardening', () => {
+describe('backup, export, import, and restore hardening', () => {
   it('creates encrypted backups that can be verified and restored without re-exposing plaintext at rest', async () => {
     const prisma = createPrismaMock();
     const encryptionService = await seedEncryptedCertificate(prisma);
@@ -209,7 +209,7 @@ describe('Session 20 backup, export, import, and restore hardening', () => {
         verified: true,
         certificateCount: 1,
         entryCount: 4,
-        keyVersion: 'session20-v1',
+        keyVersion: 'backup-v1',
       },
     );
 

@@ -44,7 +44,7 @@ function buildAdminToken(role) {
       scope: 'admin:full',
       name: `${role}-user`,
     },
-    'session21-super-secret',
+    'proxy-management-super-secret',
   );
 }
 
@@ -60,7 +60,7 @@ function createEntry(overrides = {}) {
   };
 }
 
-describe('Session 21 proxy management API', () => {
+describe('proxy management API', () => {
   const originalEnv = {
     API_KEY: process.env.API_KEY,
     AUTH_JWT_SECRET: process.env.AUTH_JWT_SECRET,
@@ -113,8 +113,8 @@ describe('Session 21 proxy management API', () => {
   };
 
   before(async () => {
-    process.env.API_KEY = 'session21-legacy-key';
-    process.env.AUTH_JWT_SECRET = 'session21-super-secret';
+    process.env.API_KEY = 'proxy-management-legacy-key';
+    process.env.AUTH_JWT_SECRET = 'proxy-management-super-secret';
     process.env.AUTH_JWT_ISSUER = 'lyttle-nginx.test';
     process.env.AUTH_JWT_AUDIENCE = 'lyttle-nginx-admin';
 

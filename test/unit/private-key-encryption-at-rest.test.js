@@ -203,8 +203,8 @@ beforeEach(() => {
   process.env.NODE_ENV = 'test';
   process.env.PRIVATE_KEY_ENCRYPTION_PROVIDER = 'local';
   process.env.PRIVATE_KEY_ENCRYPTION_MASTER_KEY =
-    'session19-unit-test-master-key-material';
-  process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION = 'session19-v1';
+    'private-key-encryption-unit-test-master-key-material';
+  process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION = 'private-key-v1';
   resetModules();
 });
 
@@ -236,7 +236,7 @@ afterEach(() => {
   }
 });
 
-describe('Session 19 private-key encryption at rest', () => {
+describe('private-key encryption at rest', () => {
   it('backfills legacy plaintext keys and supports re-encryption when the key version changes', async () => {
     const prisma = createPrismaMock();
     prisma.state.certificates.push({
@@ -283,11 +283,11 @@ describe('Session 19 private-key encryption at rest', () => {
     assert.doesNotMatch(prisma.state.artifacts[0].keyPem, /BEGIN PRIVATE KEY/);
     assert.equal(
       prisma.state.certificates[0].keyEncryption.provider.keyVersion,
-      'session19-v1',
+      'private-key-v1',
     );
     assert.equal(
       prisma.state.artifacts[0].keyEncryption.provider.keyVersion,
-      'session19-v1',
+      'private-key-v1',
     );
     assert.match(
       encryptionService.decryptPrivateKey(
@@ -301,7 +301,7 @@ describe('Session 19 private-key encryption at rest', () => {
       /legacy-cert/,
     );
 
-    process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION = 'session19-v2';
+    process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION = 'private-key-v2';
     resetModules();
     const { PrivateKeyEncryptionService: RotatingEncryptionService } = require(
       encryptionServicePath,
@@ -315,11 +315,11 @@ describe('Session 19 private-key encryption at rest', () => {
     });
     assert.equal(
       prisma.state.certificates[0].keyEncryption.provider.keyVersion,
-      'session19-v2',
+      'private-key-v2',
     );
     assert.equal(
       prisma.state.artifacts[0].keyEncryption.provider.keyVersion,
-      'session19-v2',
+      'private-key-v2',
     );
     assert.match(
       rotatingService.decryptPrivateKey(

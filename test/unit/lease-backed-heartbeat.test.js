@@ -304,7 +304,7 @@ function createDistributedLockMock({
   };
 }
 
-describe('Session 11 lease-backed heartbeat and leader flows', () => {
+describe('lease-backed heartbeat and leader flows', () => {
   it('derives leader reads from the active lease instead of persisted isLeader flags', async () => {
     const prisma = createPrismaMock([
       createNode({ instanceId: 'node-a', hostname: 'node-a', isLeader: false }),

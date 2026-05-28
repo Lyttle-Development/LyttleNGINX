@@ -76,7 +76,7 @@ function stopIfRunning(child, signal = 'SIGKILL') {
 }
 
 async function createHarness(envOverrides = {}) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lyttlenginx-session5-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lyttlenginx-entrypoint-recovery-'));
   const binDir = path.join(tempDir, 'bin');
   const logPath = path.join(tempDir, 'process.log');
   await fs.mkdir(binDir, { recursive: true });
@@ -195,7 +195,7 @@ exit 0
       ...process.env,
       PATH: `${binDir}:${process.env.PATH}`,
       DATABASE_URL: 'postgresql://user:pass@db:5432/lyttlenginx',
-      HOSTNAME: 'session5-test-host',
+      HOSTNAME: 'entrypoint-recovery-test-host',
       ENTRYPOINT_TEST_LOG: logPath,
       SERVICE_STARTUP_GRACE_SECONDS: '1',
       NODE_SHUTDOWN_TIMEOUT_SECONDS: '1',
@@ -218,7 +218,7 @@ exit 0
   };
 }
 
-describe('Session 5 entrypoint recovery behavior', () => {
+describe('entrypoint recovery behavior', () => {
   it('exits non-zero and tears down NGINX when the Node process crashes', async () => {
     const harness = await createHarness({
       FAKE_NODE_MODE: 'crash',

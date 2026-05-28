@@ -56,12 +56,12 @@ afterEach(() => {
   resetAuthServiceModule();
 });
 
-describe('Session 26 auth service unit harness baseline', () => {
+describe('auth service unit harness baseline', () => {
   it('round-trips configured API-key identities through local bearer-token issuance', () => {
     process.env.API_KEY = 'alpha-key,beta-key';
-    process.env.AUTH_JWT_SECRET = 'session26-secret';
-    process.env.AUTH_JWT_ISSUER = 'session26.test';
-    process.env.AUTH_JWT_AUDIENCE = 'session26-admin';
+    process.env.AUTH_JWT_SECRET = 'auth-service-unit-secret';
+    process.env.AUTH_JWT_ISSUER = 'auth-service-unit.test';
+    process.env.AUTH_JWT_AUDIENCE = 'auth-service-unit-admin';
     process.env.AUTH_DEFAULT_ADMIN_ROLES = 'platform-admin,operator';
     process.env.AUTH_DEFAULT_ADMIN_SCOPES = 'admin:full,cluster:read';
     process.env.AUTH_ACCESS_TOKEN_TTL_SECONDS = '300';
@@ -88,17 +88,17 @@ describe('Session 26 auth service unit harness baseline', () => {
 
     assert.equal(resolved.authMethod, 'bearer-token');
     assert.equal(resolved.actorType, 'admin');
-    assert.equal(resolved.issuer, 'session26.test');
-    assert.deepEqual(resolved.audience, ['session26-admin']);
+    assert.equal(resolved.issuer, 'auth-service-unit.test');
+    assert.deepEqual(resolved.audience, ['auth-service-unit-admin']);
     assert.deepEqual(resolved.roles, ['platform-admin', 'operator']);
     assert.deepEqual(resolved.scopes, ['admin:full', 'cluster:read']);
     assert.equal(service.authenticateApiKey('missing-key'), null);
   });
 
   it('rejects bearer tokens with the wrong audience or an unsupported algorithm', () => {
-    process.env.AUTH_JWT_SECRET = 'session26-secret';
-    process.env.AUTH_JWT_ISSUER = 'session26.test';
-    process.env.AUTH_JWT_AUDIENCE = 'session26-admin';
+    process.env.AUTH_JWT_SECRET = 'auth-service-unit-secret';
+    process.env.AUTH_JWT_ISSUER = 'auth-service-unit.test';
+    process.env.AUTH_JWT_AUDIENCE = 'auth-service-unit-admin';
     process.env.AUTH_JWT_ALLOWED_ALGS = 'HS256';
 
     const service = createAuthService();
@@ -107,7 +107,7 @@ describe('Session 26 auth service unit harness baseline', () => {
     const wrongAudienceToken = signHs256Token(
       {
         sub: 'operator-1',
-        iss: 'session26.test',
+        iss: 'auth-service-unit.test',
         aud: 'different-audience',
         iat: now,
         nbf: now,
@@ -115,7 +115,7 @@ describe('Session 26 auth service unit harness baseline', () => {
         roles: ['operator'],
         scope: 'cluster:read',
       },
-      'session26-secret',
+      'auth-service-unit-secret',
     );
 
     assert.throws(
@@ -129,8 +129,8 @@ describe('Session 26 auth service unit harness baseline', () => {
     const unsupportedPayload = Buffer.from(
       JSON.stringify({
         sub: 'operator-2',
-        iss: 'session26.test',
-        aud: 'session26-admin',
+        iss: 'auth-service-unit.test',
+        aud: 'auth-service-unit-admin',
         iat: now,
         nbf: now,
         exp: now + 120,

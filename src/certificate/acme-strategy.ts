@@ -32,7 +32,7 @@ function normalizeRequestedStrategy(
   const normalized = value?.trim().toLowerCase() ?? 'auto';
   if (normalized === 'dns-01') {
     throw new Error(
-      'ACME_CHALLENGE_STRATEGY=dns-01 is not supported in the production-hardened Session 18 flow because it would require DNS TXT record changes. Use auto/http-01 with non-wildcard hostnames or import a certificate instead.',
+      'ACME_CHALLENGE_STRATEGY=dns-01 is not supported by the current production-hardened flow because it would require DNS TXT record changes. Use auto/http-01 with non-wildcard hostnames or import a certificate instead.',
     );
   }
 
@@ -71,7 +71,7 @@ export function resolveAcmeStrategy(
   );
   if (wildcard) {
     throw new Error(
-      'Wildcard certificate issuance is not supported by the production-hardened Session 18 ACME flow because it would require DNS TXT record changes. Use explicit hostnames or import/upload the certificate instead.',
+      'Wildcard certificate issuance is not supported by the current production-hardened ACME flow because it would require DNS TXT record changes. Use explicit hostnames or import/upload the certificate instead.',
     );
   }
 

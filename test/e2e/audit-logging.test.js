@@ -85,7 +85,7 @@ function buildAdminToken(role, subject = `${role}-user`) {
       scope: 'admin:full',
       name: subject,
     },
-    'session9-super-secret',
+    'audit-logging-super-secret',
   );
 }
 
@@ -134,7 +134,7 @@ function flushAuditWrites() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-describe('Session 9 audit logging', () => {
+describe('audit logging', () => {
   const originalEnv = {
     API_KEY: process.env.API_KEY,
     AUTH_JWT_SECRET: process.env.AUTH_JWT_SECRET,
@@ -313,8 +313,8 @@ describe('Session 9 audit logging', () => {
   };
 
   before(async () => {
-    process.env.API_KEY = 'session9-legacy-key';
-    process.env.AUTH_JWT_SECRET = 'session9-super-secret';
+    process.env.API_KEY = 'audit-logging-legacy-key';
+    process.env.AUTH_JWT_SECRET = 'audit-logging-super-secret';
     process.env.AUTH_JWT_ISSUER = 'lyttle-nginx.test';
     process.env.AUTH_JWT_AUDIENCE = 'lyttle-nginx-admin';
     process.env.AUTH_DEFAULT_ADMIN_ROLES = 'platform-admin';

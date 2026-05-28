@@ -16,7 +16,7 @@ function isoDate(offsetMs = 0) {
   return new Date(Date.now() + offsetMs);
 }
 
-describe('Session 25 metrics expansion', () => {
+describe('metrics expansion', () => {
   const originalBackupDir = process.env.BACKUP_DIR;
   const originalOperationStale = process.env.METRICS_CLUSTER_OPERATION_STALE_MAX_AGE_MS;
   const originalOrderStale = process.env.METRICS_CERTIFICATE_ORDER_STALE_MAX_AGE_MS;
@@ -304,7 +304,7 @@ describe('Session 25 metrics expansion', () => {
   });
 });
 
-describe('Session 25 health drilldown endpoints', () => {
+describe('health drilldown endpoints', () => {
   let app;
   let httpServer;
   let dependencyStatus = 'error';

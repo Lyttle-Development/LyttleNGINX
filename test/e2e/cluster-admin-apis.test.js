@@ -1,6 +1,6 @@
 require('reflect-metadata');
 
-process.env.ADMIN_EMAIL ??= 'session22@example.com';
+process.env.ADMIN_EMAIL ??= 'cluster-admin@example.com';
 
 const { after, before, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
@@ -55,7 +55,7 @@ function buildAdminToken(role) {
       scope: 'admin:full cluster:read',
       name: `${role}-user`,
     },
-    'session22-super-secret',
+    'cluster-admin-super-secret',
   );
 }
 
@@ -135,7 +135,7 @@ function createOperation({
   };
 }
 
-describe('Session 22 cluster operations and node-status admin APIs', () => {
+describe('cluster operations and node-status admin APIs', () => {
   const originalEnv = {
     API_KEY: process.env.API_KEY,
     AUTH_JWT_SECRET: process.env.AUTH_JWT_SECRET,
@@ -283,7 +283,7 @@ describe('Session 22 cluster operations and node-status admin APIs', () => {
       return operations.find((operation) => operation.operationId === operationId) ?? null;
     },
     async enqueueBroadcastOperation() {
-      throw new Error('not used in session22 tests');
+      throw new Error('not used in cluster admin API tests');
     },
   };
 
@@ -346,8 +346,8 @@ describe('Session 22 cluster operations and node-status admin APIs', () => {
   };
 
   before(async () => {
-    process.env.API_KEY = 'session22-legacy-key';
-    process.env.AUTH_JWT_SECRET = 'session22-super-secret';
+    process.env.API_KEY = 'cluster-admin-legacy-key';
+    process.env.AUTH_JWT_SECRET = 'cluster-admin-super-secret';
     process.env.AUTH_JWT_ISSUER = 'lyttle-nginx.test';
     process.env.AUTH_JWT_AUDIENCE = 'lyttle-nginx-admin';
 

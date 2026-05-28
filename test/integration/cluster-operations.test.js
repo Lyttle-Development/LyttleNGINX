@@ -210,7 +210,7 @@ async function waitForOperationToSettle(service, operationId) {
   throw new Error(`Operation ${operationId} did not settle in time`);
 }
 
-describe('Session 12 cluster operations and per-node acknowledgements', () => {
+describe('cluster operations and per-node acknowledgements', () => {
   const originalFetch = global.fetch;
   const originalApiKey = process.env.API_KEY;
 
@@ -225,7 +225,7 @@ describe('Session 12 cluster operations and per-node acknowledgements', () => {
   });
 
   it('tracks successful local and remote acknowledgements for a cluster-wide reload operation', async () => {
-    process.env.API_KEY = 'session12-peer-key';
+    process.env.API_KEY = 'cluster-operations-peer-key';
     const fetchCalls = [];
     global.fetch = async (url, options) => {
       fetchCalls.push({ url, options });
@@ -278,7 +278,7 @@ describe('Session 12 cluster operations and per-node acknowledgements', () => {
     assert.equal(localExecutions, 1);
     assert.equal(fetchCalls.length, 1);
     assert.match(fetchCalls[0].url, /\/cluster\/reload\?broadcast=false&operationId=/);
-    assert.equal(fetchCalls[0].options.headers['X-API-Key'], 'session12-peer-key');
+    assert.equal(fetchCalls[0].options.headers['X-API-Key'], 'cluster-operations-peer-key');
 
     assert.equal(operation.status, 'succeeded');
     assert.equal(operation.targetNodeCount, 2);

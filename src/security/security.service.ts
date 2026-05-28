@@ -66,7 +66,7 @@ export class SecurityService {
         rotateEndpoint: '/security/rotate/internal-certs',
         notes: [
           'Inter-node requests are authenticated but not yet mTLS-protected.',
-          'Session 23 exposes an internal certificate rotation hook so future node PKI work can reuse a stable API contract.',
+          'The internal certificate rotation endpoint is a forward-compatible contract for future node PKI work.',
         ],
       },
       breakGlass: {

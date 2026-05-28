@@ -28,7 +28,7 @@ function resetModules() {
 }
 
 function createCertificateService(prisma, acmeService = undefined) {
-  process.env.ADMIN_EMAIL = 'session18@example.test';
+  process.env.ADMIN_EMAIL = 'acme-strategy@example.test';
   resetModules();
   const { CertificateService } = require(certificateServicePath);
 
@@ -96,7 +96,7 @@ function createResponseCapture() {
 }
 
 beforeEach(() => {
-  process.env.ADMIN_EMAIL = 'session18@example.test';
+  process.env.ADMIN_EMAIL = 'acme-strategy@example.test';
   resetModules();
 });
 
@@ -109,7 +109,7 @@ afterEach(() => {
   }
 });
 
-describe('Session 18 ACME strategy hardening', () => {
+describe('ACME strategy hardening', () => {
   it('uses Nest-managed ACME strategy helpers and no longer relies on shell hook arguments', () => {
     const {
       resolveAcmeStrategy,

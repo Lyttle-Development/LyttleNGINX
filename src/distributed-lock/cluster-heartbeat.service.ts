@@ -382,7 +382,7 @@ export class ClusterHeartbeatService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Reconcile denormalized ClusterNode leader flags from the authoritative lease.
-   * Session 11 deliberately stops picking a leader from DB heartbeat recency.
+   * Leader selection is derived from the lease rather than DB heartbeat recency.
    */
   private async enforceOneLeader() {
     try {

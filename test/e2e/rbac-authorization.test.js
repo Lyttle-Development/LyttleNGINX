@@ -82,7 +82,7 @@ function buildAdminToken(role) {
       scope: 'admin:full',
       name: `${role}-user`,
     },
-    'session8-super-secret',
+    'rbac-authorization-super-secret',
   );
 }
 
@@ -101,11 +101,11 @@ function buildInternalNodeToken() {
       scope: 'cluster:internal node:sync',
       name: 'swarm-node-a',
     },
-    'session8-super-secret',
+    'rbac-authorization-super-secret',
   );
 }
 
-describe('Session 8 RBAC authorization policies', () => {
+describe('RBAC authorization policies', () => {
   const originalEnv = {
     API_KEY: process.env.API_KEY,
     AUTH_JWT_SECRET: process.env.AUTH_JWT_SECRET,
@@ -258,8 +258,8 @@ describe('Session 8 RBAC authorization policies', () => {
   };
 
   before(async () => {
-    process.env.API_KEY = 'session8-legacy-key';
-    process.env.AUTH_JWT_SECRET = 'session8-super-secret';
+    process.env.API_KEY = 'rbac-authorization-legacy-key';
+    process.env.AUTH_JWT_SECRET = 'rbac-authorization-super-secret';
     process.env.AUTH_JWT_ISSUER = 'lyttle-nginx.test';
     process.env.AUTH_JWT_AUDIENCE = 'lyttle-nginx-admin';
     process.env.AUTH_DEFAULT_ADMIN_ROLES = 'platform-admin';
@@ -539,7 +539,7 @@ describe('Session 8 RBAC authorization policies', () => {
   it('keeps legacy API keys compatible and exposes the RBAC role catalog', async () => {
     await request(httpServer)
       .get('/auth/info')
-      .set('X-API-Key', 'session8-legacy-key')
+      .set('X-API-Key', 'rbac-authorization-legacy-key')
       .expect(200)
       .expect(({ body }) => {
         assert.deepEqual(body.supportedRoles, [
@@ -560,7 +560,7 @@ describe('Session 8 RBAC authorization policies', () => {
 
     await request(httpServer)
       .get('/cluster/admin/ensure-leader')
-      .set('X-API-Key', 'session8-legacy-key')
+      .set('X-API-Key', 'rbac-authorization-legacy-key')
       .expect(200)
       .expect(({ body }) => assert.equal(body.success, true));
   });

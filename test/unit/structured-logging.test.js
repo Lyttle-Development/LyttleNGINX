@@ -47,7 +47,7 @@ function readLastJsonLogLine(writes) {
   return JSON.parse(line);
 }
 
-describe('Session 24 structured operational logging', () => {
+describe('structured operational logging', () => {
   it('emits structured JSON logs with request, actor, operation, and redacted secret fields', async () => {
     const logsService = new LogsService();
     const request = {

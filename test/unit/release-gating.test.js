@@ -11,12 +11,13 @@ const workflow = fs.readFileSync(
   path.join(repoRoot, '.github/workflows/main.yml'),
   'utf8',
 );
+const dockerfile = fs.readFileSync(path.join(repoRoot, 'Dockerfile'), 'utf8');
 const coverageGateScript = fs.readFileSync(
   path.join(repoRoot, 'scripts/ci/assert-coverage.js'),
   'utf8',
 );
 
-describe('Session 28 CI/CD release gating', () => {
+describe('CI/CD release gating', () => {
   it('adds explicit CI scripts and targeted overrides for release verification', () => {
     assert.equal(typeof packageJson.scripts['lint:ci'], 'string');
     assert.equal(typeof packageJson.scripts['test:coverage:ci'], 'string');
@@ -68,6 +69,13 @@ describe('Session 28 CI/CD release gating', () => {
     );
     assert.match(workflow, /Build and push API Docker image/);
     assert.match(workflow, /ghcr\.io\/\$\{\{ github\.repository_owner }}\/lyttlenginx/);
+  });
+
+  it('runs the full verification contract during the Docker build before pruning dev dependencies', () => {
+    assert.match(dockerfile, /RUN npm ci/);
+    assert.match(dockerfile, /RUN npm run verify:ci/);
+    assert.match(dockerfile, /RUN npm prune --omit=dev/);
+    assert.match(dockerfile, /COPY \. \.\nRUN npm run verify:ci/);
   });
 });
 

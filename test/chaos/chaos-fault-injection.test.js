@@ -564,7 +564,7 @@ function loadReloaderWithPaths(paths) {
   process.env.NGINX_ETC_DIR = paths.nginxEtcDir;
   process.env.NGINX_SOURCE_DIR = paths.nginxSourceDir;
   process.env.NGINX_LOG_DIR = paths.nginxLogDir;
-  process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'session27@example.test';
+  process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'chaos-suite@example.test';
 
   delete require.cache[require.resolve(reloaderModulePath)];
   delete require.cache[require.resolve(nginxServiceModulePath)];
@@ -639,7 +639,7 @@ http {
 
 async function createReloaderHarness(overrides = {}) {
   const tempDir = await fsPromises.mkdtemp(
-    path.join(os.tmpdir(), 'lyttlenginx-session27-reloader-'),
+    path.join(os.tmpdir(), 'lyttlenginx-chaos-reloader-'),
   );
   const nginxEtcDir = path.join(tempDir, 'etc-nginx');
   const nginxSourceDir = path.join(tempDir, 'source-nginx');
@@ -751,7 +751,7 @@ function stopIfRunning(child, signal = 'SIGKILL') {
 
 async function createEntrypointHarness(envOverrides = {}) {
   const tempDir = await fsPromises.mkdtemp(
-    path.join(os.tmpdir(), 'lyttlenginx-session27-entrypoint-'),
+    path.join(os.tmpdir(), 'lyttlenginx-chaos-entrypoint-'),
   );
   const binDir = path.join(tempDir, 'bin');
   const logPath = path.join(tempDir, 'process.log');
@@ -863,7 +863,7 @@ exit 0
       ...process.env,
       PATH: `${binDir}:${process.env.PATH}`,
       DATABASE_URL: 'postgresql://user:pass@db:5432/lyttlenginx',
-      HOSTNAME: 'session27-test-host',
+      HOSTNAME: 'chaos-suite-test-host',
       ENTRYPOINT_TEST_LOG: logPath,
       SERVICE_STARTUP_GRACE_SECONDS: '1',
       NODE_SHUTDOWN_TIMEOUT_SECONDS: '1',
@@ -1242,7 +1242,7 @@ function createCertificatePrismaMock(clusterState) {
 }
 
 function createCertificateHarness() {
-  process.env.ADMIN_EMAIL = 'session27@example.test';
+  process.env.ADMIN_EMAIL = 'chaos-suite@example.test';
   resetCertificateModules();
   const { CertificateOrderService } = require(certificateOrderServicePath);
   const { CertificateService } = require(certificateServicePath);
@@ -1365,7 +1365,7 @@ function createCertificateHarness() {
 before(() => {
   process.env.HEALTH_CONFIG_APPLY_MAX_AGE_MS = '60000';
   process.env.HEALTH_CERTIFICATE_SYNC_MAX_AGE_MS = '60000';
-  process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'session27@example.test';
+  process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'chaos-suite@example.test';
 });
 
 after(() => {
@@ -1412,14 +1412,14 @@ afterEach(() => {
     process.env.API_KEY = originalApiKey;
   }
 
-  process.env.ADMIN_EMAIL = 'session27@example.test';
+  process.env.ADMIN_EMAIL = 'chaos-suite@example.test';
 });
 
 beforeEach(() => {
-  process.env.ADMIN_EMAIL = 'session27@example.test';
+  process.env.ADMIN_EMAIL = 'chaos-suite@example.test';
 });
 
-describe('Session 27 chaos and fault-injection validation', () => {
+describe('chaos and fault-injection validation', () => {
   it('fails readiness decisively during a simulated database outage while keeping other dependencies visible', async () => {
     stubHealthyNginx(7272);
 
@@ -1601,7 +1601,7 @@ describe('Session 27 chaos and fault-injection validation', () => {
   });
 
   it('records node-communication failures as partial cluster-operation failures with per-node ACK detail', async () => {
-    process.env.API_KEY = 'session27-peer-key';
+    process.env.API_KEY = 'chaos-suite-peer-key';
     global.fetch = async () => {
       throw new Error('connect ETIMEDOUT node-b.internal:3000');
     };

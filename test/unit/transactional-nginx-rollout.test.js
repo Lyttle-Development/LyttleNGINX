@@ -33,7 +33,7 @@ function loadReloaderWithPaths(paths) {
   process.env.NGINX_ETC_DIR = paths.nginxEtcDir;
   process.env.NGINX_SOURCE_DIR = paths.nginxSourceDir;
   process.env.NGINX_LOG_DIR = paths.nginxLogDir;
-  process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'session13@example.test';
+  process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'nginx-rollout@example.test';
 
   delete require.cache[require.resolve(reloaderModulePath)];
   delete require.cache[require.resolve(nginxServiceModulePath)];
@@ -102,7 +102,7 @@ http {
 
 async function createHarness(overrides = {}) {
   const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), 'lyttlenginx-session13-'),
+    path.join(os.tmpdir(), 'lyttlenginx-nginx-rollout-'),
   );
   const nginxEtcDir = path.join(tempDir, 'etc-nginx');
   const nginxSourceDir = path.join(tempDir, 'source-nginx');
@@ -165,7 +165,7 @@ afterEach(() => {
   restoreEnv();
 });
 
-describe('Session 13 transactional NGINX rollout', () => {
+describe('transactional NGINX rollout', () => {
   it('validates staged releases before atomically promoting the current symlink', async () => {
     const harness = await createHarness();
     const commandCalls = [];

@@ -10,7 +10,7 @@ const {
   getLocalControlPlaneRegistration,
 } = require('../../src/utils/network-utils');
 
-describe('Session 6 control-plane endpoint resolution', () => {
+describe('control-plane endpoint resolution', () => {
   it('builds the local advertised endpoint from explicit address/port configuration', () => {
     const registration = getLocalControlPlaneRegistration({
       NODE_ENV: 'production',
@@ -97,7 +97,7 @@ describe('Session 6 control-plane endpoint resolution', () => {
   });
 });
 
-describe('Session 6 source and manifest regressions', () => {
+describe('source and manifest regressions', () => {
   it('removes public-IP discovery and direct PORT-based peer URL assumptions from the codebase', async () => {
     const networkUtils = await fs.readFile(
       path.join(repoRoot, 'src/utils/network-utils.ts'),

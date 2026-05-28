@@ -54,7 +54,7 @@ const { MetricsController } = require('../../src/metrics/metrics.controller');
 
 Module._load = originalLoad;
 
-const testApiKey = 'session3-test-key';
+const testApiKey = 'auth-lockdown-test-key';
 const originalApiKey = process.env.API_KEY;
 const originalNodeEnv = process.env.NODE_ENV;
 
@@ -230,7 +230,7 @@ const prismaServiceMock = {
   },
 };
 
-describe('Session 3 endpoint lockdown', () => {
+describe('endpoint lockdown', () => {
   let app;
   let httpServer;
 

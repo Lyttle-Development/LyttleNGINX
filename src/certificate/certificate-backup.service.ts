@@ -23,7 +23,7 @@ const BACKUP_PAYLOAD_FORMAT = 'lyttle-backup-payload/v1';
 const BACKUP_MANIFEST_FORMAT = 'lyttle-backup-manifest/v1';
 const BACKUP_VERSION = '2.0';
 const DEVELOPMENT_FALLBACK_BACKUP_KEY =
-  'lyttle-nginx-session20-development-only-backup-key';
+  'lyttle-nginx-development-only-backup-key';
 const CERTIFICATES_ENTRY_PATH = 'certificates.json';
 const METADATA_ENTRY_PATH = 'metadata.json';
 const BACKUP_FILENAME_PATTERN =
@@ -511,7 +511,7 @@ export class CertificateBackupService {
 
     if (filename.endsWith('.zip')) {
       throw new BadRequestException(
-        'Legacy plaintext .zip backups cannot be verified or restored by the hardened Session 20 flow; create a new encrypted backup first',
+        'Legacy plaintext .zip backups cannot be verified or restored by the current hardened backup flow; create a new encrypted backup first',
       );
     }
 

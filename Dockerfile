@@ -7,16 +7,15 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Install ALL dependencies (including devDependencies needed for build)
-RUN npm ci && \
-    npx prisma generate
+# Install ALL dependencies (including devDependencies needed for verification and build)
+RUN npm ci
 
-# Copy source and build
+# Copy source and run the full repository verification contract inside the build
 COPY . .
-RUN npm run build
+RUN npm run verify:ci
 
 # Prune dev dependencies after build
-RUN npm prune --production && \
+RUN npm prune --omit=dev && \
     npm cache clean --force
 
 # Production stage

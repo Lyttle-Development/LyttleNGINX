@@ -110,7 +110,7 @@ function loadReloaderWithPaths(paths) {
   process.env.NGINX_ETC_DIR = paths.nginxEtcDir;
   process.env.NGINX_SOURCE_DIR = paths.nginxSourceDir;
   process.env.NGINX_LOG_DIR = paths.nginxLogDir;
-  process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'session14@example.test';
+  process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'nginx-custom-code@example.test';
 
   delete require.cache[require.resolve(customCodeModulePath)];
   delete require.cache[require.resolve(nginxServiceModulePath)];
@@ -126,7 +126,7 @@ function loadReloaderWithPaths(paths) {
 
 async function createReloadHarness(entries) {
   const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), 'lyttlenginx-session14-'),
+    path.join(os.tmpdir(), 'lyttlenginx-nginx-custom-code-'),
   );
   const nginxEtcDir = path.join(tempDir, 'etc-nginx');
   const nginxSourceDir = path.join(tempDir, 'source-nginx');
@@ -183,10 +183,10 @@ afterEach(() => {
   restoreEnv();
 });
 
-describe('Session 14 nginx_custom_code guardrails', () => {
+describe('nginx_custom_code guardrails', () => {
   it('sanitizes allowlisted custom fragments and reuses their managed paths safely', async () => {
     const tempDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'lyttlenginx-session14-allowed-'),
+      path.join(os.tmpdir(), 'lyttlenginx-nginx-custom-code-allowed-'),
     );
     const allowedRoot = path.join(tempDir, 'allowed-static');
     process.env.NGINX_CUSTOM_CODE_ALLOWED_PATH_PREFIXES = allowedRoot;
@@ -240,7 +240,7 @@ describe('Session 14 nginx_custom_code guardrails', () => {
 
   it('rejects managed paths outside the allowlisted prefixes', async () => {
     const tempDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'lyttlenginx-session14-prefix-'),
+      path.join(os.tmpdir(), 'lyttlenginx-nginx-custom-code-prefix-'),
     );
     process.env.NGINX_CUSTOM_CODE_ALLOWED_PATH_PREFIXES = path.join(
       tempDir,
@@ -266,7 +266,7 @@ describe('Session 14 nginx_custom_code guardrails', () => {
 
   it('fails the staged reload before nginx validation when a custom fragment is invalid', async () => {
     const tempDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'lyttlenginx-session14-reload-'),
+      path.join(os.tmpdir(), 'lyttlenginx-nginx-custom-code-reload-'),
     );
     process.env.NGINX_CUSTOM_CODE_ALLOWED_PATH_PREFIXES = path.join(
       tempDir,

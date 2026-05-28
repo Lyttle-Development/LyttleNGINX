@@ -369,7 +369,7 @@ function createPrismaMock(clusterState) {
 }
 
 function createHarness() {
-  process.env.ADMIN_EMAIL = 'session17@example.test';
+  process.env.ADMIN_EMAIL = 'certificate-distribution@example.test';
   resetModules();
   const { CertificateOrderService } = require(certificateOrderServicePath);
   const { CertificateService } = require(certificateServicePath);
@@ -488,7 +488,7 @@ function createHarness() {
 }
 
 beforeEach(() => {
-  process.env.ADMIN_EMAIL = 'session17@example.test';
+  process.env.ADMIN_EMAIL = 'certificate-distribution@example.test';
   restoreExecFile();
   resetModules();
 });
@@ -504,7 +504,7 @@ afterEach(() => {
   }
 });
 
-describe('Session 17 cluster certificate distribution and activation', () => {
+describe('cluster certificate distribution and activation', () => {
   it('retries failed distribution by reusing the stored artifact instead of reissuing certificate material', async () => {
     let certificateSequence = 0;
     const calls = installExecFileStub(async ({ command, args }) => {

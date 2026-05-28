@@ -25,8 +25,8 @@ type ClusterNodeLike = {
 
 /**
  * Resolve the control-plane endpoint that this node should advertise to peers.
- * Session 6 intentionally avoids any public-IP discovery and instead relies on
- * explicit cluster configuration.
+ * The current design intentionally avoids public-IP discovery and instead relies
+ * on explicit cluster configuration.
  */
 export function getLocalControlPlaneRegistration(
   env: NodeJS.ProcessEnv = process.env,
