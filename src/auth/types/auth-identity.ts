@@ -4,7 +4,6 @@ export type AuthMethod = 'api-key' | 'bearer-token';
 
 export type ActorType = 'admin' | 'internal-node';
 
-
 export interface AuthIdentity {
   id: string;
   subject: string;
@@ -23,10 +22,19 @@ export interface AuthIdentity {
   claims?: Record<string, unknown>;
 }
 
+export interface ConfiguredApiKeySummary {
+  apiKeyId: string;
+  fingerprint: string;
+  displayName: string;
+  roles: string[];
+  scopes: string[];
+}
+
 export interface AuthCapabilities {
   authEnabled: boolean;
   methods: AuthMethod[];
   apiKeyConfigured: boolean;
+  apiKeyCount: number;
   bearerTokenVerificationConfigured: boolean;
   tokenExchangeEnabled: boolean;
   issuer?: string;

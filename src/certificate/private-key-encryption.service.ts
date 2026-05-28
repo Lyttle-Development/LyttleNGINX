@@ -41,6 +41,13 @@ export type PrivateKeyEncryptionMetadata = {
   payload: EncryptedPayloadMetadata;
 };
 
+export type PrivateKeyEncryptionProviderStatus = {
+  type: 'local-master-key';
+  keyVersion: string;
+  keyId: string;
+  usesDevelopmentFallback: boolean;
+};
+
 interface PrivateKeyEncryptionProvider {
   readonly type: 'local-master-key';
   readonly keyVersion: string;
@@ -115,10 +122,14 @@ function deriveEncryptionKey(rawSecret: string): Buffer {
     return decoded;
   }
 
-  return crypto.createHash('sha256').update(trimmed, 'utf8').digest();
+  return Buffer.from(
+    crypto.createHash('sha256').update(trimmed, 'utf8').digest(),
+  );
 }
 
-function toStoredContext(context: EncryptionContext): Required<EncryptionContext> {
+function toStoredContext(
+  context: EncryptionContext,
+): Required<EncryptionContext> {
   return {
     scope: context.scope,
     domainsHash: context.domainsHash ?? null,
@@ -129,9 +140,22 @@ function toStoredContext(context: EncryptionContext): Required<EncryptionContext
 @Injectable()
 export class PrivateKeyEncryptionService {
   private readonly provider: PrivateKeyEncryptionProvider;
+  private readonly usesDevelopmentFallbackMasterKey: boolean;
 
   constructor(private readonly prisma?: PrismaService) {
-    this.provider = this.createProvider();
+    const { provider, usesDevelopmentFallbackMasterKey } =
+      this.createProvider();
+    this.provider = provider;
+    this.usesDevelopmentFallbackMasterKey = usesDevelopmentFallbackMasterKey;
+  }
+
+  getProviderStatus(): PrivateKeyEncryptionProviderStatus {
+    return {
+      type: this.provider.type,
+      keyVersion: this.provider.keyVersion,
+      keyId: this.provider.keyId,
+      usesDevelopmentFallback: this.usesDevelopmentFallbackMasterKey,
+    };
   }
 
   encryptPrivateKey(
@@ -322,7 +346,16 @@ export class PrivateKeyEncryptionService {
       certificatesUpdated += 1;
     }
 
-    const artifacts = (await this.prisma.certificateArtifactVersion.findMany?.()) as
+    const artifactDelegate = (this.prisma as Record<string, any>)[
+      'certificateArtifactVersion'
+    ] as
+      | {
+          findMany?: () => Promise<unknown>;
+          update?: (input: unknown) => Promise<unknown>;
+        }
+      | undefined;
+
+    const artifacts = (await artifactDelegate?.findMany?.()) as
       | Array<{
           id: string;
           keyPem: string;
@@ -347,7 +380,7 @@ export class PrivateKeyEncryptionService {
         continue;
       }
 
-      await this.prisma.certificateArtifactVersion.update({
+      await artifactDelegate?.update?.({
         where: { id: artifact.id },
         data: {
           keyPem: ensured.keyPem,
@@ -367,10 +400,14 @@ export class PrivateKeyEncryptionService {
     return /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value);
   }
 
-  private createProvider(): PrivateKeyEncryptionProvider {
+  private createProvider(): {
+    provider: PrivateKeyEncryptionProvider;
+    usesDevelopmentFallbackMasterKey: boolean;
+  } {
     const configuredProvider =
-      (process.env.PRIVATE_KEY_ENCRYPTION_PROVIDER ?? 'local').trim().toLowerCase() ||
-      'local';
+      (process.env['PRIVATE_KEY_ENCRYPTION_PROVIDER'] ?? 'local')
+        .trim()
+        .toLowerCase() || 'local';
 
     if (configuredProvider !== 'local') {
       throw new Error(
@@ -378,23 +415,29 @@ export class PrivateKeyEncryptionService {
       );
     }
 
+    const usesDevelopmentFallbackMasterKey =
+      !process.env['PRIVATE_KEY_ENCRYPTION_MASTER_KEY']?.trim();
     const masterKeyMaterial =
-      process.env.PRIVATE_KEY_ENCRYPTION_MASTER_KEY?.trim() ||
+      process.env['PRIVATE_KEY_ENCRYPTION_MASTER_KEY']?.trim() ||
       this.resolveDevelopmentFallbackMasterKey();
 
     if (
-      !process.env.PRIVATE_KEY_ENCRYPTION_MASTER_KEY?.trim() &&
-      process.env.NODE_ENV === 'production'
+      !process.env['PRIVATE_KEY_ENCRYPTION_MASTER_KEY']?.trim() &&
+      process.env['NODE_ENV'] === 'production'
     ) {
       throw new Error(
         'PRIVATE_KEY_ENCRYPTION_MASTER_KEY must be configured in production to protect stored private keys',
       );
     }
 
-    return new LocalMasterKeyProvider({
-      masterKeyMaterial,
-      keyVersion: process.env.PRIVATE_KEY_ENCRYPTION_KEY_VERSION?.trim() || 'v1',
-    });
+    return {
+      provider: new LocalMasterKeyProvider({
+        masterKeyMaterial,
+        keyVersion:
+          process.env['PRIVATE_KEY_ENCRYPTION_KEY_VERSION']?.trim() || 'v1',
+      }),
+      usesDevelopmentFallbackMasterKey,
+    };
   }
 
   private resolveDevelopmentFallbackMasterKey(): string {
@@ -437,8 +480,9 @@ export class PrivateKeyEncryptionService {
       expected.version !== undefined &&
       actual.version !== (expected.version ?? null)
     ) {
-      throw new Error('Encrypted private key artifact-version context mismatch');
+      throw new Error(
+        'Encrypted private key artifact-version context mismatch',
+      );
     }
   }
 }
-

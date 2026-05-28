@@ -871,3 +871,43 @@ Adopt an operator-focused cluster inspection surface with the following characte
 - async operation responses now expose a more uniform contract across accepted, listed, and detailed operation views, which gives later admin APIs a stable status-summary shape to reuse
 - remote-node config/certificate detail is still limited to the current ACK payload plus cluster metadata; later sessions should expand that with structured logs, metrics, and desired/applied-state version tracking rather than bypassing the operation journal
 
+---
+
+## ADR-026 — Security administration APIs expose posture review, manual rotation bridges, and a future internal-cert rotation contract
+
+- Status: accepted
+- Session: Session 23 — Add security administration APIs
+- Date: 2026-05-28
+
+### Context
+
+After Sessions 7-20, the project had stronger auth, RBAC, audit logging, encrypted private-key storage, and hardened backup artifacts, but operators still lacked a dedicated security-administration API surface. Important maintenance tasks such as checking secret posture, reviewing effective access, rotating API keys safely, and re-encrypting stored private keys after a master-key version bump were still implicit or dependent on direct environment/config edits with little in-app guidance.
+
+The roadmap for Session 23 also called for break-glass documentation and an internal-certificate rotation hook for future mTLS work.
+
+### Decision
+
+Adopt a dedicated `/security` administration surface with the following rules:
+
+1. add posture-review endpoints under `security-admin` RBAC:
+   - `GET /security/status`
+   - `GET /security/policy`
+   - `GET /security/secrets/health`
+   - `GET /security/access-review`
+2. keep higher-risk maintenance actions explicit and auditable:
+   - `POST /security/rotate/api-key` → `platform-admin`
+   - `POST /security/rotate/private-key-encryption` → `security-admin`
+   - `POST /security/rotate/internal-certs` → `platform-admin`
+3. treat API-key rotation as a **manual overlap + redeploy** workflow for now; the endpoint validates the proposed key, reports safe fingerprints/IDs, and can optionally mint a short-lived bearer-token bridge when `AUTH_JWT_SECRET` is configured
+4. use the existing Session 19 private-key migration logic as the operator-facing rotation hook for certificate-key re-encryption after `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` changes
+5. expose the internal certificate rotation endpoint immediately as a stable contract, but return a documented “not configured” response until node-to-node mTLS and internal PKI actually exist
+6. add an explicit break-glass runbook so decrypted certificate export and legacy API-key overlap procedures are documented rather than tribal knowledge
+
+### Consequences
+
+- operators can now review secret/configuration posture and their own effective security capabilities without direct database access or environment inspection
+- API-key rotation becomes safer even though it is still deployment-driven, because the platform can validate candidates, report current key fingerprints, and provide a bearer-token migration bridge without exposing raw key material
+- private-key master-key rotation now has an authenticated in-app trigger for the actual re-encryption pass, reducing the chance that operators bump `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` but forget to migrate stored rows
+- the `/security/rotate/internal-certs` endpoint makes the current inter-node mTLS gap explicit while preserving a stable API contract for the future PKI workflow
+- break-glass actions remain narrow, highly privileged, and auditable instead of being treated as undocumented side paths
+

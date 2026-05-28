@@ -1,6 +1,6 @@
 # LyttleNGINX Implementation Status
 
-Last updated: 2026-05-26
+Last updated: 2026-05-28
 
 This file is the working delivery tracker for the roadmap in `IMPLEMENTATION_PLAN_BY_SESSION.md`.
 Use it as the single place to record what has shipped, what is in progress, and what remains.
@@ -9,8 +9,8 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 - Overall status: in progress
 - Current phase: Phase 7 — Operational API expansion
-- Most recently completed session: Session 22 — Add cluster operations and node-status admin APIs
-- Next recommended session from the roadmap: Session 23 — Add security administration APIs
+- Most recently completed session: Session 23 — Add security administration APIs
+- Next recommended session from the roadmap: Session 24 — Replace ad hoc logging with structured operational and audit logging
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -831,13 +831,43 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 23 — Add security administration APIs
 
-- Status: not started
+- Status: done
 - Objective: support operational security maintenance safely and audibly
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: key rotation and security maintenance flows are not yet explicit
-- Follow-up sessions: Session 29
-- Notes: break-glass documentation should land here or alongside it
+- Files touched:
+  - `src/security/security.module.ts`
+  - `src/security/security.controller.ts`
+  - `src/security/security.service.ts`
+  - `src/security/dto/rotate-api-key.dto.ts`
+  - `src/security/dto/rotate-private-key-encryption.dto.ts`
+  - `src/security/dto/rotate-internal-certs.dto.ts`
+  - `src/app.module.ts`
+  - `src/auth/auth.service.ts`
+  - `src/auth/types/auth-identity.ts`
+  - `src/certificate/private-key-encryption.service.ts`
+  - `src/certificate/certificate.module.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `docs/runbooks/security-break-glass.md`
+  - `test/session23/security-admin-apis.test.js`
+- Tests added/updated:
+  - added `test/session23/security-admin-apis.test.js` to verify security posture review endpoints, API-key rotation planning with bridge-token issuance, private-key re-encryption maintenance, the deferred internal-cert rotation hook, and audited denied/successful access patterns
+  - validated the edited Session 23 files with targeted error checks before running the focused regression suite
+  - ran targeted Session 23 verification plus repository type-check/build validation after wiring the new module into `AppModule`
+- Risks:
+  - API-key rotation is now explicit and auditable, but it is still a manual secret-store + redeploy workflow rather than hot-reloaded in-app credential persistence
+  - internal node mTLS is still not implemented, so `POST /security/rotate/internal-certs` currently documents the future contract and prerequisites instead of rotating live node certificates
+  - backup-key rotation still depends on operators creating fresh encrypted artifacts after changing `BACKUP_ENCRYPTION_KEY_VERSION`; older artifacts remain protected by the previous configured backup key until they are replaced or retired
+- Follow-up sessions:
+  - Session 24 — replace ad hoc logging with structured operational and audit logging
+  - Session 25 — expand metrics and alerting
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+- Notes:
+  - added a dedicated `/security` administration surface for posture review (`status`, `policy`, `secrets/health`, `access-review`) under `security-admin` RBAC
+  - added an audited `POST /security/rotate/api-key` planning endpoint for safe overlap-based legacy API-key rotation and optional bearer-token bridge issuance when `AUTH_JWT_SECRET` is available
+  - added `POST /security/rotate/private-key-encryption` as the operator-facing hook for Session 19 key-version migration so stored certificate private keys can be re-encrypted after a master-key rotation
+  - reserved `POST /security/rotate/internal-certs` as the future internal-PKI rotation contract while making the current mTLS gap explicit in both API responses and documentation
+  - documented the break-glass export/API-key overlap procedures in `docs/runbooks/security-break-glass.md`
 
 ---
 

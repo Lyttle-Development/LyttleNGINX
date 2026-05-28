@@ -36,6 +36,6 @@ import { HealthModule } from '../health/health.module';
     TlsConfigService,
     PrismaService,
   ],
-  exports: [CertificateService, TlsConfigService],
+  exports: [CertificateService, TlsConfigService, PrivateKeyEncryptionService],
 })
 export class CertificateModule {}

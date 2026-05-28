@@ -8,10 +8,16 @@ import {
   createPublicKey,
   KeyObject,
   randomUUID,
+  createHash,
   timingSafeEqual,
   verify,
 } from 'crypto';
-import { AuthCapabilities, AuthIdentity, ActorType } from './types/auth-identity';
+import {
+  AuthCapabilities,
+  AuthIdentity,
+  ActorType,
+  ConfiguredApiKeySummary,
+} from './types/auth-identity';
 import { AUTH_ROLES, AUTH_ROLE_HIERARCHY } from './types/auth-role';
 
 @Injectable()
@@ -28,7 +34,8 @@ export class AuthService {
 
   constructor() {
     const apiKeys =
-      process.env['API_KEY']?.split(',')
+      process.env['API_KEY']
+        ?.split(',')
         .map((apiKey) => apiKey.trim())
         .filter(Boolean) || [];
     this.defaultAdminRoles = this.parseDelimitedEnv(
@@ -117,6 +124,7 @@ export class AuthService {
       authEnabled: this.isAuthEnabled(),
       methods,
       apiKeyConfigured: this.validApiKeys.size > 0,
+      apiKeyCount: this.validApiKeys.size,
       bearerTokenVerificationConfigured: this.canVerifyBearerTokens(),
       tokenExchangeEnabled: this.canIssueAccessTokens(),
       issuer: this.jwtIssuer,
@@ -127,6 +135,23 @@ export class AuthService {
       defaultAdminRoles: [...this.defaultAdminRoles],
       defaultAdminScopes: [...this.defaultAdminScopes],
     };
+  }
+
+  listConfiguredApiKeys(): ConfiguredApiKeySummary[] {
+    return [...this.validApiKeys.entries()].map(([apiKey, identity]) => ({
+      apiKeyId: identity.apiKeyId ?? this.buildApiKeyId(apiKey, 0),
+      fingerprint: this.fingerprintApiKey(apiKey),
+      displayName: identity.displayName,
+      roles: [...identity.roles],
+      scopes: [...identity.scopes],
+    }));
+  }
+
+  fingerprintApiKey(apiKey: string): string {
+    return createHash('sha256')
+      .update(apiKey.trim())
+      .digest('hex')
+      .slice(0, 16);
   }
 
   canIssueAccessTokens(): boolean {
@@ -250,7 +275,10 @@ export class AuthService {
     };
   }
 
-  private parseDelimitedEnv(value: string | undefined, defaults: string[]): string[] {
+  private parseDelimitedEnv(
+    value: string | undefined,
+    defaults: string[],
+  ): string[] {
     const parsed =
       value
         ?.split(',')
@@ -259,7 +287,10 @@ export class AuthService {
     return parsed.length > 0 ? [...new Set(parsed)] : defaults;
   }
 
-  private parsePositiveInteger(value: string | undefined, fallback: number): number {
+  private parsePositiveInteger(
+    value: string | undefined,
+    fallback: number,
+  ): number {
     const parsed = Number.parseInt(value ?? '', 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
@@ -301,17 +332,20 @@ export class AuthService {
     signingInput: string,
     signatureSegment: string,
   ) {
-    const signature = this.base64UrlDecode(signatureSegment, 'Invalid bearer token signature');
+    const signature = this.base64UrlDecode(
+      signatureSegment,
+      'Invalid bearer token signature',
+    );
 
     if (algorithm === 'HS256') {
       if (!this.jwtSecret) {
-        throw new UnauthorizedException('HS256 bearer token verification is unavailable');
+        throw new UnauthorizedException(
+          'HS256 bearer token verification is unavailable',
+        );
       }
 
       const expected = Buffer.from(
-        createHmac('sha256', this.jwtSecret)
-        .update(signingInput)
-          .digest(),
+        createHmac('sha256', this.jwtSecret).update(signingInput).digest(),
       );
       if (
         expected.length !== signature.length ||
@@ -324,10 +358,17 @@ export class AuthService {
 
     if (algorithm === 'RS256') {
       if (!this.jwtPublicKey) {
-        throw new UnauthorizedException('RS256 bearer token verification is unavailable');
+        throw new UnauthorizedException(
+          'RS256 bearer token verification is unavailable',
+        );
       }
 
-      const valid = verify('RSA-SHA256', Buffer.from(signingInput), this.jwtPublicKey, signature);
+      const valid = verify(
+        'RSA-SHA256',
+        Buffer.from(signingInput),
+        this.jwtPublicKey,
+        signature,
+      );
       if (!valid) {
         throw new UnauthorizedException('Invalid bearer token signature');
       }
@@ -355,7 +396,11 @@ export class AuthService {
     }
 
     const audience = this.extractAudience(payload['aud']);
-    if (this.jwtAudience && audience.length > 0 && !audience.includes(this.jwtAudience)) {
+    if (
+      this.jwtAudience &&
+      audience.length > 0 &&
+      !audience.includes(this.jwtAudience)
+    ) {
       throw new UnauthorizedException('Bearer token audience is invalid');
     }
   }
@@ -404,7 +449,10 @@ export class AuthService {
 
     const scope = this.readStringClaim(payload['scope']);
     if (scope) {
-      for (const value of scope.split(/\s+/).map((item) => item.trim()).filter(Boolean)) {
+      for (const value of scope
+        .split(/\s+/)
+        .map((item) => item.trim())
+        .filter(Boolean)) {
         scopes.add(value);
       }
     }
@@ -436,7 +484,9 @@ export class AuthService {
   }
 
   private readNumericClaim(value: unknown): number | undefined {
-    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : undefined;
   }
 
   private readStringArrayClaim(value: unknown): string[] {
@@ -448,12 +498,17 @@ export class AuthService {
       return [];
     }
 
-    return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+    return value.filter(
+      (item): item is string =>
+        typeof item === 'string' && item.trim().length > 0,
+    );
   }
 
   private parseJsonSegment<T>(segment: string, errorMessage: string): T {
     try {
-      return JSON.parse(this.base64UrlDecode(segment, errorMessage).toString('utf8')) as T;
+      return JSON.parse(
+        this.base64UrlDecode(segment, errorMessage).toString('utf8'),
+      ) as T;
     } catch {
       throw new UnauthorizedException(errorMessage);
     }

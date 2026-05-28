@@ -446,7 +446,7 @@ All other endpoints should be treated as admin or internal control-plane endpoin
 - `X-API-Key: <key>`
 - `Authorization: ApiKey <key>`
 
-Session 7 introduced a JWT bearer-token foundation that attaches actor identity to each authenticated request. Session 8 builds on that with explicit RBAC policies. Session 9 adds durable audit logging for privileged and mutating operations, including successful writes, denied privileged attempts, and controller/service failures on protected routes. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
+Session 7 introduced a JWT bearer-token foundation that attaches actor identity to each authenticated request. Session 8 builds on that with explicit RBAC policies. Session 9 adds durable audit logging for privileged and mutating operations, including successful writes, denied privileged attempts, and controller/service failures on protected routes. Session 23 now adds dedicated security administration APIs for secret-health review, access review, API-key rotation planning, private-key re-encryption maintenance, and the future internal-certificate rotation contract. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
 
 Current identity model:
 
@@ -609,6 +609,20 @@ curl http://localhost:3000/proxies \
 | GET    | `/auth/me`    | Inspect the current request identity                               | any authenticated `admin` or `internal-node` |
 | POST   | `/auth/token` | Exchange a legacy API-key-authenticated request for a bearer token | any authenticated `admin`                    |
 
+### Security Administration Endpoints
+
+| Method | Endpoint                                 | Description                                                                        | Required role    |
+| ------ | ---------------------------------------- | ---------------------------------------------------------------------------------- | ---------------- |
+| GET    | `/security/status`                       | Review current auth, secret-health, encryption, and break-glass posture            | `security-admin` |
+| GET    | `/security/policy`                       | Review the operator-facing security policy, public allowlist, and rotation surface | `security-admin` |
+| GET    | `/security/secrets/health`               | Inspect which secret inputs are configured and whether any fallback modes are used | `security-admin` |
+| GET    | `/security/access-review`                | Review the current caller's effective roles and high-risk capability access        | `security-admin` |
+| POST   | `/security/rotate/api-key`               | Validate a replacement API key and return a safe manual overlap-rotation plan      | `platform-admin` |
+| POST   | `/security/rotate/private-key-encryption`| Re-encrypt stored private keys with the active configured master-key version       | `security-admin` |
+| POST   | `/security/rotate/internal-certs`        | Reserved hook for future internal mTLS certificate rotation workflows              | `platform-admin` |
+
+Session 23 intentionally keeps API-key rotation as a **manual secret-store + redeploy** workflow. The rotation endpoint does not persist or return raw key material; it validates the candidate, reports safe fingerprints/IDs, and can optionally mint a short-lived bearer token so operators can test the bearer-token path before retiring legacy API keys.
+
 ### Auth configuration
 
 Sessions 7-8 add a JWT/OIDC-compatible claim foundation plus RBAC. The most relevant auth env vars are:
@@ -619,6 +633,12 @@ Sessions 7-8 add a JWT/OIDC-compatible claim foundation plus RBAC. The most rele
 - `AUTH_JWT_ISSUER` — expected token issuer and local token issuer
 - `AUTH_JWT_AUDIENCE` — expected token audience and local token audience
 - `AUTH_DEFAULT_ADMIN_ROLES` / `AUTH_DEFAULT_ADMIN_SCOPES` — bridge claims applied to legacy API keys during the migration from shared keys to bearer-token identities
+
+Session 23 also formalizes the current rotation expectations:
+
+- rotate `API_KEY` outside the app by updating the injected secret/config and redeploying every node; use `POST /security/rotate/api-key` to validate the candidate and generate a safe overlap plan
+- rotate certificate master keys by changing `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` plus the injected `PRIVATE_KEY_ENCRYPTION_MASTER_KEY`, then calling `POST /security/rotate/private-key-encryption`
+- rotate backup-envelope keys by changing `BACKUP_ENCRYPTION_KEY_VERSION` plus `BACKUP_ENCRYPTION_KEY`, then re-creating fresh backup artifacts
 
 Example migration flow:
 
@@ -730,6 +750,16 @@ Session 20 moves backup artifacts themselves onto a hardened envelope format:
 - every backup includes a signed manifest with per-entry SHA-256 checksums, and restore refuses to import anything unless the manifest signature, decrypted payload, and entry digests all verify cleanly
 - direct import still exists for explicitly supplied certificate payloads, but each entry is now validated for PEM structure, private-key match, certificate SAN/CN coverage, and validity-window consistency before it is accepted
 - raw certificate export is treated as a higher-risk break-glass flow and is now restricted to `platform-admin`
+- Session 23 adds `GET /security/status`, `GET /security/secrets/health`, and `GET /security/access-review` so operators can inspect whether the backup and private-key protection inputs are present before attempting high-risk maintenance
+
+### Break-glass procedures
+
+Session 23 adds an explicit operator-facing break-glass note instead of leaving these actions implicit:
+
+- use `GET /certificates/backup/export/:id` only for time-bound emergency recovery that truly requires decrypted PEM material
+- prefer encrypted backup verify/restore flows and bearer tokens for normal operations
+- record the reason for any break-glass action, review `GET /audit` afterward, and rotate/re-issue credentials if exposed material may have been copied outside the platform
+- follow the detailed runbook in `docs/runbooks/security-break-glass.md`
 
 Example configuration snippets:
 

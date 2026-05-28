@@ -15,6 +15,7 @@ import { AuthModule } from './auth/auth.module';
 import { DistributedLockModule } from './distributed-lock/distributed-lock.module';
 import { AuditModule } from './audit/audit.module';
 import { ProxyModule } from './proxy/proxy.module';
+import { SecurityModule } from './security/security.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { ProxyModule } from './proxy/proxy.module';
     PrismaModule,
     DistributedLockModule,
     ProxyModule,
+    SecurityModule,
     ReloaderModule,
     NginxModule,
     CertificateModule,
