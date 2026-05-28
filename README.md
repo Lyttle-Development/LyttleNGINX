@@ -37,9 +37,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 7 in progress
-- **Completed in Sessions 1-21 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, and an authenticated proxy management API with validation-first CRUD workflows
-- **Next recommended implementation session:** Session 22 — add cluster operations and node-status admin APIs
+- **Roadmap status:** Phase 8 in progress
+- **Completed in Sessions 1-24 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, and structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction
+- **Next recommended implementation session:** Session 25 — expand metrics and alerting
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -72,7 +72,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-18 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, guarded `nginx_custom_code` validation, strict domain/process safety, durable certificate-order lifecycle tracking, ACK-backed certificate distribution plus rollback behavior, and the hardened ACME strategy. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now runs the focused Session 3-24 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, guarded `nginx_custom_code` validation, strict domain/process safety, durable certificate-order lifecycle tracking, ACK-backed certificate distribution plus rollback behavior, the hardened ACME strategy, security administration APIs, and structured operational logging. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
 
 ---
 
@@ -105,6 +105,7 @@ npm -v    # expected: 11.15.0
 - **Health Checks** - Automated daily certificate health monitoring
 - **Real-time Status** - Live certificate expiry tracking
 - **JSON API** - Query certificate and proxy status
+- **Structured Operational Logs** - stdout JSON logs with request IDs, actor identity, node IDs, operation IDs, and secret redaction
 - **Alert System** - Multi-channel notifications (email, Slack, Discord)
 
 ### 🔔 Alert System
@@ -422,9 +423,9 @@ npm run prisma:migrate
 
 ## 📚 API Documentation
 
-### Session 3-21 access policy
+### Session 3-24 access policy
 
-As of Sessions 3-21, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, explicit RBAC authorization policies on protected endpoints, durable audit logging for privileged and mutating operations, hardened backup/restore/export flows, and a validated proxy-management surface that replaces direct proxy-table mutation as the preferred operator workflow.
+As of Sessions 3-24, the control-plane API is **authenticated by default**, with a small public probe allowlist, an identity-aware authentication layer, explicit RBAC authorization policies on protected endpoints, durable audit logging for privileged and mutating operations, hardened backup/restore/export flows, a validated proxy-management surface that replaces direct proxy-table mutation as the preferred operator workflow, and structured operational logging that keeps request IDs, actor identity, and cluster operation IDs attached to runtime logs.
 
 The current explicit public allowlist is limited to:
 
@@ -446,7 +447,7 @@ All other endpoints should be treated as admin or internal control-plane endpoin
 - `X-API-Key: <key>`
 - `Authorization: ApiKey <key>`
 
-Session 7 introduced a JWT bearer-token foundation that attaches actor identity to each authenticated request. Session 8 builds on that with explicit RBAC policies. Session 9 adds durable audit logging for privileged and mutating operations, including successful writes, denied privileged attempts, and controller/service failures on protected routes. Session 23 now adds dedicated security administration APIs for secret-health review, access review, API-key rotation planning, private-key re-encryption maintenance, and the future internal-certificate rotation contract. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
+Session 7 introduced a JWT bearer-token foundation that attaches actor identity to each authenticated request. Session 8 builds on that with explicit RBAC policies. Session 9 adds durable audit logging for privileged and mutating operations, including successful writes, denied privileged attempts, and controller/service failures on protected routes. Session 23 adds dedicated security administration APIs for secret-health review, access review, API-key rotation planning, private-key re-encryption maintenance, and the future internal-certificate rotation contract. Session 24 adds structured JSON operational logging to stdout with correlation IDs, actor metadata, node/operation IDs, and consistent secret redaction while keeping audit events on the separate `GET /audit` review surface. Legacy API keys remain supported temporarily as a migration bridge and can be exchanged for short-lived bearer tokens via `POST /auth/token` when `AUTH_JWT_SECRET` is configured.
 
 Current identity model:
 
@@ -538,6 +539,14 @@ Readiness now returns **HTTP 503** when critical dependencies are unhealthy. The
 | ------ | --------------- | ------------------ | ------ |
 | GET    | `/metrics`      | Prometheus metrics | Public |
 | GET    | `/metrics/json` | JSON metrics       | Public |
+
+### Logs Endpoints
+
+| Method | Endpoint | Description | Required role |
+| ------ | -------- | ----------- | ------------- |
+| GET    | `/logs`  | Return recent in-memory operational log entries and raw JSON log lines for the current process | `operator` |
+
+Operational logs now emit structured JSON to stdout for platform log shipping. Audit events remain queryable separately through `GET /audit`.
 
 ### Proxy Management Endpoints
 

@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 7 — Operational API expansion
-- Most recently completed session: Session 23 — Add security administration APIs
-- Next recommended session from the roadmap: Session 24 — Replace ad hoc logging with structured operational and audit logging
+- Current phase: Phase 8 — Logging, metrics, and SRE readiness
+- Most recently completed session: Session 24 — Replace ad hoc logging with structured operational and audit logging
+- Next recommended session from the roadmap: Session 25 — Expand metrics and alerting
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -875,13 +875,38 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 24 — Replace ad hoc logging with structured operational and audit logging
 
-- Status: not started
+- Status: done
 - Objective: make logs machine-parseable, traceable, and safe for centralized collection
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: current logging is not production-grade and may expose sensitive data
-- Follow-up sessions: Session 25, Session 28
-- Notes: request IDs and redaction remain open
+- Files touched:
+  - `src/logs/log-context.ts`
+  - `src/logs/logs.service.ts`
+  - `src/logs/logs.controller.ts`
+  - `src/main.ts`
+  - `src/app.module.ts`
+  - `src/filters/global-exception.filter.ts`
+  - `src/distributed-lock/cluster-operations.service.ts`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `test/session24/structured-logging.test.js`
+- Tests added/updated:
+  - added `test/session24/structured-logging.test.js` to verify structured JSON operational log entries, request/actor/operation context propagation, correlation header behavior, and secret redaction
+  - ran the focused Session 24 logging regression directly with the repository test runner
+  - ran `npm run typecheck`, `npm run build`, and the full `npm test` suite successfully after landing the structured logging changes
+- Risks:
+  - the in-memory `/logs` buffer is intentionally process-local and non-durable; operators should treat stdout log shipping as the primary retention path
+  - many existing service messages still originate from historical plain-text strings, so the new logger structures context around them but does not rewrite every message into a domain-specific event schema yet
+  - audit persistence still shares the primary application database; this session cleanly separates operational vs audit outputs, but it does not make audit writes resilient to database outages on its own
+- Follow-up sessions:
+  - Session 25 — expand metrics and alerting
+  - Session 27 — add chaos and fault-injection validation
+  - Session 28 — upgrade CI/CD and release gating
+  - Session 29 — reconcile README, architecture docs, and runbooks with reality
+- Notes:
+  - replaced synchronous local file logging with structured JSON stdout/stderr emission plus a bounded in-memory buffer for `GET /logs`
+  - added async request-scoped logging context so correlation IDs, actor identity, request metadata, and cluster operation IDs flow through runtime logs automatically
+  - routed HTTP lifecycle and exception logs through the structured logger while keeping audit records on the separate `AuditEvent` / `GET /audit` path
+  - added recursive secret redaction for common sensitive keys and PEM private-key material before operational logs are emitted
 
 ## Session 25 — Expand metrics and alerting
 

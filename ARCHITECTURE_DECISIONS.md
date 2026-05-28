@@ -1,6 +1,6 @@
 # Architecture Decisions Log
 
-Last updated: 2026-05-26
+Last updated: 2026-05-28
 
 This file records repository-level architectural and delivery decisions so future implementation sessions can build on explicit, reviewable choices.
 
@@ -41,6 +41,8 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-023 | Encrypted backup envelopes with signed manifests and platform-admin-only raw certificate export | accepted | Session 20 | 2026-05-26 |
 | ADR-024 | Validation-first proxy management API with reload-required desired-state hints          | accepted | Session 21 | 2026-05-26 |
 | ADR-025 | Cluster overview and per-node convergence APIs backed by the operation journal          | accepted | Session 22 | 2026-05-26 |
+| ADR-026 | Security administration APIs expose posture review, manual rotation bridges, and a future internal-cert rotation contract | accepted | Session 23 | 2026-05-28 |
+| ADR-027 | Structured stdout operational logging with request-scoped context and redaction | accepted | Session 24 | 2026-05-28 |
 
 ---
 
@@ -910,4 +912,39 @@ Adopt a dedicated `/security` administration surface with the following rules:
 - private-key master-key rotation now has an authenticated in-app trigger for the actual re-encryption pass, reducing the chance that operators bump `PRIVATE_KEY_ENCRYPTION_KEY_VERSION` but forget to migrate stored rows
 - the `/security/rotate/internal-certs` endpoint makes the current inter-node mTLS gap explicit while preserving a stable API contract for the future PKI workflow
 - break-glass actions remain narrow, highly privileged, and auditable instead of being treated as undocumented side paths
+
+---
+
+## ADR-027 — Structured stdout operational logging with request-scoped context and redaction
+
+- Status: accepted
+- Session: Session 24 — Replace ad hoc logging with structured operational and audit logging
+- Date: 2026-05-28
+
+### Context
+
+Session 9 added durable audit persistence, but the operational logging path was still ad hoc: synchronous local file writes, duplicated stdout/stderr writes, inconsistent plain-text messages, and no common request/actor/operation context on runtime logs. That made centralized collection harder and increased the chance of leaking sensitive material in logs.
+
+### Decision
+
+Adopt the following operational logging model for the current monolith:
+
+1. treat stdout/stderr as the primary operational log sink and emit machine-parseable JSON lines there
+2. keep a small in-memory ring buffer only for the authenticated `GET /logs` review endpoint; do not treat local files as the primary store anymore
+3. propagate per-request context through async execution so operational logs can include:
+   - correlation/request ID
+   - request method/path/IP
+   - actor identity and roles when available
+   - node ID
+   - cluster operation ID when a workflow is operating inside a tracked operation
+4. keep audit logging as a separate concern backed by the `AuditEvent` table and `GET /audit`, rather than mixing audit records into the operational log stream
+5. apply consistent redaction for obviously sensitive values such as API keys, bearer tokens, cookies, master/encryption secrets, and PEM private keys before they are written to logs
+6. log request lifecycle completion and exception events through the same structured operational logger so HTTP activity is traceable without scraping Nest's default console format
+
+### Consequences
+
+- operators and log shippers can now parse control-plane runtime logs consistently and correlate them with audit events through shared correlation IDs
+- request/actor/operation context is attached once in middleware/async context rather than reimplemented piecemeal inside every service
+- the `/logs` endpoint now exposes structured entries for the current process only, while durable review of privileged actions remains the responsibility of `GET /audit`
+- later sessions can enrich this schema with additional metrics, node-state detail, and external log shipping guidance without reintroducing synchronous file logging or mixed audit/operational concerns
 

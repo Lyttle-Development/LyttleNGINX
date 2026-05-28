@@ -5,6 +5,7 @@ import { ClusterHeartbeatService } from './cluster-heartbeat.service';
 import { DistributedLockService } from './distributed-lock.service';
 import { AuthIdentity } from '../auth/types/auth-identity';
 import { buildClusterNodeUrl } from '../utils/network-utils';
+import { runWithLogContext } from '../logs/log-context';
 
 type ClusterNodeTarget = Awaited<
   ReturnType<ClusterHeartbeatService['getActiveNodes']>
@@ -194,22 +195,26 @@ export class ClusterOperationsService {
         ),
     );
 
-    void this.executeOperation(createdOperation.id, targets, options).catch(
-      async (error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(
-          `[Operation] Execution failed for ${createdOperation.id}: ${message}`,
-        );
-        await this.prisma.clusterOperation.update({
-          where: { id: createdOperation.id },
-          data: {
-            status: 'failed',
-            completedAt: new Date(),
-            lastError: this.truncate(message),
-          },
-        });
+    void runWithLogContext(
+      {
+        correlationId: options.initiatedBy?.correlationId,
+        operationId: createdOperation.id,
       },
-    );
+      () => this.executeOperation(createdOperation.id, targets, options),
+    ).catch(async (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `[Operation] Execution failed for ${createdOperation.id}: ${message}`,
+      );
+      await this.prisma.clusterOperation.update({
+        where: { id: createdOperation.id },
+        data: {
+          status: 'failed',
+          completedAt: new Date(),
+          lastError: this.truncate(message),
+        },
+      });
+    });
 
     const operation = await this.prisma.clusterOperation.findUniqueOrThrow({
       where: { id: createdOperation.id },
