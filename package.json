@@ -12,7 +12,13 @@
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "TS_NODE_PROJECT=tsconfig.test.json node --test -r ts-node/register/transpile-only test/**/*.test.js",
+    "test": "node ./test/run-suite.js all",
+    "test:all": "node ./test/run-suite.js all",
+    "test:unit": "node ./test/run-suite.js unit",
+    "test:integration": "node ./test/run-suite.js integration",
+    "test:e2e": "node ./test/run-suite.js e2e",
+    "test:coverage": "node ./test/run-suite.js all --coverage",
+    "test:list": "node ./test/run-suite.js --list",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -26,7 +32,7 @@
     "lint:fix": "npm run lint -- --fix",
     "docker:setup": "npm run prisma:generate && npm run build",
     "docker:build": "docker build -t lyttle-nginx .",
-    "verify": "npm run lint && npm run typecheck && npm run build",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
     "update": "npm update --save"
   },
   "volta": {

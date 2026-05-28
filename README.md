@@ -24,6 +24,11 @@
   <img src="https://img.shields.io/badge/session%2019-complete-blue" alt="Session 19" />
   <img src="https://img.shields.io/badge/session%2020-complete-blue" alt="Session 20" />
   <img src="https://img.shields.io/badge/session%2021-complete-blue" alt="Session 21" />
+  <img src="https://img.shields.io/badge/session%2022-complete-blue" alt="Session 22" />
+  <img src="https://img.shields.io/badge/session%2023-complete-blue" alt="Session 23" />
+  <img src="https://img.shields.io/badge/session%2024-complete-blue" alt="Session 24" />
+  <img src="https://img.shields.io/badge/session%2025-complete-blue" alt="Session 25" />
+  <img src="https://img.shields.io/badge/session%2026-complete-blue" alt="Session 26" />
   <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
 </p>
 
@@ -37,9 +42,9 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 
 ## 📍 Current Delivery Status
 
-- **Roadmap status:** Phase 8 in progress
-- **Completed in Sessions 1-25 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction, plus expanded Prometheus/JSON metrics and dependency drilldowns for leases, cluster operations, certificate orders, backups, and DB health
-- **Next recommended implementation session:** Session 26 — add automated test harness and baseline coverage
+- **Roadmap status:** Phase 9 in progress
+- **Completed in Sessions 1-26 plus follow-up maintenance:** delivery scaffolding, dependency hygiene, authenticated-by-default admin APIs, dependency-aware health semantics, fail-fast container supervision, explicit inter-node control-plane addressing, an identity-aware auth foundation, explicit RBAC authorization policies, durable audit logging for privileged and mutating operations, durable leader leases, lease-backed heartbeat/leader reconciliation, durable cluster operation journaling with per-node ACK tracking, staged NGINX release activation with rollback-safe config deployment, validated allowlisted custom NGINX fragments, strict certificate-domain validation with safe process execution, durable certificate-order state tracking with artifact history and retryable workflows, ACK-backed cluster certificate activation with rollback to prior artifact versions, an explicit Nest-managed ACME strategy layer with cluster-safe shared HTTP-01 challenge tracking that does not require DNS TXT changes, application-layer envelope encryption for certificate private keys stored in PostgreSQL, encrypted backup/restore envelopes with signed manifests, an authenticated proxy management API with validation-first CRUD workflows, structured JSON operational logging with request correlation, actor context, operation IDs, and secret redaction, expanded Prometheus/JSON metrics and dependency drilldowns for leases, cluster operations, certificate orders, backups, and DB health, plus a classified Node.js test harness with unit/integration/e2e suite commands and baseline coverage for auth, health, leases, config generation, and certificate-order transitions
+- **Next recommended implementation session:** Session 27 — add chaos and fault-injection validation
 - **Canonical planning and status docs:**
   - [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
   - [`IMPLEMENTATION_PLAN_BY_SESSION.md`](IMPLEMENTATION_PLAN_BY_SESSION.md)
@@ -59,6 +64,7 @@ Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www
 Run these commands once a local Node/npm toolchain is available:
 
 ```bash
+npm run test
 npm run lint
 npm run typecheck
 npm run build
@@ -72,7 +78,7 @@ node -v   # expected: v24.16.0
 npm -v    # expected: 11.15.0
 ```
 
-`npm run test` now runs the focused Session 3-24 regression tests for API access control, health semantics, container-supervision behavior, inter-node addressing, the identity-aware auth foundation, RBAC authorization policy enforcement, audit-logging regressions, lease-backed cluster coordination behavior, cluster-operation journaling, transactional NGINX rollout behavior, guarded `nginx_custom_code` validation, strict domain/process safety, durable certificate-order lifecycle tracking, ACK-backed certificate distribution plus rollback behavior, the hardened ACME strategy, security administration APIs, and structured operational logging. Session 26 still remains the planned milestone for broad unit/integration/e2e harness expansion.
+`npm run test` now executes the Session 26 classified harness across explicit `unit`, `integration`, and `e2e` suites. The baseline pillars cover auth, health, leases, config generation, and certificate-order transitions, while the rest of the shipped Session 3-25 regressions remain part of the full suite.
 
 ---
 
@@ -1270,8 +1276,13 @@ npm run lint               # Run ESLint without modifying files
 npm run lint:fix           # Run ESLint and apply safe fixes
 npm run typecheck          # Run TypeScript type-checking
 npm run build              # Build application
-npm run verify             # Lint + typecheck + build
-npm run test               # Focused regression suites for shipped sessions (Session 26 will expand the harness)
+npm run verify             # Lint + typecheck + test + build
+npm run test               # Run all classified unit, integration, and e2e suites
+npm run test:unit          # Run isolated service/script/config regression suites
+npm run test:integration   # Run workflow-level integration suites
+npm run test:e2e           # Run controller/Nest application surface suites
+npm run test:coverage      # Run the full harness with Node test-runner coverage enabled
+npm run test:list          # List suites and baseline coverage pillars
 
 # Development
 npm run start:dev          # Start with hot reload
@@ -1326,11 +1337,22 @@ npm run docker:setup       # Setup for Docker
 ### Testing
 
 ```bash
-# Placeholder until Session 26
 npm run test
+npm run test:unit
+npm run test:integration
+npm run test:e2e
+npm run test:coverage
 ```
 
-At the time of Session 1, the repository does **not** yet have the automated unit/integration/e2e harness required by the implementation plan. That work is explicitly tracked in Session 26.
+Session 26 formalized the repository test harness around the built-in Node.js test runner with explicit suite classification and a shared preload step for `ts-node` + `reflect-metadata`.
+
+Current baseline coverage pillars:
+
+- **Auth:** API-key identity, bearer-token validation, endpoint lockdown, RBAC, and security-administration regressions
+- **Health:** probe semantics, readiness/startup state, dependency drilldowns, and metrics-facing health reporting
+- **Leases:** lease-backed heartbeat behavior and cluster-operation acknowledgement workflows
+- **Config generation:** staged NGINX release activation, rollback behavior, and guarded custom-fragment handling
+- **Certificate order transitions:** durable order state, artifact activation/rollback, ACME publication, and backup/import/export flows
 
 ---
 

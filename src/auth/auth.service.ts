@@ -96,7 +96,13 @@ export class AuthService {
         provided.length === candidate.length &&
         timingSafeEqual(provided, candidate)
       ) {
-        return { ...identity };
+        return {
+          ...identity,
+          roles: [...identity.roles],
+          scopes: [...identity.scopes],
+          audience: [...identity.audience],
+          claims: identity.claims ? { ...identity.claims } : undefined,
+        };
       }
     }
 

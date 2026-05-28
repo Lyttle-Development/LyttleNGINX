@@ -44,6 +44,7 @@ This file records repository-level architectural and delivery decisions so futur
 | ADR-026 | Security administration APIs expose posture review, manual rotation bridges, and a future internal-cert rotation contract | accepted | Session 23 | 2026-05-28 |
 | ADR-027 | Structured stdout operational logging with request-scoped context and redaction | accepted | Session 24 | 2026-05-28 |
 | ADR-028 | Dependency drilldowns plus state-based Prometheus metrics for leases, operations, orders, and backups | accepted | Session 25 | 2026-05-28 |
+| ADR-029 | Classified Node.js test harness with shared preload and baseline coverage pillars | accepted | Session 26 | 2026-05-28 |
 
 ---
 
@@ -984,4 +985,43 @@ Adopt the following observability model for the current monolith:
 - dashboards and alerts can reason about lease expiry, stuck operations, stale certificate workflows, and backup freshness without shelling into the node
 - metrics scrapes can degrade gracefully when one section fails, while still exposing section-level collection errors to Prometheus and the JSON API
 - later sessions can build historical SLOs, chaos validation, and CI release gates on top of a broader but still stable observability contract
+
+---
+
+## ADR-029 — Classified Node.js test harness with shared preload and baseline coverage pillars
+
+- Status: accepted
+- Session: Session 26 — Add automated test harness and baseline coverage
+- Date: 2026-05-28
+
+### Context
+
+The repository had accumulated many focused regression tests across Sessions 3-25, but they were still treated as one undifferentiated `npm run test` command. The implementation plan for Session 26 requires an explicit unit/integration/e2e harness, stable test commands, and clear baseline coverage for auth, health, leases, config rollout, and certificate-order transitions.
+
+### Decision
+
+Adopt the built-in Node.js test runner as the repository-standard harness, with an explicit suite manifest and shared preload layer:
+
+1. keep the current Node.js + `ts-node/register/transpile-only` test stack instead of introducing a second framework, so the repo continues to run tests directly against the existing CommonJS/TypeScript mix
+2. add a shared preload entrypoint that loads `reflect-metadata` and defaults `NODE_ENV=test` for all test invocations
+3. classify every `test/**/*.test.js` file into one of three named suites:
+   - `unit`
+   - `integration`
+   - `e2e`
+4. make suite classification explicit in a checked-in harness config and fail the runner if any discovered test file is unclassified or any configured file is missing
+5. expose first-class commands for `npm run test`, `npm run test:unit`, `npm run test:integration`, `npm run test:e2e`, `npm run test:coverage`, and `npm run test:list`
+6. treat the following as the Session 26 baseline coverage pillars:
+   - auth
+   - health
+   - leases
+   - config generation
+   - certificate-order transitions
+7. update `npm run verify` so automated tests are now part of the default repository verification contract rather than an optional extra step
+
+### Consequences
+
+- contributors and future CI jobs can target the right test depth quickly instead of running an opaque monolithic suite every time
+- new test files now require intentional classification, which reduces drift between “tests that exist” and “tests the harness actually runs”
+- the repository gains a stable entrypoint for later Session 27 chaos/fault suites and Session 28 CI gating without replacing the existing Node-native runner
+- coverage reporting is now available from the same harness, while stricter thresholds and release gates remain future work for Session 28
 

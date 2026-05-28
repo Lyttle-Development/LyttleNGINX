@@ -8,9 +8,9 @@ Use it as the single place to record what has shipped, what is in progress, and 
 ## Current summary
 
 - Overall status: in progress
-- Current phase: Phase 8 — Logging, metrics, and SRE readiness
-- Most recently completed session: Session 25 — Expand metrics and alerting
-- Next recommended session from the roadmap: Session 26 — Add automated test harness and baseline coverage
+- Current phase: Phase 9 — Test harness and release gates
+- Most recently completed session: Session 26 — Add automated test harness and baseline coverage
+- Next recommended session from the roadmap: Session 27 — Add chaos and fault-injection validation
 - Readiness reference: `PRODUCTION_READINESS_ASSESSMENT.md`
 - Architecture decision log: `ARCHITECTURE_DECISIONS.md`
 
@@ -947,13 +947,37 @@ Use it as the single place to record what has shipped, what is in progress, and 
 
 ## Session 26 — Add automated test harness and baseline coverage
 
-- Status: not started
-- Objective: create unit, integration, and e2e test foundations for critical flows
-- Files touched: none yet
-- Tests added/updated: none yet
-- Risks: the repository still lacks automated regression protection
-- Follow-up sessions: Session 27, Session 28
-- Notes: this session will replace the current `test` placeholder with a real harness
+- Status: done
+- Objective: formalize the repository test harness into explicit unit, integration, and e2e suites with baseline coverage for critical workflows
+- Files touched:
+  - `package.json`
+  - `README.md`
+  - `ARCHITECTURE_DECISIONS.md`
+  - `IMPLEMENTATION_STATUS.md`
+  - `src/auth/auth.service.ts`
+  - `test/setup/register.js`
+  - `test/test-harness.config.js`
+  - `test/run-suite.js`
+  - `test/session26/auth-service-unit.test.js`
+- Tests added/updated:
+  - added `test/session26/auth-service-unit.test.js` to provide direct unit coverage for API-key identity resolution and bearer-token validation without booting a Nest application
+  - updated `src/auth/auth.service.ts` so API-key authentication returns cloned roles/scopes/audience arrays after the new unit harness exposed shared mutable identity state
+  - classified the full repository test inventory into explicit `unit`, `integration`, and `e2e` suites through `test/test-harness.config.js`
+  - added a shared preload step in `test/setup/register.js` so all test runs consistently load `reflect-metadata` and default `NODE_ENV=test`
+  - added `npm run test`, `npm run test:unit`, `npm run test:integration`, `npm run test:e2e`, `npm run test:coverage`, and `npm run test:list`
+  - updated `npm run verify` so automated tests are now part of the default repo verification contract
+  - verified the new harness with `npm run test:list`, `npm run test:unit`, `npm run test:integration`, `npm run test:e2e`, `npm run test`, `npm run test:coverage`, `npm run typecheck`, and `npm run build`
+- Risks:
+  - the current harness still focuses on deterministic in-process regression coverage; full chaos and failure-mode proof remains the responsibility of Session 27
+  - coverage reporting now exists, but minimum thresholds and CI enforcement remain future work for Session 28
+  - some suites intentionally exercise filesystem/process shims and emit verbose Nest logs; later sessions may still want finer-grained logging controls for CI readability
+- Follow-up sessions:
+  - Session 27 — add chaos and fault-injection validation
+  - Session 28 — upgrade CI/CD and release gating
+- Notes:
+  - the harness now enforces explicit classification of every `test/**/*.test.js` file and fails fast if any test file is untracked or missing from the suite manifest
+  - baseline coverage pillars are now explicit for auth, health, leases, config generation, and certificate-order transitions
+  - the repository continues to use the built-in Node.js test runner plus `ts-node/register/transpile-only`, avoiding a second test framework while still adding suite-level ergonomics and coverage entrypoints
 
 ## Session 27 — Add chaos and fault-injection validation
 
