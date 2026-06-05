@@ -18,6 +18,7 @@ import {
   CertificateOrderSummaryDto,
 } from './dto/certificate-order.dto';
 import { PrivateKeyEncryptionService } from './private-key-encryption.service';
+import { toPrismaNullableJsonValue } from '../prisma/prisma-json.util';
 
 const STATUS_TIMESTAMP_FIELDS: Partial<Record<CertificateOrderStatus, string>> =
   {
@@ -189,7 +190,10 @@ export class CertificateOrderService {
         retryCount: 0,
         requestedByNode: params.requestedByNode ?? null,
         requestedAt: new Date(),
-        metadata: params.metadata ?? undefined,
+        metadata:
+          params.metadata === undefined
+            ? undefined
+            : toPrismaNullableJsonValue(params.metadata),
       },
     })) as CertificateOrderRecord;
 
@@ -422,7 +426,10 @@ export class CertificateOrderService {
         expiresAt: params.expiresAt,
         activatedAt: params.activatedAt ?? null,
         createdByNode: params.createdByNode ?? null,
-        metadata: params.metadata ?? undefined,
+        metadata:
+          params.metadata === undefined
+            ? undefined
+            : toPrismaNullableJsonValue(params.metadata),
       },
     } as any)) as { id: string; version: number };
 
@@ -571,7 +578,10 @@ export class CertificateOrderService {
         message: params.message ?? null,
         attemptNumber: params.attemptNumber ?? null,
         retryAt: params.retryAt ?? null,
-        details: params.details ?? undefined,
+        details:
+          params.details === undefined
+            ? undefined
+            : toPrismaNullableJsonValue(params.details),
       },
     });
   }

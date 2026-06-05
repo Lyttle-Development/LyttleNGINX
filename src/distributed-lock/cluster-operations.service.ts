@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as os from 'node:os';
 import { PrismaService } from '../prisma/prisma.service';
+import { toPrismaNullableJsonValue } from '../prisma/prisma-json.util';
 import { ClusterHeartbeatService } from './cluster-heartbeat.service';
 import { DistributedLockService } from './distributed-lock.service';
 import { AuthIdentity } from '../auth/types/auth-identity';
@@ -687,21 +688,11 @@ export class ClusterOperationsService {
   }
 
   private normalizeAckDetails(details: unknown) {
-    if (details === null) {
-      return null;
-    }
-
     if (details === undefined) {
       return undefined;
     }
 
-    if (typeof details === 'object') {
-      return details as Record<string, unknown>;
-    }
-
-    return {
-      value: details,
-    };
+    return toPrismaNullableJsonValue(details);
   }
 
   private toAcceptedResponse(

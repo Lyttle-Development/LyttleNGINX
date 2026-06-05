@@ -31,6 +31,7 @@ import { runCommand } from '../utils/process-utils';
 import { resolveAcmeStrategy } from './acme-strategy';
 import { AcmeService } from './acme.service';
 import { PrivateKeyEncryptionService } from './private-key-encryption.service';
+import { toPrismaNullableJsonValue } from '../prisma/prisma-json.util';
 
 // Validate ADMIN_EMAIL is set (required by Let's Encrypt)
 const adminEmail = process.env.ADMIN_EMAIL;
@@ -1030,14 +1031,16 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         distributionOperationId: operation.operationId,
         distributionStatus: 'running',
         distributionCompletedAt: null,
-        metadata: this.mergeMetadata(artifact.metadata, {
-          latestDistribution: {
-            operationId: operation.operationId,
-            action: params.action,
-            previousArtifactId: currentArtifact?.id ?? null,
-            queuedAt: new Date().toISOString(),
-          },
-        }),
+        metadata: toPrismaNullableJsonValue(
+          this.mergeMetadata(artifact.metadata, {
+            latestDistribution: {
+              operationId: operation.operationId,
+              action: params.action,
+              previousArtifactId: currentArtifact?.id ?? null,
+              queuedAt: new Date().toISOString(),
+            },
+          }),
+        ),
       },
     });
 
@@ -1143,15 +1146,17 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         isCurrent: true,
         distributionStatus: settledOperation.status,
         distributionCompletedAt: completedAt,
-        metadata: this.mergeMetadata(artifact.metadata, {
-          latestDistribution: {
-            operationId: operation.operationId,
-            action: params.action,
-            previousArtifactId: currentArtifact?.id ?? null,
-            completedAt: completedAt.toISOString(),
-            status: settledOperation.status,
-          },
-        }),
+        metadata: toPrismaNullableJsonValue(
+          this.mergeMetadata(artifact.metadata, {
+            latestDistribution: {
+              operationId: operation.operationId,
+              action: params.action,
+              previousArtifactId: currentArtifact?.id ?? null,
+              completedAt: completedAt.toISOString(),
+              status: settledOperation.status,
+            },
+          }),
+        ),
       },
     });
 

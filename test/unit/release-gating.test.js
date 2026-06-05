@@ -59,8 +59,11 @@ describe('CI/CD release gating', () => {
     assert.match(workflow, /Run tests with coverage gate[\s\S]*npm run test:coverage:ci/);
     assert.match(workflow, /Run production dependency audit[\s\S]*npm run audit:prod/);
     assert.match(workflow, /Scan container image with Trivy/);
+    assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'/);
+    assert.match(workflow, /uses: actions\/checkout@v6\.0\.3/);
+    assert.match(workflow, /uses: actions\/setup-node@v6\.4\.0/);
     assert.match(workflow, /uses: docker\/build-push-action@v6/);
-    assert.match(workflow, /uses: aquasecurity\/trivy-action@0\.31\.0/);
+    assert.match(workflow, /uses: aquasecurity\/trivy-action@v0\.36\.0/);
 
     assert.match(workflow, /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
     assert.match(

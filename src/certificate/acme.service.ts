@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as acme from 'acme-client';
 import { PrismaService } from '../prisma/prisma.service';
+import { toPrismaNullableJsonValue } from '../prisma/prisma-json.util';
 import {
   getAcmeAccountKeyPath,
   getAcmeDirectoryUrl,
@@ -228,13 +229,15 @@ export class AcmeService {
           data: {
             status: params.status,
             finalizedAt,
-            metadata: this.mergeMetadata(challenge.metadata, {
-              finalization: {
-                status: params.status,
-                error: params.error ?? null,
-                finalizedAt: finalizedAt.toISOString(),
-              },
-            }),
+            metadata: toPrismaNullableJsonValue(
+              this.mergeMetadata(challenge.metadata, {
+                finalization: {
+                  status: params.status,
+                  error: params.error ?? null,
+                  finalizedAt: finalizedAt.toISOString(),
+                },
+              }),
+            ),
           },
         }),
       ),
@@ -263,7 +266,7 @@ export class AcmeService {
         challengeType: params.challenge.type,
         provider: params.strategy.provider,
         status: 'presented',
-        metadata,
+        metadata: toPrismaNullableJsonValue(metadata),
         presentedAt: now,
         expiresAt,
       },
@@ -274,7 +277,7 @@ export class AcmeService {
         challengeType: params.challenge.type,
         provider: params.strategy.provider,
         status: 'presented',
-        metadata,
+        metadata: toPrismaNullableJsonValue(metadata),
         presentedAt: now,
         cleanedUpAt: null,
         finalizedAt: null,
@@ -308,7 +311,7 @@ export class AcmeService {
         challengeType: params.challenge.type,
         provider: params.strategy.provider,
         status: 'cleaned-up',
-        metadata: this.buildChallengeMetadata(params),
+        metadata: toPrismaNullableJsonValue(this.buildChallengeMetadata(params)),
         presentedAt: new Date(),
         cleanedUpAt: new Date(),
         expiresAt: this.getChallengeExpiry(params.authz),
@@ -316,11 +319,13 @@ export class AcmeService {
       update: {
         status: 'cleaned-up',
         cleanedUpAt: new Date(),
-        metadata: this.mergeMetadata(existing?.metadata, {
-          cleanup: {
-            cleanedUpAt: new Date().toISOString(),
-          },
-        }),
+        metadata: toPrismaNullableJsonValue(
+          this.mergeMetadata(existing?.metadata, {
+            cleanup: {
+              cleanedUpAt: new Date().toISOString(),
+            },
+          }),
+        ),
       },
     });
   }
