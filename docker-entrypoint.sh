@@ -17,11 +17,21 @@ NODE_SHUTDOWN_TIMEOUT_SECONDS="${NODE_SHUTDOWN_TIMEOUT_SECONDS:-30}"
 NGINX_SHUTDOWN_TIMEOUT_SECONDS="${NGINX_SHUTDOWN_TIMEOUT_SECONDS:-10}"
 DB_CONNECT_RETRY_DELAY_SECONDS="${DB_CONNECT_RETRY_DELAY_SECONDS:-5}"
 MIGRATION_RETRY_DELAY_SECONDS="${MIGRATION_RETRY_DELAY_SECONDS:-5}"
+NODE_RESTART_MAX_ATTEMPTS="${NODE_RESTART_MAX_ATTEMPTS:-3}"
+NGINX_RESTART_MAX_ATTEMPTS="${NGINX_RESTART_MAX_ATTEMPTS:-3}"
+PROCESS_RESTART_WINDOW_SECONDS="${PROCESS_RESTART_WINDOW_SECONDS:-300}"
+HEALTH_RECOVERY_MAX_ATTEMPTS="${HEALTH_RECOVERY_MAX_ATTEMPTS:-10}"
+HEALTH_RECOVERY_DELAY_SECONDS="${HEALTH_RECOVERY_DELAY_SECONDS:-3}"
+NGINX_PID_FILE="${NGINX_PID_FILE:-/run/nginx.pid}"
 NGINX_RUNTIME_DIR="${NGINX_RUNTIME_DIR:-/etc/nginx/runtime}"
 NGINX_RUNTIME_RELEASES_DIR="${NGINX_RUNTIME_RELEASES_DIR:-${NGINX_RUNTIME_DIR}/releases}"
 NGINX_RUNTIME_CURRENT_LINK="${NGINX_RUNTIME_CURRENT_LINK:-${NGINX_RUNTIME_DIR}/current}"
 NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK="${NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK:-${NGINX_RUNTIME_DIR}/last-known-good}"
 NGINX_BUNDLED_SOURCE_DIR="${NGINX_BUNDLED_SOURCE_DIR:-/app/nginx}"
+NODE_RESTART_ATTEMPTS=0
+NODE_RESTART_WINDOW_STARTED_AT=0
+NGINX_RESTART_ATTEMPTS=0
+NGINX_RESTART_WINDOW_STARTED_AT=0
 
 log_info() {
     echo -e "${BLUE}[ENTRYPOINT] INFO: $1${NC}"
@@ -83,6 +93,96 @@ remember_exit_code() {
     if [ "$FINAL_EXIT_CODE" -eq 0 ] || [ "$exit_code" -ne 0 ]; then
         FINAL_EXIT_CODE="$exit_code"
     fi
+}
+
+clear_restart_budget() {
+    local attempts_var="$1"
+    local window_var="$2"
+
+    printf -v "$attempts_var" '%s' 0
+    printf -v "$window_var" '%s' 0
+}
+
+increment_restart_budget() {
+    local attempts_var="$1"
+    local window_var="$2"
+    local max_attempts="$3"
+    local process_name="$4"
+    local current_epoch
+    current_epoch="$(date +%s)"
+
+    local attempts="${!attempts_var:-0}"
+    local window_started_at="${!window_var:-0}"
+
+    if [ "$window_started_at" -eq 0 ] || [ $((current_epoch - window_started_at)) -ge "$PROCESS_RESTART_WINDOW_SECONDS" ]; then
+        attempts=0
+        window_started_at="$current_epoch"
+    fi
+
+    attempts=$((attempts + 1))
+    printf -v "$attempts_var" '%s' "$attempts"
+    printf -v "$window_var" '%s' "$window_started_at"
+
+    if [ "$attempts" -gt "$max_attempts" ]; then
+        log_error "${process_name} exceeded restart budget (${max_attempts} attempts in ${PROCESS_RESTART_WINDOW_SECONDS}s)"
+        return 1
+    fi
+
+    log_warn "Attempting ${process_name} recovery (${attempts}/${max_attempts})"
+    return 0
+}
+
+probe_liveness() {
+    /healthcheck.sh >/dev/null 2>&1
+}
+
+wait_for_liveness() {
+    local max_attempts="${1:-$HEALTH_RECOVERY_MAX_ATTEMPTS}"
+    local delay_seconds="${2:-$HEALTH_RECOVERY_DELAY_SECONDS}"
+    local attempt
+
+    for attempt in $(seq 1 "$max_attempts"); do
+        if probe_liveness; then
+            return 0
+        fi
+
+        if [ "$attempt" -lt "$max_attempts" ]; then
+            sleep "$delay_seconds"
+        fi
+    done
+
+    return 1
+}
+
+read_nginx_master_pid() {
+    local pid
+
+    if [ ! -f "$NGINX_PID_FILE" ]; then
+        return 1
+    fi
+
+    pid="$(tr -d '[:space:]' < "$NGINX_PID_FILE" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+        echo "$pid"
+        return 0
+    fi
+
+    return 1
+}
+
+adopt_running_nginx_master() {
+    local live_pid=""
+
+    if ! live_pid="$(read_nginx_master_pid)"; then
+        return 1
+    fi
+
+    if [ "$live_pid" != "$NGINX_PID" ]; then
+        log_warn "Detected active NGINX master PID ${live_pid}; adopting it instead of exiting the container"
+    fi
+
+    NGINX_PID="$live_pid"
+    return 0
 }
 
 wait_for_process_exit() {
@@ -301,7 +401,7 @@ start_nginx() {
     # Test nginx configuration
     if ! nginx -t 2>&1; then
         log_error "NGINX configuration test failed"
-        exit 1
+        return 1
     fi
 
     # Start NGINX as a supervised foreground child so container exits when it dies
@@ -318,10 +418,11 @@ start_nginx() {
             exit_code=$?
         fi
         log_error "NGINX exited during startup with code $exit_code"
-        exit "$(normalize_exit_code "$exit_code")"
+        return "$(normalize_exit_code "$exit_code")"
     fi
 
     log_success "NGINX started (PID: $NGINX_PID)"
+    return 0
 }
 
 # Start Node.js application
@@ -344,11 +445,67 @@ start_node_app() {
             exit_code=$?
         fi
         log_error "Node.js application crashed immediately after start with code $exit_code"
-        request_shutdown "$(normalize_exit_code "$exit_code")" "Node.js startup failure"
-        exit "$FINAL_EXIT_CODE"
+        return "$(normalize_exit_code "$exit_code")"
     fi
 
-    log_success "Node.js application is running stably"
+    if ! wait_for_liveness; then
+        log_error "Node.js application did not pass the liveness probe after startup"
+        return 1
+    fi
+
+    log_success "Node.js application is running stably and liveness is healthy"
+    return 0
+}
+
+recover_nginx_process() {
+    if adopt_running_nginx_master; then
+        if wait_for_liveness; then
+            clear_restart_budget NGINX_RESTART_ATTEMPTS NGINX_RESTART_WINDOW_STARTED_AT
+            log_success "Container remained healthy after NGINX master PID transition"
+            return 0
+        fi
+
+        log_warn "Adopted running NGINX master, but container liveness has not recovered yet"
+    fi
+
+    if ! increment_restart_budget NGINX_RESTART_ATTEMPTS NGINX_RESTART_WINDOW_STARTED_AT "$NGINX_RESTART_MAX_ATTEMPTS" "NGINX"; then
+        return 1
+    fi
+
+    if start_nginx; then
+        :
+    else
+        local restart_exit_code="$?"
+        log_error "NGINX recovery start failed with code $restart_exit_code"
+        return "$restart_exit_code"
+    fi
+
+    if ! wait_for_liveness; then
+        log_error "NGINX restarted, but container liveness did not recover"
+        return 1
+    fi
+
+    clear_restart_budget NGINX_RESTART_ATTEMPTS NGINX_RESTART_WINDOW_STARTED_AT
+    log_success "NGINX recovered and container liveness is healthy again"
+    return 0
+}
+
+recover_node_process() {
+    if ! increment_restart_budget NODE_RESTART_ATTEMPTS NODE_RESTART_WINDOW_STARTED_AT "$NODE_RESTART_MAX_ATTEMPTS" "Node.js application"; then
+        return 1
+    fi
+
+    if start_node_app; then
+        :
+    else
+        local restart_exit_code="$?"
+        log_error "Node.js recovery start failed with code $restart_exit_code"
+        return "$restart_exit_code"
+    fi
+
+    clear_restart_budget NODE_RESTART_ATTEMPTS NODE_RESTART_WINDOW_STARTED_AT
+    log_success "Node.js application recovered and container liveness is healthy again"
+    return 0
 }
 
 # Monitor processes
@@ -372,8 +529,14 @@ monitor_processes() {
 
         if [ "$exited_pid" = "$NODE_PID" ]; then
             log_error "Node.js application exited unexpectedly with code $exit_code"
+            if recover_node_process; then
+                continue
+            fi
         elif [ "$exited_pid" = "$NGINX_PID" ]; then
             log_error "NGINX exited unexpectedly with code $exit_code"
+            if recover_nginx_process; then
+                continue
+            fi
         else
             log_error "A supervised child process exited unexpectedly with code $exit_code"
         fi
@@ -421,8 +584,20 @@ verify_prerequisites
 bootstrap_nginx_runtime_layout
 
 # Start services
-start_nginx
-start_node_app
+if start_nginx; then
+    :
+else
+    startup_exit_code="$?"
+    exit "$startup_exit_code"
+fi
+
+if start_node_app; then
+    :
+else
+    local_start_exit_code="$?"
+    request_shutdown "$local_start_exit_code" "Node.js startup failure"
+    exit "$FINAL_EXIT_CODE"
+fi
 
 # Monitor and wait
 monitor_processes

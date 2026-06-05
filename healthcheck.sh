@@ -1,6 +1,6 @@
 #!/bin/bash
 
-RESPONSE=$(curl -sS --connect-timeout 2 --max-time 4 -w "\n%{http_code}" \
+RESPONSE=$(curl -sS --connect-timeout 3 --max-time 8 -w "\n%{http_code}" \
   http://127.0.0.1:3000/health/live 2>/dev/null)
 
 HTTP_CODE=$(printf '%s\n' "$RESPONSE" | tail -n 1)
