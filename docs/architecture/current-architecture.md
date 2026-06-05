@@ -93,6 +93,8 @@ Health is split into dedicated routes:
 - dependency drilldown → `GET /health/dependencies`
 - full deep view → `GET /health/deep`
 
+The container-level Docker `HEALTHCHECK` uses the liveness route so the scheduler can distinguish “process is running” from deeper dependency failures. Readiness and dependency drilldowns remain the stricter operational surfaces.
+
 Readiness returns non-200 when critical dependencies are unhealthy, including:
 
 - PostgreSQL connectivity

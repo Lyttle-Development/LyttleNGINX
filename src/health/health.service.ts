@@ -1,12 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BeforeApplicationShutdown, Injectable, Logger } from '@nestjs/common';
 import * as fsPromises from 'node:fs/promises';
 import * as process from 'node:process';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
-export class HealthService {
+export class HealthService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(HealthService.name);
   private readonly startedAt = new Date();
+  private lifecycleState: LifecycleState = 'starting';
+  private lifecycleChangedAt = new Date();
+  private shutdownSignal: string | null = null;
   private readonly configApplyMaxAgeMs = this.getThresholdFromEnv(
     'HEALTH_CONFIG_APPLY_MAX_AGE_MS',
     15 * 60 * 1000,
@@ -20,10 +23,27 @@ export class HealthService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  markRunning(details = 'http server is accepting connections') {
+    this.transitionLifecycle('running', details);
+  }
+
+  beforeApplicationShutdown(signal?: string) {
+    this.transitionLifecycle(
+      'shutting_down',
+      signal
+        ? `shutdown signal ${signal} received`
+        : 'application shutdown requested',
+      signal,
+    );
+  }
+
   async live() {
+    const lifecycle = this.createLifecycleSnapshot();
+
     return {
-      status: 'ok',
+      status: lifecycle.state === 'running' ? 'ok' : lifecycle.status,
       probe: 'liveness',
+      lifecycle,
       uptime: process.uptime(),
       startedAt: this.startedAt.toISOString(),
       timestamp: new Date().toISOString(),
@@ -31,6 +51,7 @@ export class HealthService {
   }
 
   async startup() {
+    const lifecycle = this.createLifecycleSnapshot();
     const checks = [
       this.checkInitializationState('config_apply', this.configApplyState),
       this.checkInitializationState(
@@ -44,6 +65,7 @@ export class HealthService {
     return {
       status: healthy ? 'ok' : 'starting',
       probe: 'startup',
+      lifecycle,
       checks,
       uptime: process.uptime(),
       startedAt: this.startedAt.toISOString(),
@@ -352,10 +374,12 @@ export class HealthService {
   ) {
     const healthy = checks.every((check) => check.status === 'ok');
     const summary = this.summarizeChecks(checks);
+    const lifecycle = this.createLifecycleSnapshot();
 
     return {
       status: healthy ? 'ok' : 'error',
       probe,
+      lifecycle,
       checks,
       summary,
       thresholds: {
@@ -377,6 +401,41 @@ export class HealthService {
       ok,
       error,
     };
+  }
+
+  private transitionLifecycle(
+    nextState: LifecycleState,
+    message: string,
+    signal?: string,
+  ) {
+    if (this.lifecycleState === nextState) {
+      if (signal) {
+        this.shutdownSignal = signal;
+      }
+      return;
+    }
+
+    this.lifecycleState = nextState;
+    this.lifecycleChangedAt = new Date();
+    this.shutdownSignal = signal ?? null;
+    this.logger.log(`[Lifecycle] ${message}`);
+  }
+
+  private createLifecycleSnapshot() {
+    return {
+      state: this.lifecycleState,
+      status: this.lifecycleState === 'running' ? 'ok' : this.mapLifecycleStatus(),
+      changedAt: this.lifecycleChangedAt.toISOString(),
+      shutdownSignal: this.shutdownSignal,
+    };
+  }
+
+  private mapLifecycleStatus(): ProbeReportStatus {
+    if (this.lifecycleState === 'starting') {
+      return 'starting';
+    }
+
+    return 'stopping';
   }
 
   private createOperationSnapshot(
@@ -421,6 +480,10 @@ export class HealthService {
 }
 
 type HealthCheckStatus = 'ok' | 'error';
+
+type ProbeReportStatus = 'ok' | 'error' | 'starting' | 'stopping';
+
+type LifecycleState = 'starting' | 'running' | 'shutting_down';
 
 type OperationState = {
   lastAttemptAt: Date | null;

@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { Response } from 'express';
 import { AppModule } from './app.module';
+import { HealthService } from './health/health.service';
 import { LogsService } from './logs/logs.service';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
 import { AuthenticatedRequest } from './auth/interfaces/authenticated-request.interface';
@@ -10,6 +11,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.enableShutdownHooks();
   const logsService = app.get(LogsService);
+  const healthService = app.get(HealthService);
   app.useLogger(logsService);
   app.use(
     (
@@ -35,6 +37,7 @@ async function bootstrap() {
   );
 
   await app.listen(process.env['PORT'] ?? 3000);
+  healthService.markRunning();
 }
 
 void bootstrap();

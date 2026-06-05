@@ -66,6 +66,8 @@ curl http://localhost:3000/health/ready
 curl http://localhost:3000/metrics/json
 ```
 
+The container image health check now targets `GET /health/live`, so the runtime reports itself healthy to the scheduler when the process is up and the HTTP server is responding. Keep `GET /health/ready` for deeper dependency diagnosis and for platforms that support a separate readiness gate.
+
 ### Example authenticated checks
 
 ```bash
