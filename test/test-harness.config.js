@@ -10,6 +10,7 @@ const UNIT_TEST_FILES = [
   'test/unit/structured-logging.test.js',
   'test/unit/metrics-and-alerting.test.js',
   'test/unit/auth-service-unit.test.js',
+  'test/unit/env-normalization.test.js',
   'test/unit/release-gating.test.js',
 ];
 

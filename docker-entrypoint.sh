@@ -39,6 +39,29 @@ log_warn() {
     echo -e "${YELLOW}[ENTRYPOINT] WARN: $1${NC}"
 }
 
+normalize_quoted_env_value() {
+    local value="${1-}"
+
+    # Trim leading/trailing whitespace first.
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    if [ -z "$value" ]; then
+        echo ""
+        return
+    fi
+
+    local first_char="${value:0:1}"
+    local last_char="${value: -1}"
+    if { [ "$first_char" = '"' ] && [ "$last_char" = '"' ]; } || { [ "$first_char" = "'" ] && [ "$last_char" = "'" ]; }; then
+        value="${value:1:${#value}-2}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+    fi
+
+    echo "$value"
+}
+
 normalize_exit_code() {
     local exit_code="${1:-1}"
 
@@ -368,6 +391,15 @@ monitor_processes() {
 
 # Main execution
 log_info "Starting LyttleNGINX container..."
+
+if [ -n "${DATABASE_URL:-}" ]; then
+    NORMALIZED_DATABASE_URL="$(normalize_quoted_env_value "$DATABASE_URL")"
+    if [ "$NORMALIZED_DATABASE_URL" != "$DATABASE_URL" ]; then
+        log_warn "DATABASE_URL contained wrapping quotes; normalizing it for Prisma and application startup"
+    fi
+    export DATABASE_URL="$NORMALIZED_DATABASE_URL"
+fi
+
 log_info "Hostname: $(hostname)"
 log_info "Instance: ${HOSTNAME:-unknown}"
 log_info "Node version: $(node --version)"
