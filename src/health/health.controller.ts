@@ -13,13 +13,17 @@ export class HealthController {
   }
 
   @Get('health/live')
-  live() {
-    return this.probeService.live();
+  async live(@Res({ passthrough: true }) response: Response) {
+    const report = await this.probeService.live();
+    this.applyProbeStatus(response, report.status);
+    return report;
   }
 
   @Get('health')
-  healthAlias() {
-    return this.probeService.live();
+  async healthAlias(@Res({ passthrough: true }) response: Response) {
+    const report = await this.probeService.live();
+    this.applyProbeStatus(response, report.status);
+    return report;
   }
 
   @Get('health/startup')
