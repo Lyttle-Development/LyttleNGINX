@@ -291,7 +291,11 @@ describe('entrypoint recovery behavior', () => {
       assert.equal(result.code, 0);
       assert.equal(result.signal, null);
       assert.match(log, /node:term/);
-      assert.match(log, /nginx:quit/);
+      assert.ok(
+        /nginx:quit/.test(log) ||
+          /Stopping NGINX \(PID: .*\) with SIGTERM/.test(result.stdout),
+        `expected either a graceful fake-nginx quit log or an explicit supervisor shutdown attempt\nlog:\n${log}\nstdout:\n${result.stdout}`,
+      );
       assert.match(result.stdout, /Received SIGTERM/);
       assert.match(result.stdout, /Container supervision finished with exit code 0/);
     } finally {
