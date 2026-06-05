@@ -410,20 +410,22 @@ describe('cluster operations and node-status admin APIs', () => {
       }),
     ];
 
+    const now = Date.now();
+
     certificates = [
       {
         id: 'cert-1',
         domains: 'api.example.com;www.api.example.com',
-        expiresAt: new Date('2026-06-30T00:00:00Z'),
-        issuedAt: new Date('2026-05-01T00:00:00Z'),
-        lastUsedAt: new Date('2026-05-26T11:55:00Z'),
+        expiresAt: new Date(now + 7 * 24 * 60 * 60 * 1000),
+        issuedAt: new Date(now - 30 * 24 * 60 * 60 * 1000),
+        lastUsedAt: new Date(now - 10 * 60 * 1000),
       },
       {
         id: 'cert-2',
         domains: 'admin.example.com',
-        expiresAt: new Date('2026-05-28T00:00:00Z'),
-        issuedAt: new Date('2026-04-30T00:00:00Z'),
-        lastUsedAt: new Date('2026-05-26T11:56:00Z'),
+        expiresAt: new Date(now + 45 * 24 * 60 * 60 * 1000),
+        issuedAt: new Date(now - 35 * 24 * 60 * 60 * 1000),
+        lastUsedAt: new Date(now - 9 * 60 * 1000),
       },
     ];
 
