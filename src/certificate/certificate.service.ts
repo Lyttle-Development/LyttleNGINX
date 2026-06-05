@@ -55,6 +55,7 @@ class ArtifactActivationError extends Error {
 export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(CertificateService.name);
   private interval: NodeJS.Timeout | null = null;
+  private syncInterval: NodeJS.Timeout | null = null;
   private readonly renewIntervalMs = 1000 * 60 * 60 * 12; // 12 hours
   private leaderLockInterval: NodeJS.Timeout | null = null;
   private isCurrentlyLeader = false;
@@ -109,7 +110,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     );
 
     // Schedule periodic sync (every 5 minutes)
-    setInterval(
+    this.syncInterval = setInterval(
       () => {
         this.syncCertificates().catch((err) =>
           this.logger.error(
@@ -323,6 +324,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
+    }
+
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
     }
 
     if (this.leaderLockInterval) {

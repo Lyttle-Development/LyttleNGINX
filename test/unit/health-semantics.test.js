@@ -75,9 +75,16 @@ describe('health service semantics', () => {
     };
     const service = new HealthService(prisma);
 
+    const preListenLiveReport = await service.live();
+    assert.equal(preListenLiveReport.status, 'starting');
+    assert.equal(preListenLiveReport.lifecycle.state, 'starting');
+
+    service.markRunning();
+
     const liveReport = await service.live();
     assert.equal(liveReport.status, 'ok');
     assert.equal(liveReport.probe, 'liveness');
+    assert.equal(liveReport.lifecycle.state, 'running');
 
     const startupReport = await service.startup();
     assert.equal(startupReport.status, 'starting');
@@ -130,6 +137,23 @@ describe('health service semantics', () => {
       readyReport.checks.find((check) => check.name === 'certificate_sync').status,
       'ok',
     );
+  });
+
+  it('marks liveness as stopping during graceful shutdown', async () => {
+    stubHealthyNginx(5757);
+
+    const prisma = {
+      $queryRawUnsafe: async () => [{ '?column?': 1 }],
+    };
+    const service = new HealthService(prisma);
+
+    service.markRunning();
+    service.beforeApplicationShutdown('SIGTERM');
+
+    const liveReport = await service.live();
+    assert.equal(liveReport.status, 'stopping');
+    assert.equal(liveReport.lifecycle.state, 'shutting_down');
+    assert.equal(liveReport.lifecycle.shutdownSignal, 'SIGTERM');
   });
 
   it('fails readiness when the latest successful state is superseded by a failed attempt', async () => {

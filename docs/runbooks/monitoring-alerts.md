@@ -186,7 +186,8 @@ Minimum dashboard panels:
 
 ## Operational notes
 
-- Treat `/health/ready` as the deployment/orchestration gate.
+- Treat the container `HEALTHCHECK` / `/health/live` signal as “the process is running and answering HTTP”.
+- Treat `/health/ready` as the stricter dependency/deployment gate when your platform supports a separate readiness concept.
 - Treat `/health/dependencies` and `/health/deep` as diagnosis surfaces, not just binary probes.
 - Prefer alerting on gauges that represent *current bad state* or *recent failure windows* instead of all-time counts.
 - When a Prometheus alert fires, capture the matching `operationId`, `correlationId`, or `nodeId` from logs and cluster-operation APIs for faster triage.
