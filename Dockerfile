@@ -28,6 +28,7 @@ LABEL version="1.0"
 
 # Install runtime system packages
 RUN apt-get update && \
+    apt-get dist-upgrade -y && \
     apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \

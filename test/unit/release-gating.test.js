@@ -64,6 +64,8 @@ describe('CI/CD release gating', () => {
     assert.match(workflow, /uses: actions\/setup-node@v6\.4\.0/);
     assert.match(workflow, /uses: docker\/build-push-action@v6/);
     assert.match(workflow, /uses: aquasecurity\/trivy-action@v0\.36\.0/);
+    assert.match(workflow, /Build container image for scanning[\s\S]*pull: true/);
+    assert.match(workflow, /Build and push API Docker image[\s\S]*pull: true/);
 
     assert.match(workflow, /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
     assert.match(
@@ -79,6 +81,7 @@ describe('CI/CD release gating', () => {
     assert.match(dockerfile, /RUN npm run verify:ci/);
     assert.match(dockerfile, /RUN npm prune --omit=dev/);
     assert.match(dockerfile, /COPY \. \.\nRUN npm run verify:ci/);
+    assert.match(dockerfile, /apt-get update && \\\n\s+apt-get dist-upgrade -y && \\\n\s+apt-get install -y --no-install-recommends/);
   });
 });
 
