@@ -6,6 +6,29 @@ import {
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
+function normalizePossiblyQuotedEnvValue(
+  value: string | undefined,
+): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))) &&
+    trimmed.length >= 2
+  ) {
+    return trimmed.slice(1, -1).trim() || undefined;
+  }
+
+  return trimmed;
+}
+
 @Injectable()
 export class PrismaService
   extends PrismaClient
@@ -16,7 +39,7 @@ export class PrismaService
   constructor() {
     // Configure connection pool to prevent connection leaks
     // Parse DATABASE_URL and add connection pool parameters if not present
-    const databaseUrl = process.env.DATABASE_URL;
+    const databaseUrl = normalizePossiblyQuotedEnvValue(process.env.DATABASE_URL);
     if (databaseUrl) {
       const url = new URL(databaseUrl);
       const configuredPoolSize = Number.parseInt(

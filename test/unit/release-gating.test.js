@@ -81,6 +81,7 @@ describe('CI/CD release gating', () => {
     assert.match(dockerfile, /RUN npm run verify:ci/);
     assert.match(dockerfile, /RUN npm prune --omit=dev/);
     assert.match(dockerfile, /COPY \. \.\nRUN npm run verify:ci/);
+    assert.match(dockerfile, /COPY --from=builder \/app\/prisma\.config\.ts \.\/prisma\.config\.ts/);
     assert.match(dockerfile, /apt-get update && \\\n\s+apt-get dist-upgrade -y && \\\n\s+apt-get install -y --no-install-recommends/);
   });
 });
