@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -Eeuo pipefail
 
 # Color codes for logging
 RED='\033[0;31m'
@@ -7,6 +7,21 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+NODE_PID=""
+NGINX_PID=""
+SHUTDOWN_REQUESTED=0
+FINAL_EXIT_CODE=0
+SERVICE_STARTUP_GRACE_SECONDS="${SERVICE_STARTUP_GRACE_SECONDS:-3}"
+NODE_SHUTDOWN_TIMEOUT_SECONDS="${NODE_SHUTDOWN_TIMEOUT_SECONDS:-30}"
+NGINX_SHUTDOWN_TIMEOUT_SECONDS="${NGINX_SHUTDOWN_TIMEOUT_SECONDS:-10}"
+DB_CONNECT_RETRY_DELAY_SECONDS="${DB_CONNECT_RETRY_DELAY_SECONDS:-5}"
+MIGRATION_RETRY_DELAY_SECONDS="${MIGRATION_RETRY_DELAY_SECONDS:-5}"
+NGINX_RUNTIME_DIR="${NGINX_RUNTIME_DIR:-/etc/nginx/runtime}"
+NGINX_RUNTIME_RELEASES_DIR="${NGINX_RUNTIME_RELEASES_DIR:-${NGINX_RUNTIME_DIR}/releases}"
+NGINX_RUNTIME_CURRENT_LINK="${NGINX_RUNTIME_CURRENT_LINK:-${NGINX_RUNTIME_DIR}/current}"
+NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK="${NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK:-${NGINX_RUNTIME_DIR}/last-known-good}"
+NGINX_BUNDLED_SOURCE_DIR="${NGINX_BUNDLED_SOURCE_DIR:-/app/nginx}"
 
 log_info() {
     echo -e "${BLUE}[ENTRYPOINT] INFO: $1${NC}"
@@ -24,99 +39,108 @@ log_warn() {
     echo -e "${YELLOW}[ENTRYPOINT] WARN: $1${NC}"
 }
 
-# State file for tracking restarts
-STATE_DIR="/app/state"
-STATE_FILE="${STATE_DIR}/restart.state"
-MAX_RESTART_ATTEMPTS=5
-RESTART_WINDOW=300 # 5 minutes
+normalize_exit_code() {
+    local exit_code="${1:-1}"
 
-# Cleanup function for graceful shutdown
-cleanup() {
-    log_info "Received shutdown signal, cleaning up..."
+    if ! [[ "$exit_code" =~ ^[0-9]+$ ]]; then
+        echo 1
+        return
+    fi
 
-    # Stop Node.js app gracefully
-    if [ ! -z "$NODE_PID" ] && kill -0 "$NODE_PID" 2>/dev/null; then
-        log_info "Stopping Node.js application (PID: $NODE_PID)..."
-        kill -TERM "$NODE_PID" 2>/dev/null || true
+    if [ "$exit_code" -eq 0 ]; then
+        echo 1
+    else
+        echo "$exit_code"
+    fi
+}
 
-        # Wait up to 30 seconds for graceful shutdown
-        for i in {1..30}; do
-            if ! kill -0 "$NODE_PID" 2>/dev/null; then
-                log_success "Node.js application stopped gracefully"
-                break
-            fi
-            sleep 1
-        done
+remember_exit_code() {
+    local exit_code="$1"
 
-        # Force kill if still running
-        if kill -0 "$NODE_PID" 2>/dev/null; then
-            log_warn "Force killing Node.js application"
-            kill -KILL "$NODE_PID" 2>/dev/null || true
+    if [ "$FINAL_EXIT_CODE" -eq 0 ] || [ "$exit_code" -ne 0 ]; then
+        FINAL_EXIT_CODE="$exit_code"
+    fi
+}
+
+wait_for_process_exit() {
+    local pid="$1"
+    local timeout_seconds="$2"
+    local waited=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ "$waited" -ge "$timeout_seconds" ]; then
+            return 1
         fi
+
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    wait "$pid" 2>/dev/null || true
+    return 0
+}
+
+stop_process() {
+    local pid="$1"
+    local signal="$2"
+    local timeout_seconds="$3"
+    local process_name="$4"
+
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        return
     fi
 
-    # Stop NGINX gracefully
-    if [ ! -z "$NGINX_PID" ] && kill -0 "$NGINX_PID" 2>/dev/null; then
-        log_info "Stopping NGINX (PID: $NGINX_PID)..."
-        nginx -s quit || kill -TERM "$NGINX_PID" 2>/dev/null || true
+    log_info "Stopping ${process_name} (PID: ${pid}) with SIG${signal}..."
+    kill -"$signal" "$pid" 2>/dev/null || true
 
-        # Wait up to 10 seconds
-        for i in {1..10}; do
-            if ! kill -0 "$NGINX_PID" 2>/dev/null; then
-                log_success "NGINX stopped gracefully"
-                break
-            fi
-            sleep 1
-        done
+    if wait_for_process_exit "$pid" "$timeout_seconds"; then
+        log_success "${process_name} stopped gracefully"
+        return
     fi
 
-    log_success "Cleanup complete"
-    exit 0
+    log_warn "${process_name} did not stop within ${timeout_seconds}s; force killing"
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+
+stop_services() {
+    stop_process "$NODE_PID" TERM "$NODE_SHUTDOWN_TIMEOUT_SECONDS" "Node.js application"
+    stop_process "$NGINX_PID" TERM "$NGINX_SHUTDOWN_TIMEOUT_SECONDS" "NGINX"
+}
+
+request_shutdown() {
+    local exit_code="${1:-0}"
+    local reason="${2:-shutdown requested}"
+
+    remember_exit_code "$exit_code"
+
+    if [ "$SHUTDOWN_REQUESTED" -eq 1 ]; then
+        return
+    fi
+
+    SHUTDOWN_REQUESTED=1
+    log_info "${reason}; shutting down supervised services..."
+    stop_services
+}
+
+handle_signal() {
+    local signal_name="$1"
+    request_shutdown 0 "Received ${signal_name}"
+    log_info "Container supervision finished with exit code $FINAL_EXIT_CODE"
+    exit "$FINAL_EXIT_CODE"
 }
 
 # Set up signal handlers
-trap cleanup SIGTERM SIGINT SIGQUIT
-
-# Check restart state
-check_restart_state() {
-    if [ -f "$STATE_FILE" ]; then
-        LAST_RESTART=$(cat "$STATE_FILE")
-        CURRENT_TIME=$(date +%s)
-        TIME_DIFF=$((CURRENT_TIME - LAST_RESTART))
-
-        if [ $TIME_DIFF -lt $RESTART_WINDOW ]; then
-            RESTART_COUNT_FILE="${STATE_DIR}/restart.count"
-            if [ -f "$RESTART_COUNT_FILE" ]; then
-                COUNT=$(cat "$RESTART_COUNT_FILE")
-                COUNT=$((COUNT + 1))
-            else
-                COUNT=1
-            fi
-
-            echo $COUNT > "$RESTART_COUNT_FILE"
-
-            if [ $COUNT -ge $MAX_RESTART_ATTEMPTS ]; then
-                log_error "Too many restarts ($COUNT) in ${RESTART_WINDOW}s window. Entering failure mode."
-                log_error "Manual intervention required. Check logs for details."
-                sleep infinity
-            fi
-
-            log_warn "Restart #$COUNT within ${RESTART_WINDOW}s window"
-        else
-            # Reset counter if outside window
-            echo 0 > "${STATE_DIR}/restart.count"
-        fi
-    fi
-
-    echo $(date +%s) > "$STATE_FILE"
-}
+trap 'handle_signal SIGTERM' SIGTERM
+trap 'handle_signal SIGINT' SIGINT
+trap 'handle_signal SIGQUIT' SIGQUIT
 
 # Verify prerequisites
 verify_prerequisites() {
     log_info "Verifying prerequisites..."
 
     # Check if required environment variables are set
-    if [ -z "$DATABASE_URL" ]; then
+    if [ -z "${DATABASE_URL:-}" ]; then
         log_error "DATABASE_URL environment variable is not set"
         exit 1
     fi
@@ -140,8 +164,8 @@ verify_prerequisites() {
         if nc -z -w5 "$DB_HOST" "$DB_PORT" 2>/dev/null; then
             log_success "Database is accessible at $DB_HOST:$DB_PORT"
         else
-            log_warn "Cannot connect to $DB_HOST:$DB_PORT, will retry..."
-            sleep 5
+            log_warn "Cannot connect to $DB_HOST:$DB_PORT, will retry in ${DB_CONNECT_RETRY_DELAY_SECONDS}s..."
+            sleep "$DB_CONNECT_RETRY_DELAY_SECONDS"
             if ! nc -z -w5 "$DB_HOST" "$DB_PORT" 2>/dev/null; then
                 log_error "Cannot connect to database after retry"
                 log_error "Check DATABASE_URL and ensure database is running"
@@ -169,38 +193,85 @@ verify_prerequisites() {
   MIGRATION_SUCCESS=false
 
   for i in $(seq 1 $MIGRATION_RETRIES); do
-    log_info "Migration attempt $i/$MIGRATION_RETRIES..."
+        log_info "Migration attempt $i/$MIGRATION_RETRIES..."
 
     if npx prisma migrate deploy 2>&1; then
-      MIGRATION_SUCCESS=true
-      break
+            MIGRATION_SUCCESS=true
+            break
     else
-      if [ $i -lt $MIGRATION_RETRIES ]; then
-        log_warn "Migration failed, waiting 5s before retry..."
-        sleep 5
-      fi
+            if [ $i -lt $MIGRATION_RETRIES ]; then
+                log_warn "Migration failed, waiting ${MIGRATION_RETRY_DELAY_SECONDS}s before retry..."
+                sleep "$MIGRATION_RETRY_DELAY_SECONDS"
+            fi
     fi
-  done
+    done
 
-  if [ "$MIGRATION_SUCCESS" = false ]; then
-    log_error "Failed to run Prisma migrations after $MIGRATION_RETRIES attempts"
-    log_error "Common causes:"
-    log_error "  1. Database is not accessible (check DATABASE_URL)"
-    log_error "  2. Database permissions are insufficient"
-    log_error "  3. Database schema is corrupted"
-    log_error "  4. Network issues between container and database"
-    log_error ""
-    log_error "DATABASE_URL: ${DATABASE_URL%%@*}@***"
-    exit 1
-  fi
+    if [ "$MIGRATION_SUCCESS" = false ]; then
+        log_error "Failed to run Prisma migrations after $MIGRATION_RETRIES attempts"
+        log_error "Common causes:"
+        log_error "  1. Database is not accessible (check DATABASE_URL)"
+        log_error "  2. Database permissions are insufficient"
+        log_error "  3. Database schema is corrupted"
+        log_error "  4. Network issues between container and database"
+        log_error ""
+        log_error "DATABASE_URL: ${DATABASE_URL%%@*}@***"
+        exit 1
+    fi
 
-  log_success "Prisma migrations completed"
+    log_success "Prisma migrations completed"
 
 
     log_success "Prerequisites verified"
 }
 
 # Start NGINX
+bootstrap_nginx_runtime_layout() {
+    local bootstrap_release="${NGINX_RUNTIME_RELEASES_DIR}/bootstrap"
+
+    log_info "Ensuring managed NGINX runtime layout exists..."
+    if ! mkdir -p "$NGINX_RUNTIME_RELEASES_DIR"; then
+        log_warn "Cannot create NGINX runtime directory $NGINX_RUNTIME_RELEASES_DIR; continuing without bootstrap layout"
+        return 0
+    fi
+
+    if [ ! -d "$bootstrap_release" ]; then
+        log_info "Creating bootstrap NGINX release at $bootstrap_release"
+        mkdir -p "$bootstrap_release"
+
+        if [ -d "$NGINX_BUNDLED_SOURCE_DIR" ]; then
+            cp -a "$NGINX_BUNDLED_SOURCE_DIR/." "$bootstrap_release/"
+        elif [ -d /etc/nginx/conf.d ]; then
+            log_warn "Bundled NGINX source directory $NGINX_BUNDLED_SOURCE_DIR is missing; falling back to existing /etc/nginx contents"
+            mkdir -p "$bootstrap_release/conf.d"
+            cp -a /etc/nginx/conf.d/. "$bootstrap_release/conf.d/" 2>/dev/null || true
+            if [ -d /etc/nginx/html ]; then
+                mkdir -p "$bootstrap_release/html"
+                cp -a /etc/nginx/html/. "$bootstrap_release/html/" 2>/dev/null || true
+            fi
+            if [ -f /etc/nginx/mime.types ]; then
+                cp -a /etc/nginx/mime.types "$bootstrap_release/mime.types" 2>/dev/null || true
+            fi
+        else
+            log_warn "Bundled NGINX source directory $NGINX_BUNDLED_SOURCE_DIR is missing; creating an empty bootstrap release"
+            mkdir -p "$bootstrap_release/conf.d" "$bootstrap_release/html/errors"
+        fi
+    fi
+
+    if [ ! -L "$NGINX_RUNTIME_CURRENT_LINK" ]; then
+        log_info "Initializing current NGINX release symlink"
+        if ! ln -sfn "$bootstrap_release" "$NGINX_RUNTIME_CURRENT_LINK"; then
+            log_warn "Failed to initialize current NGINX release symlink at $NGINX_RUNTIME_CURRENT_LINK"
+        fi
+    fi
+
+    if [ ! -L "$NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK" ]; then
+        log_info "Initializing last-known-good NGINX release symlink"
+        if ! ln -sfn "$bootstrap_release" "$NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK"; then
+            log_warn "Failed to initialize last-known-good NGINX release symlink at $NGINX_RUNTIME_LAST_KNOWN_GOOD_LINK"
+        fi
+    fi
+}
+
 start_nginx() {
     log_info "Starting NGINX..."
 
@@ -210,13 +281,21 @@ start_nginx() {
         exit 1
     fi
 
-    # Start NGINX
-    nginx
-    NGINX_PID=$(pgrep -x nginx | head -n1)
+    # Start NGINX as a supervised foreground child so container exits when it dies
+    nginx -g 'daemon off;' &
+    NGINX_PID=$!
 
-    if [ -z "$NGINX_PID" ]; then
-        log_error "Failed to start NGINX"
-        exit 1
+    sleep "$SERVICE_STARTUP_GRACE_SECONDS"
+
+    if ! kill -0 "$NGINX_PID" 2>/dev/null; then
+        local exit_code=0
+        if wait "$NGINX_PID"; then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
+        log_error "NGINX exited during startup with code $exit_code"
+        exit "$(normalize_exit_code "$exit_code")"
     fi
 
     log_success "NGINX started (PID: $NGINX_PID)"
@@ -233,10 +312,17 @@ start_node_app() {
     log_success "Node.js application started (PID: $NODE_PID)"
 
     # Wait a moment and verify it's still running
-    sleep 3
+    sleep "$SERVICE_STARTUP_GRACE_SECONDS"
     if ! kill -0 "$NODE_PID" 2>/dev/null; then
-        log_error "Node.js application crashed immediately after start"
-        exit 1
+        local exit_code=0
+        if wait "$NODE_PID"; then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
+        log_error "Node.js application crashed immediately after start with code $exit_code"
+        request_shutdown "$(normalize_exit_code "$exit_code")" "Node.js startup failure"
+        exit "$FINAL_EXIT_CODE"
     fi
 
     log_success "Node.js application is running stably"
@@ -244,30 +330,40 @@ start_node_app() {
 
 # Monitor processes
 monitor_processes() {
-    log_info "Monitoring processes (Node PID: $NODE_PID, NGINX PID: $NGINX_PID)..."
+    log_info "Monitoring supervised processes (Node PID: $NODE_PID, NGINX PID: $NGINX_PID)..."
 
     while true; do
-        # Check Node.js app
-        if ! kill -0 "$NODE_PID" 2>/dev/null; then
-            log_error "Node.js application died unexpectedly"
-            cleanup
-            exit 1
+        local exited_pid=""
+        local exit_code=0
+
+        if wait -n -p exited_pid "$NODE_PID" "$NGINX_PID"; then
+            exit_code=0
+        else
+            exit_code=$?
         fi
 
-        # Check NGINX
-        if ! kill -0 "$NGINX_PID" 2>/dev/null; then
-            log_error "NGINX died unexpectedly, attempting restart..."
-            start_nginx
+        if [ "$SHUTDOWN_REQUESTED" -eq 1 ]; then
+            log_info "Shutdown in progress; child PID ${exited_pid:-unknown} exited with code $exit_code"
+            break
         fi
 
-        # Wait for Node.js to exit (normal shutdown)
-        wait "$NODE_PID"
-        EXIT_CODE=$?
+        if [ "$exited_pid" = "$NODE_PID" ]; then
+            log_error "Node.js application exited unexpectedly with code $exit_code"
+        elif [ "$exited_pid" = "$NGINX_PID" ]; then
+            log_error "NGINX exited unexpectedly with code $exit_code"
+        else
+            log_error "A supervised child process exited unexpectedly with code $exit_code"
+        fi
 
-        log_info "Node.js application exited with code $EXIT_CODE"
-        cleanup
-        exit $EXIT_CODE
+        request_shutdown "$(normalize_exit_code "$exit_code")" "Fail-fast supervision triggered container restart"
+        break
     done
+
+    wait "$NODE_PID" 2>/dev/null || true
+    wait "$NGINX_PID" 2>/dev/null || true
+
+    log_info "Container supervision finished with exit code $FINAL_EXIT_CODE"
+    exit "$FINAL_EXIT_CODE"
 }
 
 # Main execution
@@ -278,18 +374,19 @@ log_info "Node version: $(node --version)"
 log_info "NPM version: $(npm --version)"
 
 # Show sanitized DATABASE_URL (hide password)
-if [ -n "$DATABASE_URL" ]; then
+if [ -n "${DATABASE_URL:-}" ]; then
     SANITIZED_URL=$(echo "$DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')
     log_info "Database: $SANITIZED_URL"
 else
     log_error "DATABASE_URL is not set!"
 fi
 
-# Check restart state
-check_restart_state
 
 # Verify prerequisites
 verify_prerequisites
+
+# Ensure the runtime-managed NGINX release layout exists before validation/startup
+bootstrap_nginx_runtime_layout
 
 # Start services
 start_nginx

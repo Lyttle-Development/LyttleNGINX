@@ -1,16 +1,25 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { Response } from 'express';
 import { AppModule } from './app.module';
 import { LogsService } from './logs/logs.service';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
+import { AuthenticatedRequest } from './auth/interfaces/authenticated-request.interface';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const logsService = app.get(LogsService);
-  app.useLogger(logsService); // <- This makes all Nest logs go through your service
+  app.useLogger(logsService);
+  app.use(
+    (
+      request: AuthenticatedRequest,
+      response: Response,
+      next: () => void,
+    ) => logsService.bindRequestContext(request, response, next),
+  );
 
   // Enable global exception filter
-  app.useGlobalFilters(new GlobalExceptionFilter());
+  app.useGlobalFilters(new GlobalExceptionFilter(logsService));
 
   // Enable global validation
   app.useGlobalPipes(
@@ -24,7 +33,7 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env['PORT'] ?? 3000);
 }
 
 void bootstrap();

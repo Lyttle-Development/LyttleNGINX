@@ -1,15 +1,14 @@
-import {
-  IsArray,
-  IsOptional,
-  IsString,
-  Matches,
-  MinLength,
-} from 'class-validator';
+import { IsArray, IsOptional, IsString, Matches } from 'class-validator';
+import { IsDomainList, NormalizeDomainList } from './domain-list.decorator';
 
 export class UploadCertificateDto {
   @IsArray()
   @IsString({ each: true })
-  @MinLength(1, { each: true, message: 'Domain names cannot be empty' })
+  @NormalizeDomainList({ allowWildcard: true })
+  @IsDomainList(
+    { allowWildcard: true },
+    { message: 'Each domain must be a valid FQDN or wildcard FQDN' },
+  )
   domains: string[]; // Array of domain names
 
   @IsString()

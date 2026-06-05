@@ -6,18 +6,32 @@ import {
   OnApplicationShutdown,
   OnModuleInit,
 } from '@nestjs/common';
-import { exec as execCb } from 'child_process';
-import { promisify } from 'util';
 import { PrismaService } from '../prisma/prisma.service';
 import * as process from 'node:process';
+import * as os from 'node:os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { addDays } from 'date-fns';
-import { hashDomains, joinDomains, parseDomains } from '../utils/domain-utils';
+import {
+  getCertificateStorageName,
+  hashDomains,
+  joinDomains,
+  normalizeDomain,
+  normalizeDomains,
+  parseDomains,
+} from '../utils/domain-utils';
 import { AlertService } from '../alert/alert.service';
+import { CertificateOrderService } from './certificate-order.service';
+import { CertificateOrderSourceType } from './certificate-order.constants';
+import { ClusterHeartbeatService } from '../distributed-lock/cluster-heartbeat.service';
+import { ClusterOperationsService } from '../distributed-lock/cluster-operations.service';
 import { DistributedLockService } from '../distributed-lock/distributed-lock.service';
-
-const exec = promisify(execCb);
+import { HealthService } from '../health/health.service';
+import { runCommand } from '../utils/process-utils';
+import { resolveAcmeStrategy } from './acme-strategy';
+import { AcmeService } from './acme.service';
+import { PrivateKeyEncryptionService } from './private-key-encryption.service';
+import { toPrismaNullableJsonValue } from '../prisma/prisma-json.util';
 
 // Validate ADMIN_EMAIL is set (required by Let's Encrypt)
 const adminEmail = process.env.ADMIN_EMAIL;
@@ -30,6 +44,13 @@ if (!adminEmail) {
 
 const RENEW_BEFORE_DAYS = parseInt(process.env.RENEW_BEFORE_DAYS || '30', 10);
 
+class ArtifactActivationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArtifactActivationError';
+  }
+}
+
 @Injectable()
 export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(CertificateService.name);
@@ -41,21 +62,30 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   constructor(
     private prisma: PrismaService,
     private alertService: AlertService,
+    private certificateOrders: CertificateOrderService,
+    private clusterOperations: ClusterOperationsService,
     private distributedLock: DistributedLockService,
-    @Inject(
-      forwardRef(
-        () =>
-          require('../distributed-lock/cluster-heartbeat.service')
-            .ClusterHeartbeatService,
-      ),
-    )
-    private clusterHeartbeat: any,
+    private healthService: HealthService,
+    @Inject(forwardRef(() => ClusterHeartbeatService))
+    private clusterHeartbeat: ClusterHeartbeatService | null,
+    private readonly acmeService: AcmeService | undefined = undefined,
+    private readonly privateKeyEncryption: PrivateKeyEncryptionService = new PrivateKeyEncryptionService(),
   ) {}
 
   async onModuleInit() {
     this.logger.log(
       `[Init] Instance ID: ${this.distributedLock.getInstanceId()}`,
     );
+
+    const migratedKeys = await this.privateKeyEncryption.migrateStoredPrivateKeys();
+    if (
+      migratedKeys.certificatesUpdated > 0 ||
+      migratedKeys.artifactsUpdated > 0
+    ) {
+      this.logger.log(
+        `[Init] Encrypted ${migratedKeys.certificatesUpdated} certificate key(s) and ${migratedKeys.artifactsUpdated} artifact key(s) already stored in the database`,
+      );
+    }
 
     // Start leader election process - only leader will renew certificates
     this.logger.log(
@@ -109,13 +139,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
       for (const cert of certs) {
         try {
-          const domains = parseDomains(cert.domains);
+          const domains = parseDomains(cert.domains, { allowWildcard: true });
           const primaryDomain = domains[0];
+          const decryptedKeyPem = this.decryptStoredCertificateKey(cert);
 
           // Quick validation check
           const validation = await this.validateCertificate(
             cert.certPem,
-            cert.keyPem,
+            decryptedKeyPem,
             domains,
           );
           if (!validation.valid) {
@@ -159,7 +190,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             const currentCert = fs.readFileSync(certPath, 'utf8');
             const currentKey = fs.readFileSync(keyPath, 'utf8');
 
-            if (currentCert !== cert.certPem || currentKey !== cert.keyPem) {
+            if (currentCert !== cert.certPem || currentKey !== decryptedKeyPem) {
               needsWrite = true;
               this.logger.debug(
                 `[Sync] Certificate content mismatch for ${primaryDomain}`,
@@ -169,7 +200,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
           if (needsWrite) {
             this.logger.log(`[Sync] Updating certificate for ${primaryDomain}`);
-            this.writeCertToFs(primaryDomain, cert.certPem, cert.keyPem);
+            this.writeCertToFs(primaryDomain, cert.certPem, decryptedKeyPem);
             syncedCount++;
           }
         } catch (certError) {
@@ -190,13 +221,17 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
         // Reload NGINX to pick up new certificates
         try {
-          await exec('nginx -t');
-          await exec('nginx -s reload');
+          await runCommand('nginx', ['-t']);
+          await runCommand('nginx', ['-s', 'reload']);
           this.logger.log('[Sync] NGINX reloaded successfully');
         } catch (reloadErr) {
           const errorMsg =
             reloadErr instanceof Error ? reloadErr.message : String(reloadErr);
           this.logger.error(`[Sync] Failed to reload NGINX: ${errorMsg}`);
+          errors.push({
+            domain: '__nginx_reload__',
+            error: `Failed to reload NGINX after sync: ${errorMsg}`,
+          });
 
           // Send alert for critical NGINX reload failure
           await this.alertService
@@ -240,12 +275,23 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           );
       }
 
+      if (errors.length > 0) {
+        this.healthService.recordCertificateSyncFailure(
+          `encountered ${errors.length} certificate sync error(s)`,
+        );
+      } else {
+        this.healthService.recordCertificateSyncSuccess(
+          `synced ${syncedCount} certificate(s)`,
+        );
+      }
+
       return { success: true, syncedCount, errors };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(
         `[Sync] Certificate synchronization failed: ${errorMsg}`,
       );
+      this.healthService.recordCertificateSyncFailure(errorMsg);
 
       // Send critical alert
       await this.alertService
@@ -448,7 +494,54 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private certDir(primaryDomain: string) {
-    return `/etc/letsencrypt/live/${primaryDomain}`;
+    return `/etc/letsencrypt/live/${getCertificateStorageName(primaryDomain)}`;
+  }
+
+  private createTempDirectory(prefix: string): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  }
+
+  private async getCertificateExpiryFromFile(certPath: string): Promise<Date> {
+    const { stdout } = await runCommand('openssl', [
+      'x509',
+      '-enddate',
+      '-noout',
+      '-in',
+      certPath,
+    ]);
+    const match = stdout.match(/notAfter=(.*)/);
+    return match ? new Date(match[1]) : addDays(new Date(), 365);
+  }
+
+  private async getCertificatePublicKey(certPath: string): Promise<string> {
+    const { stdout } = await runCommand('openssl', [
+      'x509',
+      '-in',
+      certPath,
+      '-noout',
+      '-pubkey',
+    ]);
+    return stdout.trim();
+  }
+
+  private async getPrivateKeyPublicKey(keyPath: string): Promise<string> {
+    const { stdout } = await runCommand('openssl', [
+      'pkey',
+      '-in',
+      keyPath,
+      '-pubout',
+    ]);
+    return stdout.trim();
+  }
+
+  private calculateRetryDelayMs(attemptNumber: number): number {
+    const cappedAttempt = Math.max(1, attemptNumber);
+
+    return Math.min(
+      1000 * 60 * 60 * 24,
+      1000 * 60 * 2 ** Math.min(5, cappedAttempt) +
+        Math.floor(Math.random() * 30000),
+    );
   }
 
   /**
@@ -530,7 +623,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
    * Examples: subdomain.example.com -> example.com, www.example.co.uk -> example.co.uk
    */
   private getRegisteredDomain(domain: string): string {
-    const parts = domain.split('.');
+    const normalizedDomain = normalizeDomain(domain, { allowWildcard: true });
+    const hostname = normalizedDomain.startsWith('*.')
+      ? normalizedDomain.slice(2)
+      : normalizedDomain;
+    const parts = hostname.split('.');
 
     // Handle special TLDs like .co.uk, .com.au, etc.
     const specialTlds = ['co.uk', 'com.au', 'co.nz', 'co.za', 'com.br'];
@@ -570,8 +667,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       }
 
       // 2. Write to temp files for validation
-      const tempDir = `/tmp/cert-validation-${Date.now()}`;
-      fs.mkdirSync(tempDir, { recursive: true });
+      const tempDir = this.createTempDirectory('lyttlenginx-cert-validation-');
 
       const tempCertPath = path.join(tempDir, 'cert.pem');
       const tempKeyPath = path.join(tempDir, 'key.pem');
@@ -581,36 +677,26 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
       try {
         // 3. Validate certificate structure
-        const certCheck = await exec(
-          `openssl x509 -in ${tempCertPath} -noout -text 2>&1`,
-        );
-        if (certCheck.stderr) {
+        const certCheck = await runCommand('openssl', [
+          'x509',
+          '-in',
+          tempCertPath,
+          '-noout',
+          '-text',
+        ]);
+        if (!certCheck.stdout.trim()) {
           return {
             valid: false,
-            error: `Certificate validation failed: ${certCheck.stderr}`,
+            error:
+              'Certificate validation failed: no certificate data returned',
           };
         }
 
-        // 4. Validate private key
-        const keyCheck = await exec(
-          `openssl rsa -in ${tempKeyPath} -check -noout 2>&1`,
-        );
-        if (keyCheck.stderr && !keyCheck.stderr.includes('ok')) {
-          return {
-            valid: false,
-            error: `Private key validation failed: ${keyCheck.stderr}`,
-          };
-        }
+        // 4. Validate private key and 5. Verify cert and key match
+        const certPublicKey = await this.getCertificatePublicKey(tempCertPath);
+        const keyPublicKey = await this.getPrivateKeyPublicKey(tempKeyPath);
 
-        // 5. Verify cert and key match
-        const certModulus = await exec(
-          `openssl x509 -noout -modulus -in ${tempCertPath} | openssl md5`,
-        );
-        const keyModulus = await exec(
-          `openssl rsa -noout -modulus -in ${tempKeyPath} | openssl md5`,
-        );
-
-        if (certModulus.stdout.trim() !== keyModulus.stdout.trim()) {
+        if (certPublicKey !== keyPublicKey) {
           return {
             valid: false,
             error: 'Certificate and private key do not match',
@@ -618,9 +704,13 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         }
 
         // 6. Check expiry
-        const expiryOutput = await exec(
-          `openssl x509 -enddate -noout -in ${tempCertPath}`,
-        );
+        const expiryOutput = await runCommand('openssl', [
+          'x509',
+          '-enddate',
+          '-noout',
+          '-in',
+          tempCertPath,
+        ]);
         const match = expiryOutput.stdout.match(/notAfter=(.*)/);
         if (!match) {
           return { valid: false, error: 'Could not parse expiry date' };
@@ -642,11 +732,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         }
 
         // 7. Verify domains (SAN check)
-        const sanOutput = await exec(
-          `openssl x509 -in ${tempCertPath} -noout -text | grep -A1 "Subject Alternative Name"`,
-        );
         const certDomains =
-          sanOutput.stdout
+          certCheck.stdout
             .match(/DNS:([^,\s]+)/g)
             ?.map((d) => d.replace('DNS:', '')) || [];
 
@@ -749,22 +836,391 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  async ensureCertificate(domainsInput: string[] | string): Promise<void> {
+  private getCertificateActivationTimeoutMs() {
+    const parsed = Number.parseInt(
+      process.env.CERTIFICATE_ACTIVATION_TIMEOUT_MS ?? '',
+      10,
+    );
+
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000;
+  }
+
+  private mergeMetadata(
+    current: unknown,
+    patch: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const base =
+      current && typeof current === 'object' && !Array.isArray(current)
+        ? { ...(current as Record<string, unknown>) }
+        : {};
+
+    return {
+      ...base,
+      ...patch,
+    };
+  }
+
+  private decryptStoredCertificateKey(record: {
+    keyPem: string;
+    keyEncryption?: unknown;
+    domainsHash: string;
+  }) {
+    return this.privateKeyEncryption.decryptPrivateKey(
+      record.keyPem,
+      record.keyEncryption ?? null,
+      {
+        scope: 'certificate',
+        domainsHash: record.domainsHash,
+      },
+    );
+  }
+
+  private decryptStoredArtifactKey(record: {
+    keyPem: string;
+    keyEncryption?: unknown;
+    domainsHash: string;
+    version: number;
+  }) {
+    return this.privateKeyEncryption.decryptPrivateKey(
+      record.keyPem,
+      record.keyEncryption ?? null,
+      {
+        scope: 'certificate-artifact',
+        domainsHash: record.domainsHash,
+        version: record.version,
+      },
+    );
+  }
+
+  private encryptPrivateKeyForCertificate(params: {
+    keyPem: string;
+    domainsHash: string;
+  }) {
+    return this.privateKeyEncryption.encryptPrivateKey(params.keyPem, {
+      scope: 'certificate',
+      domainsHash: params.domainsHash,
+    });
+  }
+
+  private summarizeOperationFailure(operation: {
+    status: string;
+    acknowledgements: Array<{
+      nodeHostname: string | null;
+      nodeInstanceId: string;
+      errorMessage: string | null;
+      status: string;
+    }>;
+  }) {
+    const failures = operation.acknowledgements.filter(
+      (ack) => ack.status === 'failed',
+    );
+
+    if (failures.length === 0) {
+      return `Certificate activation finished with status ${operation.status}`;
+    }
+
+    return failures
+      .map(
+        (ack) =>
+          `${ack.nodeHostname ?? ack.nodeInstanceId}: ${ack.errorMessage ?? 'activation failed'}`,
+      )
+      .join('; ');
+  }
+
+  private async activateArtifactLocally(
+    artifactId: string,
+    operationId?: string,
+  ) {
+    const artifact = await this.certificateOrders.getArtifact(artifactId);
+
+    if (!artifact) {
+      throw new Error(`Certificate artifact not found: ${artifactId}`);
+    }
+
+    const domains = parseDomains(artifact.domains, { allowWildcard: true });
+    const primaryDomain = domains[0];
+    const artifactPrivateKeyPem = this.decryptStoredArtifactKey(artifact);
+    const validation = await this.validateCertificate(
+      artifact.certPem,
+      artifactPrivateKeyPem,
+      domains,
+    );
+
+    if (!validation.valid) {
+      throw new Error(
+        `Artifact ${artifactId} failed validation before activation: ${validation.error}`,
+      );
+    }
+
+    this.writeCertToFs(primaryDomain, artifact.certPem, artifactPrivateKeyPem);
+    await runCommand('nginx', ['-t']);
+    await runCommand('nginx', ['-s', 'reload']);
+
+    return {
+      operationId: operationId ?? null,
+      artifactId: artifact.id,
+      version: artifact.version,
+      primaryDomain,
+      domains,
+      status: 'activated',
+    };
+  }
+
+  private async activateArtifactAcrossCluster(params: {
+    artifactId: string;
+    orderId: string;
+    action: 'activate' | 'rollback';
+  }) {
+    const artifact = await this.certificateOrders.getArtifact(params.artifactId);
+
+    if (!artifact) {
+      throw new Error(`Certificate artifact not found: ${params.artifactId}`);
+    }
+    const artifactPrivateKeyPem = this.decryptStoredArtifactKey(artifact);
+
+    const existingOrder = await this.prisma.certificateOrder.findUnique({
+      where: { id: params.orderId },
+      select: {
+        id: true,
+        attemptCount: true,
+      },
+    });
+
+    if (!existingOrder) {
+      throw new Error(`Certificate order not found: ${params.orderId}`);
+    }
+
+    const currentArtifact = await this.certificateOrders.getCurrentArtifactForDomainsHash(
+      artifact.domainsHash,
+    );
+    const actionLabel = params.action === 'rollback' ? 'rollback' : 'activation';
+
+    await this.certificateOrders.transitionOrder(params.orderId, 'distributing', {
+      message: `Queued cluster certificate ${actionLabel} for artifact version ${artifact.version}`,
+      details: {
+        artifactId: artifact.id,
+        artifactVersion: artifact.version,
+        action: params.action,
+        previousArtifactId: currentArtifact?.id ?? null,
+      },
+    });
+
+    const operation = await this.clusterOperations.enqueueBroadcastOperation({
+      operationType:
+        params.action === 'rollback'
+          ? 'certificate.rollback'
+          : 'certificate.activate',
+      broadcast: true,
+      remotePath: `/certificates/artifacts/${artifact.id}/activate`,
+      executionTimeoutMs: this.getCertificateActivationTimeoutMs(),
+      metadata: {
+        orderId: params.orderId,
+        artifactId: artifact.id,
+        artifactVersion: artifact.version,
+        domainsHash: artifact.domainsHash,
+        action: params.action,
+        previousArtifactId: currentArtifact?.id ?? null,
+      },
+      localAction: async (operationId) =>
+        this.activateArtifactLocally(artifact.id, operationId),
+    });
+
+    await this.prisma.certificateArtifactVersion.update({
+      where: { id: artifact.id },
+      data: {
+        distributionOperationId: operation.operationId,
+        distributionStatus: 'running',
+        distributionCompletedAt: null,
+        metadata: toPrismaNullableJsonValue(
+          this.mergeMetadata(artifact.metadata, {
+            latestDistribution: {
+              operationId: operation.operationId,
+              action: params.action,
+              previousArtifactId: currentArtifact?.id ?? null,
+              queuedAt: new Date().toISOString(),
+            },
+          }),
+        ),
+      },
+    });
+
+    const settledOperation = await this.clusterOperations.waitForOperationToSettle(
+      operation.operationId,
+      {
+        timeoutMs: this.getCertificateActivationTimeoutMs() + 5000,
+      },
+    );
+
+    const completedAt = settledOperation.completedAt ?? new Date();
+
+    await this.prisma.certificateArtifactVersion.update({
+      where: { id: artifact.id },
+      data: {
+        distributionStatus: settledOperation.status,
+        distributionCompletedAt: completedAt,
+      },
+    });
+
+    if (settledOperation.status !== 'succeeded') {
+      const failureSummary = this.summarizeOperationFailure(settledOperation);
+      const retryAfter = new Date(
+        Date.now() + this.calculateRetryDelayMs(existingOrder.attemptCount),
+      );
+
+      await this.certificateOrders.markFailure(
+        params.orderId,
+        failureSummary,
+        retryAfter,
+        {
+          artifactId: artifact.id,
+          artifactVersion: artifact.version,
+          action: params.action,
+          operationId: operation.operationId,
+          previousArtifactId: currentArtifact?.id ?? null,
+          operationStatus: settledOperation.status,
+        },
+      );
+
+      throw new ArtifactActivationError(failureSummary);
+    }
+
+    const activeCertificate = await this.prisma.certificate.findUnique({
+      where: { domainsHash: artifact.domainsHash },
+    } as any);
+    const now = new Date();
+
+    const certificateRecord = activeCertificate
+      ? await this.prisma.certificate.update({
+          where: { domainsHash: artifact.domainsHash } as any,
+          data: {
+            domains: artifact.domains,
+            certPem: artifact.certPem,
+            ...this.encryptPrivateKeyForCertificate({
+              keyPem: artifactPrivateKeyPem,
+              domainsHash: artifact.domainsHash,
+            }),
+            expiresAt: artifact.expiresAt,
+            issuedAt: artifact.issuedAt,
+            lastUsedAt: now,
+            isOrphaned: false,
+            status: 'active',
+            failureReason: null,
+            retryAfter: null,
+            failureCount: 0,
+            issuedByNode: this.distributedLock.getInstanceId(),
+          } as any,
+        })
+      : await this.prisma.certificate.create({
+          data: {
+            domains: artifact.domains,
+            domainsHash: artifact.domainsHash,
+            certPem: artifact.certPem,
+            ...this.encryptPrivateKeyForCertificate({
+              keyPem: artifactPrivateKeyPem,
+              domainsHash: artifact.domainsHash,
+            }),
+            expiresAt: artifact.expiresAt,
+            issuedAt: artifact.issuedAt,
+            lastUsedAt: now,
+            isOrphaned: false,
+            status: 'active',
+            issuedByNode: this.distributedLock.getInstanceId(),
+          },
+        });
+
+    await this.prisma.certificateArtifactVersion.updateMany({
+      where: {
+        domainsHash: artifact.domainsHash,
+        id: { not: artifact.id },
+      },
+      data: {
+        isCurrent: false,
+      },
+    });
+
+    await this.prisma.certificateArtifactVersion.update({
+      where: { id: artifact.id },
+      data: {
+        certificateId: certificateRecord.id,
+        activatedAt: now,
+        isCurrent: true,
+        distributionStatus: settledOperation.status,
+        distributionCompletedAt: completedAt,
+        metadata: toPrismaNullableJsonValue(
+          this.mergeMetadata(artifact.metadata, {
+            latestDistribution: {
+              operationId: operation.operationId,
+              action: params.action,
+              previousArtifactId: currentArtifact?.id ?? null,
+              completedAt: completedAt.toISOString(),
+              status: settledOperation.status,
+            },
+          }),
+        ),
+      },
+    });
+
+    await this.certificateOrders.completeWithCertificate(params.orderId, {
+      certificateId: certificateRecord.id,
+      message:
+        params.action === 'rollback'
+          ? `Rolled back certificate activation to artifact version ${artifact.version} after cluster ACKs`
+          : `Certificate artifact version ${artifact.version} activated across the cluster after node ACKs`,
+      details: {
+        artifactId: artifact.id,
+        artifactVersion: artifact.version,
+        action: params.action,
+        operationId: operation.operationId,
+        previousArtifactId: currentArtifact?.id ?? null,
+      },
+    });
+
+    return {
+      certificate: certificateRecord,
+      operationId: operation.operationId,
+      artifactId: artifact.id,
+      artifactVersion: artifact.version,
+    };
+  }
+
+  async ensureCertificate(
+    domainsInput: string[] | string,
+    options: {
+      orderId?: string;
+      sourceType?: CertificateOrderSourceType;
+    } = {},
+  ): Promise<void> {
     if (process.env.NODE_ENV === 'development') {
       this.logger.log(
         '[Dev] Skipping certificate issuance in development mode.',
       );
       return;
     }
+
+    const sourceType = options.sourceType ?? 'acme';
     const domains = Array.isArray(domainsInput)
-      ? domainsInput
-      : parseDomains(domainsInput);
+      ? normalizeDomains(domainsInput as string[], { allowWildcard: true })
+      : parseDomains(domainsInput as string, { allowWildcard: true });
     const primaryDomain = domains[0];
-    const hash = hashDomains(domains);
+    const hash = hashDomains(domains, { allowWildcard: true });
     const domainsHash = hash;
-    const domainsStr = joinDomains(domains);
+    const domainsStr = joinDomains(domains, { allowWildcard: true });
     const now = new Date();
     const renewBefore = addDays(now, RENEW_BEFORE_DAYS);
+    const instanceId = this.distributedLock.getInstanceId();
+    const acmeStrategy = resolveAcmeStrategy(domains);
+
+    const order = await this.certificateOrders.getOrCreateOrder({
+      domains,
+      sourceType,
+      requestedByNode: instanceId,
+      existingOrderId: options.orderId,
+      metadata: {
+        flow: 'certificate.ensure',
+        renewBeforeDays: RENEW_BEFORE_DAYS,
+        acme: acmeStrategy,
+      },
+    });
 
     this.logger.log(
       `[Cert] Ensuring certificate for [${domainsStr}] (hash: ${hash})`,
@@ -784,10 +1240,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     });
 
     if (certEntry) {
+      const decryptedKeyPem = this.decryptStoredCertificateKey(certEntry);
       this.logger.log(
         `[DB] Found valid certificate (id: ${certEntry.id}, expires: ${certEntry.expiresAt.toISOString()}). Writing to FS.`,
       );
-      this.writeCertToFs(primaryDomain, certEntry.certPem, certEntry.keyPem);
+      this.writeCertToFs(primaryDomain, certEntry.certPem, decryptedKeyPem);
       await this.prisma.certificate.update({
         where: { id: certEntry.id },
         data: { lastUsedAt: now },
@@ -795,6 +1252,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       this.logger.log(
         `[DB] Updated lastUsedAt for certificate id: ${certEntry.id}`,
       );
+      await this.certificateOrders.completeWithCertificate(order.id, {
+        certificateId: certEntry.id,
+        message: 'Reused existing valid certificate from the database',
+        details: {
+          reusedExistingCertificate: true,
+          expiresAt: certEntry.expiresAt.toISOString(),
+        },
+      });
       return;
     }
 
@@ -803,6 +1268,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     if (!rateLimitOk) {
       const errorMsg = `Rate limit check failed for ${primaryDomain}. Too many certificates issued recently.`;
       this.logger.error(`[RateLimit] ${errorMsg}`);
+      const retryAfter = new Date(
+        Date.now() + this.calculateRetryDelayMs(order.attemptCount),
+      );
+
+      await this.certificateOrders.markFailure(order.id, errorMsg, retryAfter, {
+        rateLimited: true,
+        sourceType,
+      });
 
       await this.alertService
         .sendAlert({
@@ -812,8 +1285,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           metadata: {
             domain: primaryDomain,
             allDomains: domainsStr,
-            instanceId: this.distributedLock.getInstanceId(),
+            instanceId,
             timestamp: new Date().toISOString(),
+            retryAfter: retryAfter.toISOString(),
           },
         })
         .catch((alertErr) =>
@@ -848,93 +1322,79 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
         });
 
         if (recheck) {
+          const decryptedKeyPem = this.decryptStoredCertificateKey(recheck);
           this.logger.log(
             `[Lock] Certificate was created by another node (id: ${recheck.id}). Using it.`,
           );
-          this.writeCertToFs(primaryDomain, recheck.certPem, recheck.keyPem);
+          this.writeCertToFs(primaryDomain, recheck.certPem, decryptedKeyPem);
           await this.prisma.certificate.update({
             where: { id: recheck.id },
             data: { lastUsedAt: now },
           });
+          await this.certificateOrders.completeWithCertificate(order.id, {
+            certificateId: recheck.id,
+            message:
+              'Another node completed the order before the local issuance lock executed',
+            details: {
+              reusedExistingCertificate: true,
+              lockName,
+            },
+          });
           return recheck;
         }
 
-        // Still need to issue - proceed with certbot
+        // Still need to issue - proceed with ACME issuance
         this.logger.log(
-          `[Certbot] No valid certificate in DB. Running certbot for: [${domainsStr}]`,
+          `[ACME] No valid certificate in DB. Starting certificate issuance for: [${domainsStr}]`,
         );
-        const domainArgs = domains.map((d) => `-d ${d}`).join(' ');
 
         try {
-          // Use shell script hooks that directly interact with PostgreSQL
-          // These scripts are copied into the container at /certbot-auth-hook.sh and /certbot-cleanup-hook.sh
-          const authHookPath = '/certbot-auth-hook.sh';
-          const cleanupHookPath = '/certbot-cleanup-hook.sh';
-
-          // Parse DATABASE_URL to get connection details for psql in the hooks
-          const dbUrl = process.env.DATABASE_URL || '';
-          const dbMatch = dbUrl.match(
-            /postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/([^?]+)/,
+          await this.certificateOrders.transitionOrder(
+            order.id,
+            'challenge-published',
+            {
+              message:
+                'Starting ACME HTTP-01 challenge publication and certificate issuance',
+              details: {
+                lockName,
+                sourceType,
+                acme: acmeStrategy,
+              },
+              data: {
+                metadata: this.mergeMetadata(order.metadata, {
+                  acme: acmeStrategy,
+                }),
+              },
+            },
           );
 
-          if (!dbMatch) {
-            const errorMsg =
-              'Could not parse DATABASE_URL for certbot hooks. Expected format: postgresql://user:pass@host:port/dbname';
-            this.logger.error(`[Certbot] ${errorMsg}`);
-
-            // Send alert for configuration error
-            await this.alertService
-              .sendAlert({
-                type: 'error',
-                title: 'Certificate Issuance Configuration Error',
-                message: errorMsg,
-                metadata: {
-                  domains: domainsStr,
-                  instanceId: this.distributedLock.getInstanceId(),
-                  timestamp: new Date().toISOString(),
-                },
-              })
-              .catch((alertErr) =>
-                this.logger.error(
-                  `[Certbot] Failed to send alert: ${alertErr.message}`,
-                ),
-              );
-
-            throw new Error(errorMsg);
+          if (!this.acmeService) {
+            throw new Error('ACME service is not available for certificate issuance');
           }
 
-          const [, dbUser, dbPassword, dbHost, dbPort, dbName] = dbMatch;
-
           this.logger.log(
-            `[Certbot] Running command: certbot certonly --manual --preferred-challenges=http --manual-auth-hook=${authHookPath} --manual-cleanup-hook=${cleanupHookPath} --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
+            `[ACME] Running ${acmeStrategy.challengeType} certificate flow for ${primaryDomain} via provider ${acmeStrategy.provider}`,
           );
 
-          // Use manual mode with shell hooks so all nodes can serve challenges from database
-          await exec(
-            `DB_USER=${dbUser} DB_PASSWORD=${dbPassword} DB_HOST=${dbHost} DB_PORT=${dbPort} DB_NAME=${dbName} certbot certonly --manual --preferred-challenges=http --manual-auth-hook=${authHookPath} --manual-cleanup-hook=${cleanupHookPath} --non-interactive --agree-tos -m ${adminEmail} ${domainArgs}`,
-          );
+          const issuedCertificate = await this.acmeService.obtainCertificate({
+            orderId: order.id,
+            domains,
+            instanceId,
+            adminEmail,
+          });
           this.logger.log(
-            `[Certbot] Successfully obtained/renewed certificate for ${primaryDomain}`,
+            `[ACME] Successfully obtained/renewed certificate for ${primaryDomain}`,
           );
 
-          // Read the cert/key files produced by certbot
-          const certPath = path.join(
-            this.certDir(primaryDomain),
-            'fullchain.pem',
-          );
-          const keyPath = path.join(this.certDir(primaryDomain), 'privkey.pem');
+          await this.certificateOrders.transitionOrder(order.id, 'validating', {
+            message:
+              'ACME order completed; validating generated certificate artifacts',
+            details: {
+              acme: issuedCertificate.metadata.acme,
+            },
+          });
 
-          // Verify files exist
-          if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-            throw new Error(
-              `Certificate files not found after certbot execution. Cert: ${fs.existsSync(certPath)}, Key: ${fs.existsSync(keyPath)}`,
-            );
-          }
-
-          this.logger.log(`[FS] Reading certificate file: ${certPath}`);
-          const certPem = fs.readFileSync(certPath, 'utf8');
-          this.logger.log(`[FS] Reading key file: ${keyPath}`);
-          const keyPem = fs.readFileSync(keyPath, 'utf8');
+          const { certPem, keyPem } = issuedCertificate;
 
           // Defensive checks: ensure we actually read PEM content before proceeding
           this.logger.debug(
@@ -952,11 +1412,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
           if (!certLooksValid || !keyLooksValid) {
             this.logger.error(
-              `[DB] Invalid or missing PEM data after certbot for ${primaryDomain} — certLooksValid=${certLooksValid}, keyLooksValid=${keyLooksValid}`,
+              `[DB] Invalid or missing PEM data after ACME issuance for ${primaryDomain} — certLooksValid=${certLooksValid}, keyLooksValid=${keyLooksValid}`,
             );
             // Throw to trigger the existing failure path (which records failure & schedules retry)
             throw new Error(
-              'Certificate or private key missing/invalid after certbot execution',
+              'Certificate or private key missing/invalid after ACME execution',
             );
           }
 
@@ -998,61 +1458,76 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
             `[DB] Certificate validated; expiresAt=${validation.expiresAt}`,
           );
 
-          this.logger.log(`[DB] Saving certificate to database...`);
-          const certRecord = await this.prisma.certificate.upsert({
-            where: { domainsHash } as any,
-            update: {
-              certPem,
-              keyPem,
-              expiresAt: validation.expiresAt,
-              issuedAt: new Date(),
-              lastUsedAt: now,
-              isOrphaned: false,
-              status: 'active',
-              failureReason: null,
-              retryAfter: null,
-              failureCount: 0,
-              issuedByNode: this.distributedLock.getInstanceId(),
-            } as any,
-            create: {
-              domains: domainsStr,
-              domainsHash,
-              certPem,
-              keyPem,
-              expiresAt: validation.expiresAt,
-              issuedAt: new Date(),
-              lastUsedAt: now,
-              isOrphaned: false,
-              status: 'active',
-              issuedByNode: this.distributedLock.getInstanceId(),
-            } as any,
+          await this.certificateOrders.transitionOrder(order.id, 'issued', {
+            message:
+              'Validated certificate and private key produced by ACME flow',
+            details: {
+              expiresAt: validation.expiresAt?.toISOString() ?? null,
+              acme: issuedCertificate.metadata.acme,
+            },
           });
 
-          this.logger.log(
-            `[DB] Upsert complete for domainsHash=${domainsHash} id=${certRecord.id}`,
-          );
-          this.logger.log(
-            `[DB] Certificate saved (id: ${certRecord.id}, expires: ${certRecord.expiresAt.toISOString()}). Writing to FS...`,
-          );
-          this.writeCertToFs(primaryDomain, certPem, keyPem);
-          return certRecord;
+          const artifact = await this.certificateOrders.recordArtifact({
+            orderId: order.id,
+            certificateId: null,
+            domains,
+            sourceType,
+            certPem,
+            keyPem,
+            issuedAt: issuedCertificate.issuedAt,
+            expiresAt:
+              validation.expiresAt ?? issuedCertificate.expiresAt ?? addDays(new Date(), 90),
+            activatedAt: null,
+            createdByNode: instanceId,
+            metadata: {
+              activation: 'pending-cluster-rollout',
+              ...issuedCertificate.metadata,
+            },
+          });
+
+          const activation = await this.activateArtifactAcrossCluster({
+            artifactId: artifact.id,
+            orderId: order.id,
+            action: 'activate',
+          });
+
+          return activation.certificate;
         } catch (err) {
           // Persist failure with backoff
           const message = err instanceof Error ? err.message : String(err);
           const stack = err instanceof Error ? err.stack : undefined;
-          const failureCountInc = 1;
-          const nextRetryMs = Math.min(
-            1000 * 60 * 60 * 24,
-            1000 * 60 * 2 ** Math.min(5, failureCountInc) +
-              Math.floor(Math.random() * 30000),
-          );
-          const retryAfter = new Date(Date.now() + nextRetryMs);
+
+          if (err instanceof ArtifactActivationError) {
+            await this.alertService
+              .sendAlert({
+                type: 'error',
+                title: 'Certificate Activation Failed',
+                message: `Certificate issuance completed but cluster activation failed for ${domainsStr}: ${message}`,
+                metadata: {
+                  domains: domainsStr,
+                  error: message,
+                  stack,
+                  instanceId,
+                },
+              })
+              .catch((alertErr) =>
+                this.logger.error(
+                  `[ACME] Failed to send alert: ${alertErr.message}`,
+                ),
+              );
+
+            throw err;
+          }
 
           // Avoid overwriting existing certPem/keyPem with empty strings.
           // If a certificate record already exists for this domainsHash, update failure fields only.
           const existingCert = await this.prisma.certificate.findUnique({
             where: { domainsHash },
           } as any);
+          const nextFailureCount = (existingCert?.failureCount ?? 0) + 1;
+          const retryAfter = new Date(
+            Date.now() + this.calculateRetryDelayMs(order.attemptCount),
+          );
 
           if (existingCert) {
             await this.prisma.certificate.update({
@@ -1062,7 +1537,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
                 failureReason: message,
                 retryAfter,
                 failureCount: { increment: 1 },
-                issuedByNode: this.distributedLock.getInstanceId(),
+                issuedByNode: instanceId,
               } as any,
             });
           } else {
@@ -1081,10 +1556,22 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
                 failureReason: message,
                 retryAfter,
                 failureCount: 1,
-                issuedByNode: this.distributedLock.getInstanceId(),
+                issuedByNode: instanceId,
               },
             });
           }
+
+          await this.certificateOrders.markFailure(
+            order.id,
+            message,
+            retryAfter,
+            {
+              failureCount: nextFailureCount,
+              lockName,
+              sourceType,
+              stack,
+            },
+          );
 
           await this.alertService
             .sendAlert({
@@ -1095,13 +1582,13 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
                 domains: domainsStr,
                 error: message,
                 stack,
-                instanceId: this.distributedLock.getInstanceId(),
+                instanceId,
                 retryAfter: retryAfter.toISOString(),
               },
             })
             .catch((alertErr) =>
               this.logger.error(
-                `[Certbot] Failed to send alert: ${alertErr.message}`,
+                `[ACME] Failed to send alert: ${alertErr.message}`,
               ),
             );
 
@@ -1130,15 +1617,33 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       });
 
       if (certEntry) {
+        const decryptedKeyPem = this.decryptStoredCertificateKey(certEntry);
         this.logger.log(
           `[DB] Found certificate created by another node (id: ${certEntry.id}). Using it.`,
         );
-        this.writeCertToFs(primaryDomain, certEntry.certPem, certEntry.keyPem);
+        this.writeCertToFs(primaryDomain, certEntry.certPem, decryptedKeyPem);
+        await this.certificateOrders.completeWithCertificate(order.id, {
+          certificateId: certEntry.id,
+          message:
+            'Used certificate created by another node after local lock contention',
+          details: {
+            lockName,
+            reusedExistingCertificate: true,
+          },
+        });
         return;
       }
 
       const errorMsg = `Failed to acquire lock for certificate issuance and no certificate found in DB`;
       this.logger.error(`[Lock] ${errorMsg}`);
+      const retryAfter = new Date(
+        Date.now() + this.calculateRetryDelayMs(order.attemptCount),
+      );
+
+      await this.certificateOrders.markFailure(order.id, errorMsg, retryAfter, {
+        lockName,
+        sourceType,
+      });
 
       // Send alert for lock acquisition failure
       await this.alertService
@@ -1149,8 +1654,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
           metadata: {
             domains: domainsStr,
             lockName,
-            instanceId: this.distributedLock.getInstanceId(),
+            instanceId,
             timestamp: new Date().toISOString(),
+            retryAfter: retryAfter.toISOString(),
           },
         })
         .catch((alertErr) =>
@@ -1175,8 +1681,14 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       },
     });
     const domainGroups = Array.from(
-      new Set(entries.map((e) => joinDomains(parseDomains(e.domains)))),
-    ).map((group) => parseDomains(group));
+      new Set<string>(
+        entries.map((e) =>
+          joinDomains(parseDomains(e.domains, { allowWildcard: true }), {
+            allowWildcard: true,
+          }),
+        ),
+      ),
+    ).map((group) => parseDomains(group, { allowWildcard: true }));
 
     this.logger.log(
       `[Renewal] Found ${domainGroups.length} unique domain group(s) to renew.`,
@@ -1185,34 +1697,35 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     for (const domains of domainGroups) {
       try {
         this.logger.log(
-          `[Renewal] Ensuring certificate for group: [${joinDomains(domains)}]`,
+          `[Renewal] Ensuring certificate for group: [${joinDomains(domains, { allowWildcard: true })}]`,
         );
         await this.ensureCertificate(domains);
       } catch (err) {
         this.logger.error(
-          `[Renewal] Error ensuring certificate for domains [${joinDomains(domains)}]: ${err instanceof Error ? err.stack : String(err)}`,
+          `[Renewal] Error ensuring certificate for domains [${joinDomains(domains, { allowWildcard: true })}]: ${err instanceof Error ? err.stack : String(err)}`,
         );
       }
     }
 
-    // Backoff-aware: also retry failed certs whose retryAfter has passed
-    const failedCerts = await this.prisma.certificate.findMany({
+    // Backoff-aware: retry failed ACME orders whose retry window has opened.
+    const retryableOrders = await this.prisma.certificateOrder.findMany({
       where: {
-        retryAfter: { lte: retryableAfter },
-        isOrphaned: false,
+        sourceType: 'acme',
+        status: 'failed',
+        nextRetryAt: { lte: retryableAfter },
       },
-    } as any);
+      orderBy: { nextRetryAt: 'asc' },
+    });
 
-    for (const cert of failedCerts) {
-      const domains = parseDomains(cert.domains);
+    for (const order of retryableOrders) {
       try {
         this.logger.log(
-          `[Renewal] Retrying failed certificate for [${cert.domains}] (failureCount=${(cert as any).failureCount ?? 0})`,
+          `[Renewal] Retrying failed certificate order ${order.id} for [${order.domains}] (attempt=${order.attemptCount})`,
         );
-        await this.ensureCertificate(domains);
+        await this.retryCertificateOrder(order.id);
       } catch (err) {
         this.logger.error(
-          `[Renewal] Retry failed for [${cert.domains}]: ${err instanceof Error ? err.message : String(err)}`,
+          `[Renewal] Retry failed for order ${order.id} [${order.domains}]: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1220,7 +1733,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     // After possible renewals, reload nginx
     try {
       this.logger.log('[Renewal] Reloading nginx after cert renewal check...');
-      await exec('nginx -s reload');
+      await runCommand('nginx', ['-s', 'reload']);
       this.logger.log('[Renewal] nginx reloaded after cert renewal.');
 
       // Also trigger cluster reload to be safe
@@ -1246,57 +1759,81 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     keyPem: string;
     chainPem?: string;
   }) {
+    const domains = normalizeDomains(dto.domains, { allowWildcard: true });
+    const instanceId = this.distributedLock.getInstanceId();
+    const order = await this.certificateOrders.getOrCreateOrder({
+      domains,
+      sourceType: 'uploaded',
+      requestedByNode: instanceId,
+      metadata: {
+        flow: 'certificate.upload',
+      },
+    });
     this.logger.log(
-      `[Upload] Uploading custom certificate for domains: [${joinDomains(dto.domains)}]`,
+      `[Upload] Uploading custom certificate for domains: [${joinDomains(domains, { allowWildcard: true })}]`,
     );
-    const hash = hashDomains(dto.domains);
-    const domainsStr = joinDomains(dto.domains);
-    const primaryDomain = dto.domains[0];
 
     // Validate certificate and key match
     await this.validateCertificateKeyPair(dto.certPem, dto.keyPem);
 
     // Extract expiry from cert
-    const certFile = `/tmp/cert-${Date.now()}.pem`;
+    const tempDir = this.createTempDirectory('lyttlenginx-upload-cert-');
+    const certFile = path.join(tempDir, 'cert.pem');
     fs.writeFileSync(certFile, dto.certPem, 'utf8');
     try {
-      const { stdout } = await exec(
-        `openssl x509 -enddate -noout -in ${certFile}`,
-      );
-      const match = stdout.match(/notAfter=(.*)/);
-      const expiresAt = match ? new Date(match[1]) : addDays(new Date(), 365);
+      const expiresAt = await this.getCertificateExpiryFromFile(certFile);
 
       // Combine cert with chain if provided
       const fullChainPem = dto.chainPem
         ? `${dto.certPem}\n${dto.chainPem}`
         : dto.certPem;
 
-      // Write to filesystem
-      this.writeCertToFs(primaryDomain, fullChainPem, dto.keyPem);
-
-      // Save to database
-      const certRecord = await this.prisma.certificate.create({
-        data: {
-          domains: domainsStr,
-          domainsHash: hash,
-          certPem: fullChainPem,
-          keyPem: dto.keyPem,
-          expiresAt,
-          issuedAt: new Date(),
-          lastUsedAt: new Date(),
-          isOrphaned: false,
+      await this.certificateOrders.transitionOrder(order.id, 'issued', {
+        message: 'Validated uploaded certificate material',
+        details: {
+          expiresAt: expiresAt.toISOString(),
         },
       });
 
+      const artifact = await this.certificateOrders.recordArtifact({
+        orderId: order.id,
+        certificateId: null,
+        domains,
+        sourceType: 'uploaded',
+        certPem: fullChainPem,
+        keyPem: dto.keyPem,
+        issuedAt: new Date(),
+        expiresAt,
+        activatedAt: null,
+        createdByNode: instanceId,
+        metadata: {
+          activation: 'pending-cluster-rollout',
+        },
+      });
+
+      const activation = await this.activateArtifactAcrossCluster({
+        artifactId: artifact.id,
+        orderId: order.id,
+        action: 'activate',
+      });
+
       this.logger.log(
-        `[Upload] Successfully uploaded certificate (id: ${certRecord.id})`,
+        `[Upload] Successfully uploaded certificate (id: ${activation.certificate.id})`,
       );
-      return certRecord;
+      return activation.certificate;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!(error instanceof ArtifactActivationError)) {
+        await this.certificateOrders.markFailure(order.id, message, null, {
+          sourceType: 'uploaded',
+        });
+      }
+      throw error;
     } finally {
       // Clean up temp file
       try {
-        fs.unlinkSync(certFile);
-      } catch (e) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore
       }
     }
@@ -1305,58 +1842,105 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   /**
    * Generate a self-signed certificate for testing/development
    */
-  async generateSelfSignedCertificate(domains: string[]) {
+  async generateSelfSignedCertificate(
+    domains: string[],
+    options: { orderId?: string } = {},
+  ) {
+    const normalizedDomains = normalizeDomains(domains, {
+      allowWildcard: true,
+    });
+    const instanceId = this.distributedLock.getInstanceId();
+    const order = await this.certificateOrders.getOrCreateOrder({
+      domains: normalizedDomains,
+      sourceType: 'self-signed',
+      requestedByNode: instanceId,
+      existingOrderId: options.orderId,
+      metadata: {
+        flow: 'certificate.generate-self-signed',
+      },
+    });
     this.logger.log(
-      `[Self-Signed] Generating self-signed certificate for domains: [${joinDomains(domains)}]`,
+      `[Self-Signed] Generating self-signed certificate for domains: [${joinDomains(normalizedDomains, { allowWildcard: true })}]`,
     );
-    const hash = hashDomains(domains);
-    const domainsStr = joinDomains(domains);
-    const primaryDomain = domains[0];
+    const primaryDomain = normalizedDomains[0];
 
     // Generate self-signed certificate using openssl
-    const keyFile = `/tmp/key-${Date.now()}.pem`;
-    const certFile = `/tmp/cert-${Date.now()}.pem`;
+    const tempDir = this.createTempDirectory('lyttlenginx-self-signed-');
+    const keyFile = path.join(tempDir, 'key.pem');
+    const certFile = path.join(tempDir, 'cert.pem');
 
     try {
       // Generate private key
-      await exec(`openssl genrsa -out ${keyFile} 2048`);
+      await runCommand('openssl', ['genrsa', '-out', keyFile, '2048']);
 
       // Generate certificate
-      const sanList = domains.map((d) => `DNS:${d}`).join(',');
-      await exec(
-        `openssl req -new -x509 -key ${keyFile} -out ${certFile} -days 365 -subj "/CN=${primaryDomain}" -addext "subjectAltName=${sanList}"`,
-      );
+      const sanList = normalizedDomains.map((d) => `DNS:${d}`).join(',');
+      await runCommand('openssl', [
+        'req',
+        '-new',
+        '-x509',
+        '-key',
+        keyFile,
+        '-out',
+        certFile,
+        '-days',
+        '365',
+        '-subj',
+        `/CN=${primaryDomain}`,
+        '-addext',
+        `subjectAltName=${sanList}`,
+      ]);
 
       const certPem = fs.readFileSync(certFile, 'utf8');
       const keyPem = fs.readFileSync(keyFile, 'utf8');
 
-      // Write to filesystem
-      this.writeCertToFs(primaryDomain, certPem, keyPem);
-
-      // Save to database
-      const certRecord = await this.prisma.certificate.create({
-        data: {
-          domains: domainsStr,
-          domainsHash: hash,
-          certPem,
-          keyPem,
-          expiresAt: addDays(new Date(), 365),
-          issuedAt: new Date(),
-          lastUsedAt: new Date(),
-          isOrphaned: false,
+      await this.certificateOrders.transitionOrder(order.id, 'issued', {
+        message: 'Generated self-signed certificate material successfully',
+        details: {
+          primaryDomain,
         },
       });
 
+
+      const artifact = await this.certificateOrders.recordArtifact({
+        orderId: order.id,
+        certificateId: null,
+        domains: normalizedDomains,
+        sourceType: 'self-signed',
+        certPem,
+        keyPem,
+        issuedAt: new Date(),
+        expiresAt: addDays(new Date(), 365),
+        activatedAt: null,
+        createdByNode: instanceId,
+        metadata: {
+          activation: 'pending-cluster-rollout',
+        },
+      });
+
+      const activation = await this.activateArtifactAcrossCluster({
+        artifactId: artifact.id,
+        orderId: order.id,
+        action: 'activate',
+      });
+
       this.logger.log(
-        `[Self-Signed] Successfully generated certificate (id: ${certRecord.id})`,
+        `[Self-Signed] Successfully generated certificate (id: ${activation.certificate.id})`,
       );
-      return certRecord;
+      return activation.certificate;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!(error instanceof ArtifactActivationError)) {
+        await this.certificateOrders.markFailure(order.id, message, null, {
+          sourceType: 'self-signed',
+        });
+      }
+      throw error;
     } finally {
       // Clean up temp files
       try {
-        fs.unlinkSync(keyFile);
-        fs.unlinkSync(certFile);
-      } catch (e) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore
       }
     }
@@ -1386,7 +1970,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
       return {
         id: cert.id,
-        domains: parseDomains(cert.domains),
+        domains: parseDomains(cert.domains, { allowWildcard: true }),
         expiresAt: cert.expiresAt,
         issuedAt: cert.issuedAt,
         lastUsedAt: cert.lastUsedAt,
@@ -1424,7 +2008,7 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
 
     return {
       id: cert.id,
-      domains: parseDomains(cert.domains),
+      domains: parseDomains(cert.domains, { allowWildcard: true }),
       expiresAt: cert.expiresAt,
       issuedAt: cert.issuedAt,
       lastUsedAt: cert.lastUsedAt,
@@ -1437,6 +2021,63 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     };
   }
 
+  async listCertificateOrders(limit?: number) {
+    return this.certificateOrders.listOrders(limit);
+  }
+
+  async listAcmeChallenges(options: { status?: string; limit?: number } = {}) {
+    return this.acmeService
+      ? this.acmeService.listChallenges(options)
+      : { count: 0, challenges: [] };
+  }
+
+  async getCertificateOrder(orderId: string) {
+    return this.certificateOrders.getOrder(orderId);
+  }
+
+  async retryCertificateOrder(orderId: string) {
+    const order = await this.certificateOrders.validateRetryableOrder(orderId);
+    const latestArtifact = await this.certificateOrders.getLatestArtifactForOrder(
+      orderId,
+    );
+
+    if (order.sourceType === 'uploaded' || order.sourceType === 'imported') {
+      if (!latestArtifact) {
+        throw new Error(
+          `Certificate order ${orderId} cannot be retried automatically for source type ${order.sourceType}`,
+        );
+      }
+    }
+
+    await this.certificateOrders.resumeOrder(orderId, {
+      reason: 'Manual operator retry requested',
+      force: true,
+    });
+
+    if (latestArtifact) {
+      await this.activateArtifactAcrossCluster({
+        artifactId: latestArtifact.id,
+        orderId,
+        action: 'activate',
+      });
+
+      return this.certificateOrders.getOrder(orderId);
+    }
+
+    const domains = parseDomains(order.domains, { allowWildcard: true });
+
+    if (order.sourceType === 'self-signed') {
+      await this.generateSelfSignedCertificate(domains, { orderId });
+    } else {
+      await this.ensureCertificate(domains, {
+        orderId,
+        sourceType: 'acme',
+      });
+    }
+
+    return this.certificateOrders.getOrder(orderId);
+  }
+
   /**
    * Analyze a certificate to detect OCSP support and type
    */
@@ -1447,46 +2088,59 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
   }> {
     try {
       // Write cert to temp file for analysis
-      const tempFile = `/tmp/cert-${Date.now()}.pem`;
+      const tempDir = this.createTempDirectory('lyttlenginx-cert-analysis-');
+      const tempFile = path.join(tempDir, 'cert.pem');
       fs.writeFileSync(tempFile, certPem);
 
       // Check for OCSP URI
       let ocspUri = '';
       try {
-        const { stdout } = await exec(
-          `openssl x509 -in ${tempFile} -noout -ocsp_uri`,
-        );
+        const { stdout } = await runCommand('openssl', [
+          'x509',
+          '-in',
+          tempFile,
+          '-noout',
+          '-ocsp_uri',
+        ]);
         ocspUri = stdout.trim();
-      } catch (err) {
+      } catch {
         // No OCSP URI
       }
 
       // Check issuer
       let issuer = 'Unknown';
       try {
-        const { stdout } = await exec(
-          `openssl x509 -in ${tempFile} -noout -issuer`,
-        );
+        const { stdout } = await runCommand('openssl', [
+          'x509',
+          '-in',
+          tempFile,
+          '-noout',
+          '-issuer',
+        ]);
         issuer = stdout.replace('issuer=', '').trim();
-      } catch (err) {
+      } catch {
         // Could not get issuer
       }
 
       // Check subject
       let subject = '';
       try {
-        const { stdout } = await exec(
-          `openssl x509 -in ${tempFile} -noout -subject`,
-        );
+        const { stdout } = await runCommand('openssl', [
+          'x509',
+          '-in',
+          tempFile,
+          '-noout',
+          '-subject',
+        ]);
         subject = stdout.replace('subject=', '').trim();
-      } catch (err) {
+      } catch {
         // Could not get subject
       }
 
       // Clean up temp file
       try {
-        fs.unlinkSync(tempFile);
-      } catch (err) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore cleanup errors
       }
 
@@ -1533,10 +2187,70 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
       throw new Error(`Certificate not found: ${id}`);
     }
 
-    const domains = parseDomains(cert.domains);
+    const domains = parseDomains(cert.domains, { allowWildcard: true });
     await this.ensureCertificate(domains);
 
     return { message: `Certificate renewal initiated for ${cert.domains}` };
+  }
+
+  async activateCertificateArtifact(
+    artifactId: string,
+    operationId?: string,
+  ) {
+    return this.activateArtifactLocally(artifactId, operationId);
+  }
+
+  async rollbackCertificate(id: string) {
+    const certificate = await this.prisma.certificate.findUnique({ where: { id } });
+
+    if (!certificate) {
+      throw new Error(`Certificate not found: ${id}`);
+    }
+
+    const currentArtifact = await this.certificateOrders.getCurrentArtifactForDomainsHash(
+      certificate.domainsHash,
+    );
+
+    if (!currentArtifact) {
+      throw new Error(
+        `No current certificate artifact is recorded for certificate ${id}`,
+      );
+    }
+
+    const rollbackArtifact =
+      await this.certificateOrders.getRollbackArtifactForDomainsHash(
+        certificate.domainsHash,
+        currentArtifact.version,
+      );
+
+    if (!rollbackArtifact) {
+      throw new Error(
+        `No prior activated artifact version is available to roll back certificate ${id}`,
+      );
+    }
+
+    const rollbackOrderId = rollbackArtifact.orderId ?? currentArtifact.orderId;
+
+    if (!rollbackOrderId) {
+      throw new Error(
+        `Rollback artifact ${rollbackArtifact.id} is missing its source order linkage`,
+      );
+    }
+
+    const activation = await this.activateArtifactAcrossCluster({
+      artifactId: rollbackArtifact.id,
+      orderId: rollbackOrderId,
+      action: 'rollback',
+    });
+
+    return {
+      ...activation.certificate,
+      orderId: rollbackOrderId,
+      rollbackFromArtifactId: currentArtifact.id,
+      rollbackToArtifactId: rollbackArtifact.id,
+      rollbackToVersion: rollbackArtifact.version,
+      operationId: activation.operationId,
+    };
   }
 
   /**
@@ -1550,7 +2264,9 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     }
 
     // Delete from filesystem
-    const primaryDomain = parseDomains(cert.domains)[0];
+    const primaryDomain = parseDomains(cert.domains, {
+      allowWildcard: true,
+    })[0];
     const dir = this.certDir(primaryDomain);
     try {
       if (fs.existsSync(dir)) {
@@ -1573,16 +2289,21 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
    * Validate domain ownership for certificate issuance
    */
   async validateDomainForCertificate(domain: string) {
-    this.logger.log(`[Validate] Validating domain: ${domain}`);
+    const normalizedDomain = normalizeDomain(domain);
+    this.logger.log(`[Validate] Validating domain: ${normalizedDomain}`);
     // This is a placeholder - in production, you'd check DNS, HTTP challenges, etc.
     // For now, just check if domain resolves
     const { lookup } = await import('dns/promises');
     try {
-      await lookup(domain);
-      return { domain, valid: true, message: 'Domain resolves successfully' };
+      await lookup(normalizedDomain);
+      return {
+        domain: normalizedDomain,
+        valid: true,
+        message: 'Domain resolves successfully',
+      };
     } catch (err) {
       return {
-        domain,
+        domain: normalizedDomain,
         valid: false,
         message: `Domain does not resolve: ${err instanceof Error ? err.message : String(err)}`,
       };
@@ -1596,23 +2317,18 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     certPem: string,
     keyPem: string,
   ): Promise<void> {
-    const certFile = `/tmp/cert-validate-${Date.now()}.pem`;
-    const keyFile = `/tmp/key-validate-${Date.now()}.pem`;
+    const tempDir = this.createTempDirectory('lyttlenginx-keypair-validation-');
+    const certFile = path.join(tempDir, 'cert.pem');
+    const keyFile = path.join(tempDir, 'key.pem');
 
     try {
       fs.writeFileSync(certFile, certPem, 'utf8');
       fs.writeFileSync(keyFile, keyPem, 'utf8');
 
-      // Get modulus from cert
-      const { stdout: certModulus } = await exec(
-        `openssl x509 -noout -modulus -in ${certFile}`,
-      );
-      // Get modulus from key
-      const { stdout: keyModulus } = await exec(
-        `openssl rsa -noout -modulus -in ${keyFile}`,
-      );
+      const certPublicKey = await this.getCertificatePublicKey(certFile);
+      const keyPublicKey = await this.getPrivateKeyPublicKey(keyFile);
 
-      if (certModulus.trim() !== keyModulus.trim()) {
+      if (certPublicKey !== keyPublicKey) {
         throw new Error('Certificate and private key do not match');
       }
 
@@ -1620,9 +2336,8 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     } finally {
       // Clean up temp files
       try {
-        fs.unlinkSync(certFile);
-        fs.unlinkSync(keyFile);
-      } catch (e) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore
       }
     }
@@ -1643,11 +2358,11 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
     const results = await Promise.all(
       certs.map(async (cert) => {
         const analysis = await this.analyzeCertificate(cert.certPem);
-        const domains = parseDomains(cert.domains);
+        const domains = parseDomains(cert.domains, { allowWildcard: true });
 
         return {
           id: cert.id,
-          domains: parseDomains(cert.domains),
+          domains: parseDomains(cert.domains, { allowWildcard: true }),
           primaryDomain: domains[0],
           hasOcsp: analysis.hasOcsp,
           certificateType: analysis.type,
@@ -1689,73 +2404,34 @@ export class CertificateService implements OnModuleInit, OnApplicationShutdown {
    */
   private async triggerClusterReload() {
     try {
-      if (!this.clusterHeartbeat) {
-        this.logger.warn(
-          '[Reload] ClusterHeartbeatService not available, skipping broadcast',
-        );
-        return;
-      }
+      const operation = await this.clusterOperations.enqueueBroadcastOperation({
+        operationType: 'certificate.sync',
+        broadcast: true,
+        remotePath: '/certificates/sync',
+        initiatedBy: {
+          requestPath: '/certificates/sync',
+        },
+        metadata: {
+          source: 'certificate-renewal',
+        },
+        localAction: async () => {
+          const result = await this.syncCertificates();
 
-      const nodes = await this.clusterHeartbeat.getActiveNodes();
-      const thisInstanceId = this.distributedLock.getInstanceId();
-
-      const otherNodes = nodes.filter(
-        (n) => n.instanceId !== thisInstanceId && n.ipAddress,
-      );
-
-      if (otherNodes.length === 0) {
-        this.logger.log('[Reload] No other nodes to notify');
-        return;
-      }
-
-      this.logger.log(
-        `[Reload] Broadcasting certificate sync to ${otherNodes.length} other nodes...`,
-      );
-
-      // Trigger sync on other nodes using the dedicated sync endpoint
-      // Fire and forget - don't wait for responses
-      const port = process.env.PORT || 3000;
-
-      await Promise.allSettled(
-        otherNodes.map(async (node) => {
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-            // Call the sync endpoint on the other node
-            const url = `http://${node.ipAddress}:${port}/certificates/sync`;
-
-            const response = await fetch(url, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              signal: controller.signal,
-            });
-
-            clearTimeout(timeoutId);
-
-            if (response.ok) {
-              const result = await response.json();
-              this.logger.debug(
-                `[Reload] Synced ${result.syncedCount || 0} cert(s) on ${node.hostname} (${node.ipAddress})`,
-              );
-            } else {
-              this.logger.warn(
-                `[Reload] Sync failed on ${node.hostname}: ${response.statusText}`,
-              );
-            }
-          } catch (e) {
-            this.logger.debug(
-              `[Reload] Failed to notify ${node.hostname}: ${e instanceof Error ? e.message : String(e)}`,
+          if (!result.success) {
+            const errorSummary = result.errors
+              .map((entry) => `${entry.domain}: ${entry.error}`)
+              .join('; ');
+            throw new Error(
+              errorSummary || 'Certificate synchronization failed',
             );
           }
-        }),
-      );
 
-      // Also trigger immediate sync on this node
-      this.syncCertificates().catch((err) =>
-        this.logger.error(`[Reload] Local sync failed: ${err.message}`),
+          return result;
+        },
+      });
+
+      this.logger.log(
+        `[Reload] Queued certificate sync cluster operation ${operation.operationId}`,
       );
     } catch (error) {
       this.logger.warn(

@@ -7,13 +7,15 @@ import {
   Res,
 } from '@nestjs/common';
 import { Response } from 'express';
-import { PrismaService } from '../prisma/prisma.service';
+import { Public } from '../auth/decorators/public.decorator';
+import { AcmeService } from './acme.service';
 
 @Controller('.well-known/acme-challenge')
+@Public()
 export class AcmeController {
   private readonly logger = new Logger(AcmeController.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly acmeService: AcmeService) {}
 
   /**
    * Serve ACME challenges from database
@@ -29,35 +31,34 @@ export class AcmeController {
     try {
       // Look up challenge in database
       this.logger.debug(`[ACME] Looking up challenge in database: ${token}`);
-      const challenge = await this.prisma.acmeChallenge.findUnique({
-        where: { token },
-      });
+      const result = await this.acmeService.getPresentedHttpChallenge(token);
 
-      if (!challenge) {
+      if (result.status === 'missing') {
         this.logger.warn(`[ACME] Challenge not found in database: ${token}`);
         res.status(HttpStatus.NOT_FOUND).send('Challenge not found');
         return;
       }
 
-      this.logger.log(`[ACME] Challenge found for domain: ${challenge.domain}`);
-
-      // Check if expired
-      if (new Date() > challenge.expiresAt) {
-        this.logger.warn(
-          `[ACME] Challenge expired for token ${token} (expired at: ${challenge.expiresAt})`,
-        );
-        // Clean up expired challenge
-        await this.prisma.acmeChallenge.delete({
-          where: { id: challenge.id },
-        });
+      if (result.status === 'expired') {
+        this.logger.warn(`[ACME] Challenge expired for token ${token}`);
         res.status(HttpStatus.NOT_FOUND).send('Challenge expired');
         return;
       }
+
+      if (result.status !== 'found') {
+        res.status(HttpStatus.NOT_FOUND).send('Challenge not found');
+        return;
+      }
+
+      const challenge = result.challenge;
+
+      this.logger.log(`[ACME] Challenge found for domain: ${challenge.domain}`);
 
       // Return the key authorization (Let's Encrypt expects plain text)
       this.logger.log(
         `[ACME] Returning challenge response for ${challenge.domain} (keyAuth length: ${challenge.keyAuth.length})`,
       );
+      await this.acmeService.markChallengeServed(challenge.id);
       res
         .status(HttpStatus.OK)
         .contentType('text/plain')

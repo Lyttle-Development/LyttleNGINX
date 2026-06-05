@@ -1,939 +1,264 @@
 # 🔒 LyttleNGINX
 
-<p align="center">
-  <img src="https://img.shields.io/badge/status-production--ready-success" alt="Status" />
-  <img src="https://img.shields.io/badge/build-passing-brightgreen" alt="Build" />
-  <img src="https://img.shields.io/badge/coverage-ready-blue" alt="Coverage" />
-  <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License" />
-</p>
+![Current architecture documented](https://img.shields.io/badge/status-current%20architecture%20documented-blue)
+![Phase 10 complete](https://img.shields.io/badge/roadmap-phase%2010%20complete-brightgreen)
+![Controlled rollout ready](https://img.shields.io/badge/readiness-controlled%20rollout%20ready-yellowgreen)
+![License: UNLICENSED](https://img.shields.io/badge/license-UNLICENSED-red)
 
-**Enterprise-grade NGINX proxy management with automated SSL/TLS certificate management, real-time monitoring, and comprehensive backup solutions.**
+**NestJS-based NGINX control plane for proxy configuration, certificate lifecycle automation, cluster coordination, and operator observability.**
 
-Built with [NestJS](https://nestjs.com/) • Powered by [PostgreSQL](https://www.postgresql.org/) • Secured by [Let's Encrypt](https://letsencrypt.org/)
+> **Current status:** The refactor is documented against the current implementation, not the historical delivery roadmap. Final readiness artifacts live in [`FINAL_PRODUCTION_CHECKLIST.md`](FINAL_PRODUCTION_CHECKLIST.md) and [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md). Treat the repository as ready for a controlled production rollout of the documented current architecture only after the checklist items are completed and the listed deferments are explicitly accepted.
 
----
+## Current state at a glance
 
-## 🌟 Features
+- authenticated-by-default admin API with explicit public probe/metrics/ACME allowlist
+- JWT-compatible auth foundation with RBAC roles and durable audit logging
+- lease-based cluster leadership plus operation journal and per-node ACK tracking
+- staged NGINX release activation with automatic rollback on reload failure
+- durable certificate orders, artifact activation/rollback, and shared HTTP-01 challenge handling
+- application-layer private-key encryption at rest plus encrypted/signed backup artifacts
+- structured JSON operational logs, public health drilldowns, and expanded Prometheus metrics
+- classified unit/integration/e2e/chaos test harness plus CI release gates
 
-### 🔐 SSL/TLS Certificate Management
+## Important current boundaries
 
-- **Automatic Let's Encrypt** - Zero-touch certificate issuance and renewal
-- **Manual Certificate Upload** - Support for custom/purchased certificates
-- **Self-Signed Certificates** - One-click generation for development
-- **Certificate Validation** - Automatic cert/key pair validation
-- **Multi-Domain Support** - SAN (Subject Alternative Names) support
-- **Certificate Backup/Restore** - Complete backup and recovery solution
+These constraints are still real and are intentionally documented here:
 
-### 🚀 NGINX Proxy Management
+- **Production rollout still carries accepted deferments.** Review [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md) before go-live and make sure the unresolved items are consciously accepted.
+- **Internal node traffic is still authenticated HTTP, not mTLS.** Identity and RBAC exist, but transport hardening remains future work.
+- **NestJS and NGINX still share a single container.** The runtime is fail-fast and restart-friendly, but the preferred split control-plane/dataplane architecture is not implemented yet.
+- **Manual config rollback is not a dedicated API today.** Automatic rollback covers reload failures; logical rollback still requires reverting desired state and reloading.
+- **Runtime secret ingestion is still env-driven.** Operators should use Swarm secrets or an external secret store to inject values.
 
-- **Dynamic Configuration** - Database-driven proxy configuration
-- **HTTP to HTTPS Redirect** - Automatic when SSL is enabled
-- **Reverse Proxy** - Full reverse proxy support
-- **URL Redirects** - 301/302 redirect support
-- **Custom NGINX Config** - Inject custom configuration per proxy
-- **WebSocket Support** - Full WebSocket proxying capability
+## Deployment expectations
 
-### 📊 Monitoring & Observability
+| Mode | Use it for | Current expectation |
+| --- | --- | --- |
+| Local development | coding, debugging, manual verification | best-supported workflow today |
+| Single-node Compose | demos, evaluation, non-HA deployments | usable for evaluation; not final hardened production guidance |
+| Docker Swarm global mode | target clustered operating model | ready for controlled rollout when the final checklist is completed and deferments are accepted |
 
-- **Prometheus Metrics** - 7+ metrics for Grafana dashboards
-- **Health Checks** - Automated daily certificate health monitoring
-- **Real-time Status** - Live certificate expiry tracking
-- **JSON API** - Query certificate and proxy status
-- **Alert System** - Multi-channel notifications (email, Slack, Discord)
-
-### 🔔 Alert System
-
-- **Email Alerts** - SMTP-based email notifications
-- **Slack Integration** - Real-time Slack webhook alerts
-- **Discord Integration** - Discord webhook notifications
-- **Configurable Thresholds** - Set custom alert timing (default: 14 days)
-- **Alert Types** - Expiring soon, expired, renewal success/failure
-
-### 🌐 Cluster Management
-
-- **Distributed Locking** - PostgreSQL advisory locks for coordination
-- **Leader Election** - Automatic leader election with fail-over
-- **Node Heartbeats** - Real-time cluster health monitoring
-- **Stale Node Cleanup** - Automatic removal of dead nodes (2 min timeout)
-- **Split-Brain Prevention** - Multiple safety layers enforce single leader
-- **Auto-Recovery** - Self-healing from crashes and network issues
-- **Admin Endpoints** - Manual cluster management and diagnostics
-- **Health Monitoring** - Built-in scripts for cluster health checks
-
-### 🛡️ Security Features
-
-- **TLS 1.2/1.3 Only** - No legacy protocol support
-- **Strong Cipher Suites** - ECDHE, AES-GCM, ChaCha20-Poly1305
-- **OCSP Stapling** - Enhanced SSL performance and privacy
-- **Security Headers** - HSTS, X-Frame-Options, CSP support
-- **Input Validation** - Comprehensive DTO validation
-- **Rate Limiting** - 3-tier rate limiting (10/sec, 60/min, 100/15min)
-- **HTTP/2 Support** - Modern protocol support
-
-### 💾 Backup & Recovery
-
-- **Automated Backups** - ZIP archives with all certificates
-- **Export/Import** - Individual certificate export/import
-- **Backup Management** - List, download, delete backups via API
-- **Metadata Tracking** - Complete backup history
-- **Disaster Recovery** - Full restoration capability
-
-### 🎯 Developer Experience
-
-- **REST API** - Complete REST API for all operations
-- **OpenAPI Ready** - API documentation ready
-- **Error Handling** - Structured error responses with codes
-- **Comprehensive Docs** - 2,500+ lines of documentation
-- **Docker Support** - Production-ready Docker configuration
-- **TypeScript** - Fully typed codebase
-
----
-
-## 📋 Table of Contents
-
-- [Quick Start](#-quick-start)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [API Documentation](#-api-documentation)
-- [Certificate Management](#-certificate-management)
-- [Monitoring & Alerts](#-monitoring--alerts)
-- [Backup & Recovery](#-backup--recovery)
-- [Docker Deployment](#-docker-deployment)
-- [Development](#-development)
-- [Documentation](#-documentation)
-- [Troubleshooting](#-troubleshooting)
-
----
-
-## 🚀 Quick Start
+## Quick start
 
 ### Prerequisites
 
-- Node.js 22.19.0 or higher
-- PostgreSQL 12 or higher
-- Docker & Docker Compose (optional)
+- Node.js `24.16.0`
+- npm `11.15.0`
+- PostgreSQL `12+`
+- Docker / Docker Compose or Docker Swarm if you are evaluating container deployment
 
-### 1. Clone and Install
+### Local setup
 
 ```bash
-git clone <repository-url>
-cd LyttleNGINX
 npm install
-```
-
-### 2. Configure Environment
-
-```bash
 cp .env.example .env
-nano .env
-```
-
-**Minimum Configuration:**
-
-```bash
-# Connection pooling is automatically configured, but you can customize:
-DATABASE_URL=postgresql://user:password@localhost:5432/lyttlenginx?connection_limit=10&pool_timeout=10&connect_timeout=10
-ADMIN_EMAIL=admin@example.com
-NODE_ENV=production
-```
-
-> **Note:** Connection pooling limits are automatically applied (10 connections per instance). For high-traffic deployments, see [Database Connection Management](docs/DATABASE_CONNECTION_MANAGEMENT.md).
-
-### 3. Setup Database
-
-```bash
 npm run prisma:generate
 npm run prisma:migrate
-```
-
-### 4. Build and Run
-
-```bash
 npm run build
 npm run start:prod
 ```
 
-### 5. Verify Installation
+### Smoke checks
 
 ```bash
-# Check health
-curl http://localhost:3000/ready
-
-# View metrics
-curl http://localhost:3000/metrics/json
-
-# List certificates
-curl http://localhost:3000/certificates
-```
-
-**🎉 You're ready to go!**
-
----
-
-## 📦 Installation
-
-### Development Setup
-
-```bash
-# Install dependencies
-npm install
-
-# Generate Prisma client
-npm run prisma:generate
-
-# Run migrations
-npm run prisma:migrate
-
-# Start in development mode
-npm run start:dev
-```
-
-### Production Setup
-
-```bash
-# Install production dependencies
-npm ci --only=production
-
-# Generate Prisma client
-npm run prisma:generate
-
-# Build application
-npm run build
-
-# Run migrations
-npm run prisma:deploy
-
-# Start production server
-npm run start:prod
-```
-
-### Docker Setup
-
-```bash
-# Build image
-docker-compose build
-
-# Start services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f app
-```
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-#### Required
-
-```bash
-DATABASE_URL=postgresql://user:pass@host:5432/db
-ADMIN_EMAIL=admin@example.com        # For Let's Encrypt
-NODE_ENV=production                  # production | development
-```
-
-#### TLS Configuration
-
-```bash
-RENEW_BEFORE_DAYS=30                # Days before expiry to renew
-```
-
-#### Alert Configuration
-
-```bash
-# Email Alerts
-ALERT_EMAIL=alerts@example.com
-ALERT_FROM_EMAIL=noreply@example.com
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
-
-# Alert Threshold
-ALERT_THRESHOLD_DAYS=14             # Alert when expiring within X days
-
-# Webhook Alerts
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-```
-
-#### Backup Configuration
-
-```bash
-BACKUP_DIR=/var/backups/certificates
-```
-
-### Database Schema
-
-The application uses PostgreSQL with Prisma ORM. Key models:
-
-- **ProxyEntry** - NGINX proxy configurations
-- **Certificate** - SSL/TLS certificates with metadata
-
-Run migrations with:
-
-```bash
-npm run prisma:migrate
-```
-
----
-
-## 📚 API Documentation
-
-### Certificate Endpoints
-
-| Method | Endpoint                             | Description                       |
-|--------|--------------------------------------|-----------------------------------|
-| GET    | `/certificates`                      | List all certificates with status |
-| GET    | `/certificates/:id`                  | Get certificate details           |
-| POST   | `/certificates/upload`               | Upload custom certificate         |
-| POST   | `/certificates/generate-self-signed` | Generate self-signed cert         |
-| POST   | `/certificates/renew/:id`            | Renew specific certificate        |
-| POST   | `/certificates/renew-all`            | Renew all certificates            |
-| DELETE | `/certificates/:id`                  | Delete certificate                |
-| GET    | `/certificates/validate/:domain`     | Validate domain                   |
-
-### Backup Endpoints
-
-| Method | Endpoint                          | Description         |
-|--------|-----------------------------------|---------------------|
-| POST   | `/certificates/backup`            | Create backup       |
-| GET    | `/certificates/backup`            | List backups        |
-| GET    | `/certificates/backup/:filename`  | Download backup     |
-| DELETE | `/certificates/backup/:filename`  | Delete backup       |
-| POST   | `/certificates/backup/import`     | Import certificates |
-| GET    | `/certificates/backup/export/:id` | Export certificate  |
-
-### Metrics Endpoints
-
-| Method | Endpoint        | Description        |
-|--------|-----------------|--------------------|
-| GET    | `/metrics`      | Prometheus metrics |
-| GET    | `/metrics/json` | JSON metrics       |
-
-### TLS Configuration Endpoints
-
-| Method | Endpoint                          | Description         |
-|--------|-----------------------------------|---------------------|
-| GET    | `/tls/config/:domain`             | Get TLS config      |
-| GET    | `/tls/test/:domain`               | Test TLS connection |
-| POST   | `/tls/dhparam`                    | Generate DH params  |
-| GET    | `/tls/dhparam/status`             | Check DH params     |
-| POST   | `/tls/certificate/info`           | Parse certificate   |
-| POST   | `/tls/certificate/validate-chain` | Validate chain      |
-
-### Authentication Endpoints
-
-| Method | Endpoint       | Description                 | Auth     |
-|--------|----------------|-----------------------------|----------|
-| GET    | `/auth/status` | Check authentication status | Required |
-| GET    | `/auth/info`   | Get auth configuration info | Public   |
-
-### Health Endpoints
-
-| Method | Endpoint         | Description         | Auth   |
-|--------|------------------|---------------------|--------|
-| GET    | `/health`        | Health check        | Public |
-| GET    | `/ready`         | Readiness check     | Public |
-| POST   | `/health/reload` | Reload NGINX config | Public |
-
-**📖 Complete API documentation:** [API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)
-
----
-
-## 🔐 Certificate Management
-
-### Automatic Let's Encrypt
-
-Certificates are automatically obtained and renewed for proxy entries with `ssl = true`.
-
-```sql
--- Enable SSL for a proxy entry
-UPDATE "ProxyEntry"
-SET ssl = true
-WHERE id = 1;
-```
-
-The system will:
-
-1. Generate HTTP-only NGINX config
-2. Obtain Let's Encrypt certificate via ACME
-3. Update config with HTTPS + HTTP→HTTPS redirect
-4. Auto-renew when within `RENEW_BEFORE_DAYS` threshold
-
-### Upload Custom Certificate
-
-```bash
-curl -X POST http://localhost:3000/certificates/upload \
-  -H "Content-Type: application/json" \
-  -d '{
-    "domains": ["example.com", "www.example.com"],
-    "certPem": "-----BEGIN CERTIFICATE-----\n...",
-    "keyPem": "-----BEGIN PRIVATE KEY-----\n...",
-    "chainPem": "-----BEGIN CERTIFICATE-----\n..."
-  }'
-```
-
-### Generate Self-Signed Certificate
-
-Perfect for development and testing:
-
-```bash
-curl -X POST http://localhost:3000/certificates/generate-self-signed \
-  -H "Content-Type: application/json" \
-  -d '{"domains": ["localhost", "*.localhost"]}'
-```
-
-### Certificate Status
-
-Certificates have three statuses:
-
-- **valid** - More than `RENEW_BEFORE_DAYS` until expiry
-- **expiring_soon** - Within renewal threshold
-- **expired** - Past expiration date
-
-```bash
-# Check certificate status
-curl http://localhost:3000/certificates | jq '.[] | {domain: .domains[0], status, days: .daysUntilExpiry}'
-```
-
----
-
-## 📊 Monitoring & Alerts
-
-### Prometheus Metrics
-
-Expose metrics for Grafana dashboards:
-
-```bash
-# Prometheus format
-curl http://localhost:3000/metrics
-
-# JSON format
+curl http://localhost:3000/health/live
+curl http://localhost:3000/health/ready
 curl http://localhost:3000/metrics/json
 ```
 
-**Available Metrics:**
-
-- `lyttle_certificates_total` - Total certificates
-- `lyttle_certificates_valid` - Valid certificates
-- `lyttle_certificates_expiring_soon` - Expiring soon
-- `lyttle_certificates_expired` - Expired certificates
-- `lyttle_certificates_avg_days_until_expiry` - Average days until expiry
-- `lyttle_proxy_entries_total` - Total proxy entries
-- `lyttle_proxy_entries_ssl` - Proxies with SSL enabled
-
-### Configure Prometheus Scraping
-
-**prometheus.yml:**
-
-```yaml
-scrape_configs:
-  - job_name: 'lyttlenginx'
-    static_configs:
-      - targets: [ 'app:3000' ]
-    metrics_path: '/metrics'
-    scrape_interval: 30s
-```
-
-### Email Alerts
-
-Configure SMTP for email notifications:
+### Example authenticated checks
 
 ```bash
-ALERT_EMAIL=alerts@example.com
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
+curl http://localhost:3000/auth/status \
+  -H "X-API-Key: $API_KEY"
+
+curl http://localhost:3000/certificates \
+  -H "Authorization: Bearer $JWT"
 ```
 
-### Webhook Alerts
+## Repository verification
 
-**Slack:**
+The current repository verification contract is:
 
 ```bash
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
-```
-
-**Discord:**
-
-```bash
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR/WEBHOOK/URL
-```
-
-### Alert Types
-
-1. **Certificate Expiring Soon** - Sent 14 days before expiry (configurable)
-2. **Certificate Expired** - Sent immediately when cert expires
-3. **Renewal Success** - Confirmation after successful renewal
-4. **Renewal Failure** - Alert when renewal fails
-
-The monitoring service runs **daily at 9 AM** automatically.
-
----
-
-## 💾 Backup & Recovery
-
-### Create Backup
-
-```bash
-curl -X POST http://localhost:3000/certificates/backup
-```
-
-Creates a ZIP file containing:
-
-- `certificates.json` - Database export
-- `certs/{domain}/fullchain.pem` - Certificate files
-- `certs/{domain}/privkey.pem` - Private keys
-- `metadata.json` - Backup metadata
-
-### List Backups
-
-```bash
-curl http://localhost:3000/certificates/backup
-```
-
-### Download Backup
-
-```bash
-curl http://localhost:3000/certificates/backup/certificates-backup-2025-11-22.zip \
-  --output backup.zip
-```
-
-### Restore from Backup
-
-```bash
-# Extract backup
-unzip backup.zip
-
-# Import certificates
-curl -X POST http://localhost:3000/certificates/backup/import \
-  -H "Content-Type: application/json" \
-  -d @certificates.json
-```
-
-### Automated Backups
-
-**Create backup script:**
-
-```bash
-#!/bin/bash
-# /scripts/backup-daily.sh
-
-curl -X POST http://localhost:3000/certificates/backup
-FILENAME=$(curl -s http://localhost:3000/certificates/backup | jq -r '.[0].filename')
-curl http://localhost:3000/certificates/backup/$FILENAME -o /backups/$FILENAME
-```
-
-**Add to crontab:**
-
-```cron
-0 2 * * * /scripts/backup-daily.sh >> /var/log/backup.log 2>&1
-```
-
----
-
-## 🐳 Docker Deployment
-
-### Docker Swarm (Recommended for Production) 🆕
-
-Deploy LyttleNGINX in **global mode** across your Docker Swarm cluster with built-in distributed coordination:
-
-```bash
-# Quick deployment with script
-./deploy-swarm.sh
-
-# Or manually
-docker stack deploy -c docker-compose.swarm.yml lyttlenginx
-```
-
-**Key Features:**
-
-- ✅ Runs on every node (global mode)
-- ✅ Distributed locking prevents certificate conflicts
-- ✅ Automatic leader election for renewals
-- ✅ Zero-downtime rolling updates
-- ✅ Automatic failure recovery
-
-**View cluster status:**
-
-```bash
-# See all nodes
-curl -H "Authorization: Bearer $JWT" http://localhost:3003/cluster/nodes
-
-# View leader
-docker service logs lyttlenginx_lyttlenginx 2>&1 | grep "LEADER"
-
-# Check service health
-docker service ps lyttlenginx_lyttlenginx
-```
-
-**📖 Complete guide:** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
-
----
-
-### Docker Compose (Single Instance)
-
-**docker-compose.yml:**
-
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: lyttlenginx
-      POSTGRES_USER: lyttlenginx
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-
-  app:
-    image: ghcr.io/lyttle-development/lyttlenginx:main
-    depends_on:
-      - postgres
-    environment:
-      DATABASE_URL: postgresql://lyttlenginx:${POSTGRES_PASSWORD}@postgres:5432/lyttlenginx
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      NODE_ENV: production
-    volumes:
-      - letsencrypt-data:/etc/letsencrypt
-      - certbot-webroot:/var/www/certbot
-      - nginx-ssl:/etc/nginx/ssl
-    network_mode: host
-    restart: unless-stopped
-
-volumes:
-  postgres-data:
-  letsencrypt-data:
-  certbot-webroot:
-  nginx-ssl:
-```
-
-### Deploy
-
-```bash
-# Create .env file
-echo "POSTGRES_PASSWORD=your-secure-password" > .env
-echo "ADMIN_EMAIL=admin@example.com" >> .env
-
-# Start services
-docker-compose up -d
-
-# Check logs
-docker-compose logs -f app
-
-# Check status
-docker-compose ps
-```
-
-**📖 More Docker examples:** [DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)
-
----
-
-## 🔧 Development
-
-### Project Structure
-
-```
-LyttleNGINX/
-├── src/
-│   ├── alert/              # Alert system (email, Slack, Discord)
-│   ├── certificate/        # Certificate management
-│   │   ├── errors/         # Custom error types
-│   │   └── dto/            # Data transfer objects
-│   ├── filters/            # Global exception filters
-│   ├── health/             # Health check endpoints
-│   ├── logs/               # Logging service
-│   ├── metrics/            # Prometheus metrics
-│   ├── nginx/              # NGINX configuration generation
-│   ├── prisma/             # Database client
-│   ├── rate-limit/         # Rate limiting
-│   ├── reloader/           # Config reload service
-│   └── utils/              # Utility functions
-├── nginx/                  # NGINX configuration templates
-├── prisma/                 # Database schema and migrations
-└── docs/                   # Documentation files
-```
-
-### Available Scripts
-
-```bash
-# Development
-npm run start:dev          # Start with hot reload
-npm run start:debug        # Start with debugger
-
-# Production
-npm run build              # Build application
-npm run start:prod         # Start production server
-
-# Database
-npm run prisma:generate    # Generate Prisma client
-npm run prisma:migrate     # Run migrations
-npm run prisma:deploy      # Deploy migrations (production)
-npm run prisma:format      # Format Prisma schema
-
-# Docker
-npm run docker:build       # Build Docker image
-npm run docker:setup       # Setup for Docker
-
-# Code Quality
-npm run lint               # Run ESLint
-npm run format             # Format with Prettier
-```
-
-### Adding a New Feature
-
-1. **Create service:**
-   ```bash
-   nest g service feature
-   ```
-
-2. **Create controller:**
-   ```bash
-   nest g controller feature
-   ```
-
-3. **Create module:**
-   ```bash
-   nest g module feature
-   ```
-
-4. **Add to app.module.ts:**
-   ```typescript
-   imports: [
-     // ... existing imports
-     FeatureModule,
-   ]
-   ```
-
-### Testing
-
-```bash
-# Unit tests (when implemented)
+npm run lint
+npm run lint:ci
+npm run typecheck
 npm run test
-
-# E2E tests (when implemented)
+npm run test:unit
+npm run test:integration
 npm run test:e2e
-
-# Test coverage (when implemented)
-npm run test:cov
-```
-
----
-
-## 📖 Documentation
-
-### Complete Documentation Set
-
-1. **[README.md](README.md)** (this file) - Project overview
-2. **[API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md)** - Authentication setup and usage
-3. **[TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)** - Complete TLS guide (600+ lines)
-4. **[ENHANCED_FEATURES.md](ENHANCED_FEATURES.md)** - Enhanced features guide (500+ lines)
-5. **[API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)** - Full API documentation (700+ lines)
-6. **[API_EXAMPLES.md](API_EXAMPLES.md)** - API usage examples with curl, TypeScript, Python
-7. **[DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)** - Docker deployment examples
-8. **[TLS_QUICK_REFERENCE.md](TLS_QUICK_REFERENCE.md)** - Quick command reference
-9. **[QUICK_START_ENHANCED.md](QUICK_START_ENHANCED.md)** - Enhanced features quick start
-10. **[docs/DATABASE_CONNECTION_MANAGEMENT.md](docs/DATABASE_CONNECTION_MANAGEMENT.md)** - Connection pooling & optimization ⭐ NEW
-11. **[docs/QUICK_REFERENCE_CONNECTIONS.md](docs/QUICK_REFERENCE_CONNECTIONS.md)** - Connection monitoring quick reference ⭐ NEW
-12. **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - Deployment guide for connection fixes ⭐ NEW
-13. **[.env.example](.env.example)** - Environment configuration template
-
-### Key Topics
-
-- **Authentication** → [API_AUTHENTICATION_GUIDE.md](API_AUTHENTICATION_GUIDE.md)
-- **Certificate Management** → [TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md)
-- **Database Connections** → [docs/DATABASE_CONNECTION_MANAGEMENT.md](docs/DATABASE_CONNECTION_MANAGEMENT.md) ⭐ NEW
-- **API Reference** → [API_REFERENCE_ENHANCED.md](API_REFERENCE_ENHANCED.md)
-- **Examples** → [API_EXAMPLES.md](API_EXAMPLES.md)
-- **Docker** → [DOCKER_COMPOSE_EXAMPLES.md](DOCKER_COMPOSE_EXAMPLES.md)
-- **Monitoring** → [ENHANCED_FEATURES.md](ENHANCED_FEATURES.md)
-- **Quick Reference** → [docs/QUICK_REFERENCE_CONNECTIONS.md](docs/QUICK_REFERENCE_CONNECTIONS.md) ⭐ NEW
-
----
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### Build Fails
-
-```bash
-# Clean and rebuild
-rm -rf node_modules dist
-npm install
+npm run test:chaos
+npm run test:coverage
+npm run test:coverage:ci
 npm run build
+npm run audit:prod
+npm run verify
+npm run verify:ci
 ```
 
-#### Database Connection Issues
+`npm run test` executes the full classified harness, including the deterministic chaos suite.
+
+## Public vs protected API surface
+
+### Public allowlist
+
+These routes are intentionally public:
+
+- `GET /health/live`
+- `GET /health/startup`
+- `GET /health/ready`
+- `GET /health/dependencies`
+- `GET /health/deep`
+- `GET /health`
+- `GET /ready`
+- `GET /metrics`
+- `GET /metrics/json`
+- `GET /.well-known/acme-challenge/:token`
+
+### Authenticated admin or internal routes
+
+Everything else should be treated as protected control-plane traffic and requires one of:
+
+- `Authorization: Bearer <jwt>`
+- `X-API-Key: <key>`
+- `Authorization: ApiKey <key>`
+
+### Current RBAC catalog
+
+- `viewer`
+- `operator`
+- `security-admin`
+- `platform-admin`
+- `internal-node`
+
+## What is implemented today
+
+### Cluster operations
+
+Key operator-facing endpoints:
+
+- `GET /cluster/status`
+- `GET /cluster/lease`
+- `GET /cluster/leader`
+- `GET /cluster/leader/status`
+- `GET /cluster/operations`
+- `GET /cluster/operations/:operationId`
+- `GET /cluster/nodes`
+- `GET /cluster/nodes/:nodeId`
+- `GET /cluster/nodes/:nodeId/config`
+- `GET /cluster/nodes/:nodeId/certificates`
+- `POST /cluster/reload`
+
+### Certificates and backup/restore
+
+- `GET /certificates`
+- `GET /certificates/orders`
+- `GET /certificates/orders/:id`
+- `POST /certificates/orders/:id/retry`
+- `GET /certificates/challenges`
+- `POST /certificates/upload`
+- `POST /certificates/generate-self-signed`
+- `POST /certificates/renew/:id`
+- `POST /certificates/renew-all`
+- `POST /certificates/:id/rollback`
+- `POST /certificates/sync`
+- `POST /certificates/backup`
+- `GET /certificates/backup`
+- `POST /certificates/backup/:filename/verify`
+- `POST /certificates/backup/:filename/restore`
+- `POST /certificates/backup/import`
+- `GET /certificates/backup/export/:id` *(break-glass only)*
+
+### Security and observability
+
+- `GET /auth/status`
+- `GET /auth/info`
+- `GET /auth/me`
+- `POST /auth/token`
+- `GET /audit`
+- `GET /logs`
+- `GET /security/status`
+- `GET /security/policy`
+- `GET /security/secrets/health`
+- `GET /security/access-review`
+- `POST /security/rotate/api-key`
+- `POST /security/rotate/private-key-encryption`
+- `POST /security/rotate/internal-certs` *(forward-looking contract; mTLS rotation not implemented yet)*
+
+## Certificate strategy notes
+
+The shipped ACME implementation is intentionally conservative:
+
+- built-in ACME strategy is shared **HTTP-01**
+- wildcard issuance is intentionally rejected
+- any node can serve shared challenge records from the database
+- certificate activation is tracked as a cluster operation with node ACKs
+- private keys are encrypted at rest in PostgreSQL
+- backup artifacts are encrypted and signed
+
+## Documentation map
+
+### Canonical project docs
+
+- [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md) — current risk inventory and production gap analysis
+- [`FINAL_PRODUCTION_CHECKLIST.md`](FINAL_PRODUCTION_CHECKLIST.md) — final assessment reconciliation and go-live checklist
+- [`PRODUCTION_DEFERMENT_REGISTER.md`](PRODUCTION_DEFERMENT_REGISTER.md) — accepted gaps, compensating controls, and follow-up work
+- [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) — ADR log for the current architecture and delivery policy
+- [`docs/architecture/current-architecture.md`](docs/architecture/current-architecture.md) — current implementation architecture and explicit boundaries
+
+### Runbooks
+
+- [`docs/runbooks/leader-failure.md`](docs/runbooks/leader-failure.md)
+- [`docs/runbooks/nginx-config-rollback.md`](docs/runbooks/nginx-config-rollback.md)
+- [`docs/runbooks/restore-from-encrypted-backup.md`](docs/runbooks/restore-from-encrypted-backup.md)
+- [`docs/runbooks/certificate-issuance-failure.md`](docs/runbooks/certificate-issuance-failure.md)
+- [`docs/runbooks/credential-rotation.md`](docs/runbooks/credential-rotation.md)
+- [`docs/runbooks/security-break-glass.md`](docs/runbooks/security-break-glass.md)
+- [`docs/runbooks/monitoring-alerts.md`](docs/runbooks/monitoring-alerts.md)
+
+## Incident-first operator flow
+
+When a node or workflow looks unhealthy, start with:
 
 ```bash
-# Check DATABASE_URL format
-# postgresql://user:password@host:port/database
-
-# Test connection
-psql $DATABASE_URL
+curl http://localhost:3000/health/deep | jq
+curl http://localhost:3000/cluster/status -H "Authorization: Bearer $JWT" | jq
+curl http://localhost:3000/cluster/lease -H "Authorization: Bearer $JWT" | jq
+curl http://localhost:3000/cluster/operations -H "Authorization: Bearer $JWT" | jq
+curl http://localhost:3000/logs -H "Authorization: Bearer $JWT" | jq
+curl http://localhost:3000/audit -H "Authorization: Bearer $JWT" | jq
 ```
 
-#### Certificate Not Being Issued
+Then move into the dedicated runbook for the incident type.
 
-```bash
-# 1. Check DNS resolution
-curl http://localhost:3000/certificates/validate/yourdomain.com
+## Deployment notes
 
-# 2. Check logs
-docker-compose logs app | grep -i certbot
+### Single-node Compose
 
-# 3. Verify email is set
-echo $ADMIN_EMAIL
+Use [`docker-compose.yml`](docker-compose.yml) for local or single-node evaluation.
 
-# 4. Ensure ports 80 and 443 are accessible
-```
+### Swarm
 
-#### NGINX Won't Reload
+Use [`docker-compose.swarm.yml`](docker-compose.swarm.yml) for controlled clustered testing.
 
-```bash
-# Test config syntax
-docker-compose exec app nginx -t
+Important current Swarm notes:
 
-# Check certificate files
-docker-compose exec app ls -la /etc/letsencrypt/live/
+- peer communication uses explicit advertised control-plane settings (`CLUSTER_CONTROL_ADDRESS`, `CLUSTER_CONTROL_PORT`, or `CLUSTER_CONTROL_URL`)
+- treat `CLUSTER_CONTROL_PORT` as the peer-facing port other nodes must dial; do not assume it matches PORT
+- cluster leadership uses durable lease state with generation/fencing metadata
+- cluster-wide reload and certificate activation flows use tracked operation IDs and per-node ACKs
+- internal node transport is still authenticated HTTP, not mTLS
 
-# View error logs
-docker-compose exec app cat /var/log/nginx/error.log
-```
+## Security reporting
 
-#### Alerts Not Sending
+For now, follow the project’s internal security process and review the current posture endpoints before performing high-risk maintenance:
 
-```bash
-# Check configuration
-docker-compose exec app printenv | grep -E "(ALERT|SMTP|SLACK)"
+- `GET /security/status`
+- `GET /security/policy`
+- `GET /security/secrets/health`
+- `GET /security/access-review`
 
-# Check if alert service initialized
-docker-compose logs app | grep -i "alert"
-
-# View alert logs
-docker-compose logs app | grep -E "(Alert|Monitor)"
-```
-
-### Debug Mode
-
-Enable debug logging:
-
-```bash
-# Set in .env
-LOG_LEVEL=debug
-
-# Restart
-docker-compose restart app
-
-# View logs
-docker-compose logs -f app
-```
-
-### Support
-
-For issues and questions:
-
-1. Check [TLS_DOCUMENTATION.md](TLS_DOCUMENTATION.md) troubleshooting section
-2. Review [API_EXAMPLES.md](API_EXAMPLES.md) for usage examples
-3. Check application logs: `docker-compose logs -f app`
-
----
-
-## 🏆 Features at a Glance
-
-| Feature           | Status | Description                   |
-|-------------------|--------|-------------------------------|
-| 🔐 Auto SSL       | ✅      | Let's Encrypt integration     |
-| 📤 Upload Cert    | ✅      | Custom certificate upload     |
-| 🔧 Self-Signed    | ✅      | Development certificates      |
-| 🔄 Auto Renew     | ✅      | Automatic renewal (12h check) |
-| 🚦 HTTP→HTTPS     | ✅      | Automatic redirect            |
-| 📊 Prometheus     | ✅      | Metrics export                |
-| 📧 Email Alerts   | ✅      | SMTP notifications            |
-| 💬 Slack/Discord  | ✅      | Webhook alerts                |
-| 💾 Backup/Restore | ✅      | Complete backup solution      |
-| ⚡ Rate Limiting   | ✅      | 3-tier protection             |
-| ✅ Validation      | ✅      | Input validation              |
-| 🛡️ TLS 1.3       | ✅      | Modern protocols only         |
-| 🔒 OCSP Stapling  | ✅      | Enhanced performance          |
-| 📈 Monitoring     | ✅      | Daily health checks           |
-| 🐳 Docker         | ✅      | Production-ready              |
-
----
-
-## 📊 Statistics
-
-- **Lines of Code:** ~12,000+
-- **Documentation:** 2,500+ lines
-- **API Endpoints:** 35+
-- **Services:** 17+
-- **Controllers:** 9
-- **Modules:** 11+
-- **Build Status:** ✅ Passing
-
----
-
-## 🔒 Security
-
-### Security Features
-
-- ✅ TLS 1.2/1.3 only (no legacy protocols)
-- ✅ Strong cipher suites (ECDHE, AES-GCM, ChaCha20-Poly1305)
-- ✅ OCSP stapling enabled
-- ✅ Security headers (HSTS, X-Frame-Options, CSP)
-- ✅ Input validation on all endpoints
-- ✅ Rate limiting (3-tier)
-- ✅ Certificate/key pair validation
-- ✅ HTTP/2 support
-
-### Reporting Security Issues
-
-Please report security vulnerabilities to: admin@example.com
-
----
-
-## 📜 License
+## License
 
 UNLICENSED - Private project by Lyttle Development
-
----
-
-## 🙏 Acknowledgments
-
-Built with:
-
-- [NestJS](https://nestjs.com/) - Progressive Node.js framework
-- [Prisma](https://www.prisma.io/) - Next-generation ORM
-- [NGINX](https://nginx.org/) - High-performance web server
-- [Let's Encrypt](https://letsencrypt.org/) - Free SSL certificates
-- [PostgreSQL](https://www.postgresql.org/) - Advanced database
-
----
-
-## 🚀 Getting Started
-
-Ready to deploy? Follow these steps:
-
-1. **[Installation](#-installation)** - Set up the project
-2. **[Configuration](#-configuration)** - Configure environment
-3. **[Quick Start](#-quick-start)** - Get running in 5 minutes
-4. **[Documentation](#-documentation)** - Read the docs
-5. **[Deploy](#-docker-deployment)** - Go to production
-
----
-
-<p align="center">
-  <strong>LyttleNGINX - Enterprise Certificate Management Made Simple</strong>
-</p>
-
-<p align="center">
-  <sub>Built with ❤️ by Lyttle Development</sub>
-</p>

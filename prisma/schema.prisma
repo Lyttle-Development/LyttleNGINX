@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model ProxyEntry {
@@ -27,6 +26,7 @@ model Certificate {
   domainsHash   String // SHA256 hash of sorted split domains
   certPem       String // Certificate PEM
   keyPem        String // Private Key PEM
+  keyEncryption Json?
   expiresAt     DateTime
   issuedAt      DateTime
   lastUsedAt    DateTime
@@ -38,17 +38,102 @@ model Certificate {
   retryAfter    DateTime?
   failureCount  Int       @default(0)
   issuedByNode  String?
+  orders        CertificateOrder[]
+  artifactVersions CertificateArtifactVersion[]
 
   @@unique([domainsHash])
   @@index([domainsHash])
   @@index([retryAfter])
 }
 
+model CertificateOrder {
+  id                   String                     @id @default(uuid())
+  domains              String // ';'-joined list of domains for this order
+  domainsHash          String
+  primaryDomain        String
+  sourceType           String                     @default("acme") // acme, uploaded, self-signed, imported
+  status               String                     @default("requested") // requested, challenge-published, validating, issued, distributing, activated, failed, revoked
+  attemptCount         Int                        @default(1)
+  retryCount           Int                        @default(0)
+  nextRetryAt          DateTime?
+  lastError            String?
+  requestedByNode      String?
+  certificateId        String?
+  requestedAt          DateTime                   @default(now())
+  startedAt            DateTime?
+  challengePublishedAt DateTime?
+  validatingAt         DateTime?
+  issuedAt             DateTime?
+  distributingAt       DateTime?
+  activatedAt          DateTime?
+  failedAt             DateTime?
+  revokedAt            DateTime?
+  completedAt          DateTime?
+  metadata             Json?
+  certificate          Certificate?               @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  events               CertificateOrderEvent[]
+  artifacts            CertificateArtifactVersion[]
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+
+  @@index([domainsHash, createdAt])
+  @@index([status, nextRetryAt])
+  @@index([certificateId])
+}
+
+model CertificateOrderEvent {
+  id            String            @id @default(uuid())
+  orderId       String
+  eventType     String
+  fromStatus    String?
+  toStatus      String?
+  message       String?
+  attemptNumber Int?
+  retryAt       DateTime?
+  details       Json?
+  order         CertificateOrder  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  occurredAt    DateTime          @default(now())
+
+  @@index([orderId, occurredAt])
+  @@index([toStatus, occurredAt])
+}
+
+model CertificateArtifactVersion {
+  id            String            @id @default(uuid())
+  orderId       String?
+  certificateId String?
+  domains       String // ';'-joined list of domains represented by this artifact
+  domainsHash   String
+  version       Int
+  sourceType    String            @default("acme") // acme, uploaded, self-signed, imported
+  certPem       String
+  keyPem        String
+  keyEncryption Json?
+  issuedAt      DateTime
+  expiresAt     DateTime
+  activatedAt   DateTime?
+  isCurrent     Boolean           @default(false)
+  distributionStatus      String?
+  distributionOperationId String?
+  distributionCompletedAt DateTime?
+  createdByNode String?
+  metadata      Json?
+  order         CertificateOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  certificate   Certificate?      @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  createdAt     DateTime          @default(now())
+
+  @@unique([domainsHash, version])
+  @@index([orderId])
+  @@index([certificateId, createdAt])
+  @@index([domainsHash, createdAt])
+  @@index([domainsHash, isCurrent])
+}
+
 model ClusterNode {
   id            String   @id @default(uuid())
   hostname      String
   instanceId    String   @unique
-  ipAddress     String? // IP address of the node for direct communication
+  ipAddress     String? // Advertised control-plane host/address used for peer communication
   isLeader      Boolean  @default(false)
   lastHeartbeat DateTime
   version       String?
@@ -62,17 +147,129 @@ model ClusterNode {
   @@index([ipAddress])
 }
 
+model ClusterLease {
+  id            String   @id @default(uuid())
+  leaseName     String   @unique
+  ownerNodeId   String? // Currently stores the active instanceId until stable node IDs land in later sessions
+  ownerHostname String?
+  generation    Int      @default(1)
+  ttlSeconds    Int      @default(30)
+  acquiredAt    DateTime @default(now())
+  renewedAt     DateTime @default(now())
+  expiresAt     DateTime
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([ownerNodeId])
+  @@index([expiresAt])
+  @@index([ownerNodeId, expiresAt])
+}
+
+model ClusterOperation {
+  id                        String                @id @default(uuid())
+  operationType             String
+  scope                     String                @default("cluster")
+  status                    String                @default("pending")
+  initiatorNodeId           String?
+  initiatorHostname         String?
+  initiatorActorId          String?
+  initiatorActorType        String?
+  initiatorActorDisplayName String?
+  correlationId             String?
+  requestPath               String?
+  targetNodeCount           Int                   @default(0)
+  completedNodeCount        Int                   @default(0)
+  successfulNodeCount       Int                   @default(0)
+  failedNodeCount           Int                   @default(0)
+  startedAt                 DateTime?
+  completedAt               DateTime?
+  lastError                 String?
+  metadata                  Json?
+  acknowledgements          ClusterOperationAck[]
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+
+  @@index([status, createdAt])
+  @@index([operationType, createdAt])
+  @@index([correlationId])
+}
+
+model ClusterOperationAck {
+  id            String           @id @default(uuid())
+  operationId   String
+  nodeInstanceId String
+  nodeHostname  String?
+  endpointUrl   String?
+  status        String           @default("pending")
+  responseStatus Int?
+  errorMessage  String?
+  startedAt     DateTime?
+  ackedAt       DateTime?
+  details       Json?
+  operation     ClusterOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([operationId, nodeInstanceId])
+  @@index([status, ackedAt])
+  @@index([nodeInstanceId, status])
+}
+
 model AcmeChallenge {
-  id        String   @id @default(uuid())
-  token     String   @unique // The challenge token (filename)
-  keyAuth   String // The key authorization (file content)
-  domain    String // Domain this challenge is for
-  createdAt DateTime @default(now())
-  expiresAt DateTime // Challenges expire after 1 hour
+  id            String   @id @default(uuid())
+  orderId       String?
+  token         String   @unique // The challenge token (filename)
+  keyAuth       String // The key authorization (file content)
+  domain        String // Domain this challenge is for
+  challengeType String   @default("http-01")
+  provider      String?
+  status        String   @default("presented") // presented, cleaned-up, validated, failed, expired
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  presentedAt   DateTime @default(now())
+  cleanedUpAt   DateTime?
+  finalizedAt   DateTime?
+  lastServedAt  DateTime?
+  expiresAt     DateTime // Challenges expire after 1 hour
 
   @@index([token])
+  @@index([orderId, createdAt])
   @@index([domain])
+  @@index([status, expiresAt])
   @@index([expiresAt])
+}
+
+model AuditEvent {
+  id               String   @id @default(uuid())
+  action           String
+  targetType       String?
+  targetId         String?
+  targetDisplay    String?
+  outcome          String
+  result           String
+  correlationId    String
+  actorId          String?
+  actorSubject     String?
+  actorType        String?
+  actorDisplayName String?
+  actorAuthMethod  String?
+  actorRoles       String?
+  requestMethod    String
+  requestPath      String
+  responseStatus   Int
+  nodeId           String?
+  ipAddress        String?
+  errorCode        String?
+  errorMessage     String?
+  metadata         Json?
+  occurredAt       DateTime @default(now())
+
+  @@index([occurredAt])
+  @@index([action])
+  @@index([outcome])
+  @@index([actorSubject])
+  @@index([correlationId])
 }
 
 

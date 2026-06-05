@@ -4,19 +4,24 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
-  Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { CertificateError } from '../certificate/errors/certificate.errors';
+import { LogsService } from '../logs/logs.service';
+import { AuthenticatedRequest } from '../auth/interfaces/authenticated-request.interface';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(GlobalExceptionFilter.name);
+  private readonly logsService: LogsService;
+
+  constructor(logsService: LogsService) {
+    this.logsService = logsService;
+  }
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest();
+    const request = ctx.getRequest<AuthenticatedRequest>();
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
@@ -41,10 +46,16 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       details = { stack: exception.stack };
     }
 
-    // Log the error
-    this.logger.error(
-      `${request.method} ${request.url} - ${status} - ${message}`,
-      exception instanceof Error ? exception.stack : String(exception),
+    this.logsService.error(
+      {
+        message: `${request.method ?? 'UNKNOWN'} ${request.url ?? '/'} failed with HTTP ${status}`,
+        event: 'http.request.error',
+        statusCode: status,
+        errorCode: code,
+        details,
+      },
+      exception instanceof Error ? exception.stack : undefined,
+      GlobalExceptionFilter.name,
     );
 
     response.status(status).json({

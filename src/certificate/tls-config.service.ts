@@ -1,15 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { exec as execCb } from 'child_process';
-import { promisify } from 'util';
 import * as fs from 'fs';
-
-const exec = promisify(execCb);
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { normalizeDomain } from '../utils/domain-utils';
+import { runCommand } from '../utils/process-utils';
 
 @Injectable()
 export class TlsConfigService {
   private readonly logger = new Logger(TlsConfigService.name);
   private readonly dhParamPath = '/etc/nginx/ssl/dhparam.pem';
   private readonly sslDir = '/etc/nginx/ssl';
+
+  private createTempDirectory(prefix: string): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  }
 
   /**
    * Generate Diffie-Hellman parameters for enhanced security
@@ -35,7 +39,13 @@ export class TlsConfigService {
     }
 
     try {
-      await exec(`openssl dhparam -out ${this.dhParamPath} ${bits}`);
+      await runCommand(
+        'openssl',
+        ['dhparam', '-out', this.dhParamPath, `${bits}`],
+        {
+          timeoutMs: 15 * 60 * 1000,
+        },
+      );
       this.logger.log(`[DH] Successfully generated DH parameters`);
     } catch (err) {
       this.logger.error(
@@ -62,6 +72,7 @@ export class TlsConfigService {
     hsts: boolean;
     ocspStapling: boolean;
   } {
+    normalizeDomain(domain);
     // You could customize this based on domain or requirements
     return {
       protocols: ['TLSv1.2', 'TLSv1.3'],
@@ -84,15 +95,30 @@ export class TlsConfigService {
     cipher?: string;
     error?: string;
   }> {
-    this.logger.log(`[TLS Test] Testing TLS connection to ${domain}:${port}`);
+    const normalizedDomain = normalizeDomain(domain);
+    this.logger.log(
+      `[TLS Test] Testing TLS connection to ${normalizedDomain}:${port}`,
+    );
 
     try {
-      const { stdout } = await exec(
-        `echo | openssl s_client -connect ${domain}:${port} -servername ${domain} 2>/dev/null | grep -E '(Protocol|Cipher)'`,
+      const { stdout, stderr } = await runCommand(
+        'openssl',
+        [
+          's_client',
+          '-connect',
+          `${normalizedDomain}:${port}`,
+          '-servername',
+          normalizedDomain,
+        ],
+        {
+          input: '\n',
+          timeoutMs: 15_000,
+        },
       );
+      const combinedOutput = `${stdout}\n${stderr}`;
 
-      const protocolMatch = stdout.match(/Protocol\s*:\s*(\S+)/);
-      const cipherMatch = stdout.match(/Cipher\s*:\s*(\S+)/);
+      const protocolMatch = combinedOutput.match(/Protocol\s*:\s*(\S+)/);
+      const cipherMatch = combinedOutput.match(/Cipher\s*:\s*(\S+)/);
 
       return {
         success: true,
@@ -118,13 +144,18 @@ export class TlsConfigService {
     serialNumber: string;
     subjectAltNames?: string[];
   }> {
-    const certFile = `/tmp/cert-info-${Date.now()}.pem`;
+    const tempDir = this.createTempDirectory('lyttlenginx-cert-info-');
+    const certFile = path.join(tempDir, 'cert.pem');
     try {
       fs.writeFileSync(certFile, certPem, 'utf8');
 
-      const { stdout: textOutput } = await exec(
-        `openssl x509 -in ${certFile} -text -noout`,
-      );
+      const { stdout: textOutput } = await runCommand('openssl', [
+        'x509',
+        '-in',
+        certFile,
+        '-text',
+        '-noout',
+      ]);
 
       // Parse subject
       const subjectMatch = textOutput.match(/Subject: (.*)/);
@@ -167,8 +198,8 @@ export class TlsConfigService {
       };
     } finally {
       try {
-        fs.unlinkSync(certFile);
-      } catch (e) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore
       }
     }
@@ -181,12 +212,13 @@ export class TlsConfigService {
     certPem: string,
     chainPem?: string,
   ): Promise<{ valid: boolean; error?: string }> {
-    const certFile = `/tmp/cert-chain-${Date.now()}.pem`;
+    const tempDir = this.createTempDirectory('lyttlenginx-cert-chain-');
+    const certFile = path.join(tempDir, 'chain.pem');
     try {
       const fullChain = chainPem ? `${certPem}\n${chainPem}` : certPem;
       fs.writeFileSync(certFile, fullChain, 'utf8');
 
-      await exec(`openssl verify -CAfile ${certFile} ${certFile}`);
+      await runCommand('openssl', ['verify', '-CAfile', certFile, certFile]);
       return { valid: true };
     } catch (err) {
       return {
@@ -195,21 +227,11 @@ export class TlsConfigService {
       };
     } finally {
       try {
-        fs.unlinkSync(certFile);
-      } catch (e) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
         // Ignore
       }
     }
   }
 
-  /**
-   * Ensure certbot webroot directory exists
-   */
-  ensureCertbotWebroot(): void {
-    const webroot = '/var/www/certbot';
-    if (!fs.existsSync(webroot)) {
-      this.logger.log(`[Certbot] Creating webroot directory: ${webroot}`);
-      fs.mkdirSync(webroot, { recursive: true, mode: 0o755 });
-    }
-  }
 }
