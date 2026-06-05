@@ -8,6 +8,7 @@ import { AuthenticatedRequest } from './auth/interfaces/authenticated-request.in
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.enableShutdownHooks();
   const logsService = app.get(LogsService);
   app.useLogger(logsService);
   app.use(
