@@ -857,6 +857,25 @@ exit 0
 `,
   );
 
+  // Stateful curl stub: succeeds once (for startup liveness), then returns 503.
+  // This lets start_node_app pass its liveness check while making recovery
+  // liveness probes fail fast so the supervisor exits with the correct exit code.
+  await writeExecutable(
+    path.join(binDir, 'curl'),
+    `#!/usr/bin/env bash
+COUNTER_FILE="\${ENTRYPOINT_TEST_LOG%.log}.curl-count"
+count=\$(( \$(cat "\$COUNTER_FILE" 2>/dev/null || echo 0) + 1 ))
+printf '%s' "\$count" > "\$COUNTER_FILE"
+MAX_SUCCESS="\${FAKE_CURL_SUCCESS_COUNT:-1}"
+if [ "\$count" -le "\$MAX_SUCCESS" ]; then
+  printf '{"status":"ok"}\\n200\\n'
+else
+  printf '{"status":"starting"}\\n503\\n'
+fi
+exit 0
+`,
+  );
+
   const child = spawn('/bin/bash', [entrypointPath], {
     cwd: repoRoot,
     env: {
@@ -870,6 +889,9 @@ exit 0
       NGINX_SHUTDOWN_TIMEOUT_SECONDS: '1',
       DB_CONNECT_RETRY_DELAY_SECONDS: '1',
       MIGRATION_RETRY_DELAY_SECONDS: '1',
+      // Keep recovery liveness probes fast so tests complete within 10 s.
+      HEALTH_RECOVERY_MAX_ATTEMPTS: '3',
+      HEALTH_RECOVERY_DELAY_SECONDS: '0',
       ...envOverrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -1518,7 +1540,7 @@ describe('chaos and fault-injection validation', () => {
     const harness = await createEntrypointHarness({
       FAKE_NGINX_MODE: 'crash',
       FAKE_NGINX_EXIT_CODE: '23',
-      FAKE_NGINX_CRASH_DELAY_SECONDS: '1',
+      FAKE_NGINX_CRASH_DELAY_SECONDS: '3',
     });
 
     try {
