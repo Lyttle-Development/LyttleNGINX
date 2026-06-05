@@ -4,9 +4,27 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '../..');
-const {
-  normalizePossiblyQuotedEnvValue,
-} = require('../../src/utils/env-utils');
+
+function normalizePossiblyQuotedEnvValue(value) {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))) &&
+    trimmed.length >= 2
+  ) {
+    return trimmed.slice(1, -1).trim() || undefined;
+  }
+
+  return trimmed;
+}
 
 describe('environment value normalization', () => {
   it('strips matching wrapping quotes and surrounding whitespace', () => {
